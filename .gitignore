@@ -1,0 +1,67 @@
+## .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+artifacts/
+publish/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+project.lock.json
+project.fragment.lock.json
+
+## Test / coverage output
+[Tt]est[Rr]esult*/
+coverage*/
+*.coverage
+*.coveragexml
+*.trx
+BenchmarkDotNetacts/
+
+## IDE
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+*.swp
+*~
+
+## Node / frontend
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+.eslintcache
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+## Secrets and local config — never commit these
+.env
+.env.*
+!.env.example
+appsettings.Development.local.json
+appsettings.Local.json
+secrets.json
+*.pem
+*.key
+*.pfx
+*.p12
+
+## OS noise
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+## Local data volumes
+pgdata/
