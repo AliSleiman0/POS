@@ -66,9 +66,15 @@ dotnet new xunit   -o tests/Pos.Api.Tests
 **Why warnings-as-errors from commit one:** a nullable-reference warning in money-handling code is a null-total waiting for a customer. Turning this on later means clearing hundreds of warnings, which nobody does.
 
 **Exit criteria**
-- [ ] `dotnet build` succeeds with zero warnings
-- [ ] `dotnet test` runs (0 tests is fine)
-- [ ] Package versions centrally managed
+- [x] `dotnet build` succeeds with zero warnings
+- [x] `dotnet test` runs (exit code 0; `Pos.Data.Tests` and `Pos.Api.Tests` are empty for now, which does not fail the run)
+- [x] Package versions centrally managed (`Directory.Packages.props`, `ManagePackageVersionsCentrally` + transitive pinning)
+
+### Deviations from the original plan
+
+- **The solution file is `Pos.slnx`, not `Pos.sln`.** .NET 10's `dotnet new sln` produces the new XML format by default. It diffs far better than the classic format and auto-grouped the projects into `src/` and `tests/` folders. Requires SDK 10 / VS 17.13+ / recent Rider — fine here, but worth knowing if an older tool ever needs to open it.
+- **`Microsoft.OpenApi` is pinned to 2.11.0.** `NuGetAudit` (enabled in `Directory.Build.props`) failed the very first build: `Microsoft.AspNetCore.OpenApi` 10.0.10 resolves `Microsoft.OpenApi` 2.0.0, which carries a high-severity advisory (GHSA-v5pm-xwqc-g5wc). Pinned transitively; remove the pin once the ASP.NET Core package ships a patched dependency.
+- **`.editorconfig` and `.gitattributes`/`.gitignore` landed early** (they were 0.7 items). `.gitattributes` was needed because staging the docs on Windows triggered LF→CRLF warnings on all 16 files; `.editorconfig` was needed because CA1707 rejects underscores in member names and snake_case test names are deliberate — the rule is disabled for `tests/**` only, so production code still obeys it.
 
 ## 0.3 Dependency rules enforced
 
@@ -80,24 +86,21 @@ Pos.Api  → Pos.Data, Pos.Core
 Pos.Core → (nothing)
 ```
 
-Write `tests/Pos.Core.Tests/ArchitectureTests.cs`:
+`tests/Pos.Core.Tests/ArchitectureTests.cs` holds **two** complementary checks, because either alone has a blind spot:
 
-```csharp
-[Fact]
-public void Core_has_no_infrastructure_dependencies()
-{
-    var forbidden = new[] { "Microsoft.EntityFrameworkCore", "Microsoft.AspNetCore",
-                            "Npgsql", "Pos.Data", "Pos.Api" };
-    var referenced = typeof(Money).Assembly
-        .GetReferencedAssemblies().Select(a => a.Name!);
-    Assert.Empty(referenced.Where(r => forbidden.Any(f => r.StartsWith(f))));
-}
-```
+1. **`Core_csproj_declares_no_infrastructure_references`** — parses `Pos.Core.csproj` for `PackageReference`/`ProjectReference`. Catches a forbidden dependency that is *declared but not yet used*.
+2. **`Core_assembly_uses_no_infrastructure_types`** — reflects over `GetReferencedAssemblies()`. Catches one that is *used*, including arriving transitively.
+
+**Why both:** the C# compiler omits references whose types are never touched, so a `PackageReference` to EF Core that Core hasn't called into is invisible to reflection. The csproj check closes that gap.
 
 **Exit criteria**
-- [ ] `Pos.Core.csproj` has no `PackageReference` outside the BCL
-- [ ] The architecture test exists and passes
-- [ ] Deliberately adding an EF reference to `Core` makes the test fail (verify this — an assertion that can't fail is not a test)
+- [x] `Pos.Core.csproj` has no `PackageReference` outside the BCL — it has no `ItemGroup` at all, only a comment stating the invariant
+- [x] The architecture tests exist and pass (3 tests green)
+- [x] **Negative verification performed.** Adding `Microsoft.EntityFrameworkCore` to `Pos.Core` makes test 1 fail with a clear message; removing it returns to green.
+
+> **This step earned its keep.** On the first attempt the negative verification *passed* — meaning the guardrail was broken. Cause: `Path.GetFileNameWithoutExtension("Microsoft.EntityFrameworkCore")` returns `"Microsoft"`, because it strips everything after the last dot. Package ids were being mangled into strings that match no forbidden prefix. The path-stripping is only correct for `ProjectReference` paths, so the two reference kinds are now handled separately. A test that cannot fail is worse than no test, because it reads as protection.
+>
+> Note that the first attempt at the negative check — adding a `ProjectReference` to `Pos.Data` — cannot work: `Data` already references `Core`, so restore dies on a circular dependency before any test runs. Use a forbidden *package* for this verification.
 
 ## 0.4 Local Postgres
 

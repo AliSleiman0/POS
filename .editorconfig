@@ -1,0 +1,63 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,csx}]
+indent_size = 4
+
+# --- C# language conventions -------------------------------------------------
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_prefer_braces = true:suggestion
+csharp_style_prefer_primary_constructors = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_using_directive_placement = outside_namespace:warning
+dotnet_sort_system_directives_first = true
+
+# this. is noise when the codebase is consistent about it
+dotnet_style_qualification_for_field = false:warning
+dotnet_style_qualification_for_property = false:warning
+dotnet_style_qualification_for_method = false:warning
+dotnet_style_readonly_field = true:warning
+
+# Nullable discipline: these are the ones that catch real null bugs
+dotnet_diagnostic.CS8600.severity = error
+dotnet_diagnostic.CS8602.severity = error
+dotnet_diagnostic.CS8603.severity = error
+dotnet_diagnostic.CS8618.severity = error
+
+# ConfigureAwait(false) is not wanted in ASP.NET Core; there is no
+# SynchronizationContext to marshal back to, so the noise buys nothing.
+dotnet_diagnostic.CA2007.severity = none
+
+# --- Test projects -----------------------------------------------------------
+[tests/**.cs]
+# CA1707 forbids underscores in member names. Test names are documentation —
+# `Replay_of_same_idempotency_key_returns_original_sale` reads as a sentence and
+# PascalCase does not. Disabled for tests only; production code still obeys it.
+dotnet_diagnostic.CA1707.severity = none
+
+# Tests deliberately construct odd inputs and assert on them
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA5394.severity = none
+
+[*.{ts,tsx,js,jsx,json,jsonc,css,scss,html,yml,yaml}]
+indent_size = 2
+
+[*.{csproj,props,targets,slnx,xml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{ps1,psm1}]
+end_of_line = crlf
+indent_size = 4

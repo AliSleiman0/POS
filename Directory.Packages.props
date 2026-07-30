@@ -1,0 +1,40 @@
+<Project>
+
+  <!--
+    Central package version management: one place to bump a version, and no
+    chance of two projects resolving different EF Core versions.
+    Add a PackageReference in the csproj WITHOUT a Version attribute; the
+    version comes from here.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="ASP.NET Core">
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <!--
+      Transitive pin. Microsoft.AspNetCore.OpenApi 10.0.10 resolves
+      Microsoft.OpenApi 2.0.0, which has a known high-severity advisory
+      (GHSA-v5pm-xwqc-g5wc). NuGetAudit correctly failed the build on it.
+      Remove this pin once the ASP.NET Core package ships a patched dependency.
+    -->
+    <PackageVersion Include="Microsoft.OpenApi" Version="2.11.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testing">
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <!--
+    Added in later milestones, listed here so the intent is visible:
+      0.4  Npgsql.EntityFrameworkCore.PostgreSQL, Microsoft.EntityFrameworkCore.Design
+      1.3  Microsoft.AspNetCore.Identity.EntityFrameworkCore
+      1.4  Microsoft.AspNetCore.Authentication.JwtBearer
+      1.7  Microsoft.AspNetCore.Mvc.Testing, Testcontainers.PostgreSql
+  -->
+
+</Project>
