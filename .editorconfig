@@ -38,6 +38,26 @@ dotnet_diagnostic.CS8618.severity = error
 # SynchronizationContext to marshal back to, so the noise buys nothing.
 dotnet_diagnostic.CA2007.severity = none
 
+# --- EF Core generated migrations --------------------------------------------
+# EF's scaffolder emits block-scoped namespaces, verbose array initializers and
+# its own formatting. Holding generated code to the repo's style rules means
+# every `dotnet ef migrations add` breaks the build, and the only fixes are
+# hand-editing generated files or disabling the rule — so scope it here.
+#
+# This exempts STYLE only. Correctness analysers still apply, and CLAUDE.md
+# still requires reading every generated migration before committing: EF
+# sometimes emits a destructive change for an innocuous model edit.
+[**/Migrations/*.cs]
+dotnet_diagnostic.IDE0161.severity = none   # file-scoped namespace
+dotnet_diagnostic.IDE0300.severity = none   # collection expression
+dotnet_diagnostic.IDE0301.severity = none
+dotnet_diagnostic.IDE0303.severity = none
+dotnet_diagnostic.IDE0079.severity = none   # redundant suppression
+dotnet_diagnostic.CA1861.severity = none    # constant arrays as static readonly
+dotnet_diagnostic.CA1062.severity = none
+dotnet_style_namespace_declarations = block_scoped:none
+csharp_style_namespace_declarations = block_scoped:none
+
 # --- Test projects -----------------------------------------------------------
 [tests/**.cs]
 # CA1707 forbids underscores in member names. Test names are documentation —

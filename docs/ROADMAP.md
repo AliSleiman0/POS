@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Current phase** | Phase 0 — Foundation & environment |
-| **Next up** | 0.4 local Postgres. Done: 0.1 toolchain, 0.2 scaffold, 0.3 architecture tests, 0.6 docs. |
+| **Next up** | 0.5 web scaffold, then 0.7 CI. Done: 0.1 toolchain, 0.2 scaffold, 0.3 architecture tests, 0.4 Postgres, 0.6 docs. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-07-30 |
 
@@ -44,7 +44,7 @@ Detail: [phases/PHASE-0-foundation.md](phases/PHASE-0-foundation.md)
 - [x] **0.1 Prerequisites** — .NET SDK 10.0.302, `dotnet-ef` 10.0.10, WSL 2.7.11, Docker Desktop 4.84.0 (engine 29.6.2, Compose v5.3.1). Verified 2026-07-30: `docker run hello-world` succeeds.
 - [x] **0.2 Solution scaffold** — `Pos.slnx` (.NET 10's new format, not `.sln`), 3 src + 3 test projects, `dotnet build` clean with zero warnings, `Directory.Build.props` + `Directory.Packages.props`. `Pos.Web` arrives in 0.5.
 - [x] **0.3 Dependency rules enforced** — `Pos.Core` has zero non-BCL references; two architecture tests (csproj declaration + compiled assembly references) with the failure mode verified by deliberately breaking it.
-- [ ] **0.4 Local Postgres** — `docker compose up -d` gives Postgres 17 + pgAdmin; API connects; secrets in `dotnet user-secrets`, never `appsettings.json`.
+- [x] **0.4 Local Postgres** — Postgres 17.10 + pgAdmin via Compose; `AppDbContext` connects with model-wide conventions (`numeric(19,4)`, `timestamptz`, snake_case); `Initial` migration applied; secrets in user-secrets only. `/health/ready` verified to actually fail with the DB stopped.
 - [ ] **0.5 Web scaffold** — Vite + React + TS + Tailwind + shadcn/ui, ESLint + Prettier, `pnpm build` clean.
 - [x] **0.6 Docs** — `docs/` set + `CLAUDE.md` written, `DECISIONS.md` updated.
 - [ ] **0.7 CI** — GitHub Actions builds and tests both stacks on push; `.editorconfig`, `.gitignore`, `.gitattributes`.

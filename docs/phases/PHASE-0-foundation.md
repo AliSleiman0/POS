@@ -131,9 +131,25 @@ volumes: { pgdata: }
 Connection string via `dotnet user-secrets` in `Pos.Api`, never in `appsettings.json`. Add `Npgsql.EntityFrameworkCore.PostgreSQL` to `Pos.Data`.
 
 **Exit criteria**
-- [ ] `docker compose up -d` → healthy Postgres 17, pgAdmin on `:5050`
-- [ ] A minimal `AppDbContext` connects and `dotnet ef migrations add Initial` generates
-- [ ] `git grep` finds no connection string or password in tracked files
+- [x] `docker compose up -d` → Postgres **17.10** reports healthy, pgAdmin on `:5050`
+- [x] `AppDbContext` connects; `migrations add Initial` generated and `database update` applied (`__EFMigrationsHistory` present)
+- [x] `git grep` finds no connection string or password in tracked files — the connection string lives only in `%APPDATA%\Microsoft\UserSecrets\<id>\secrets.json`
+- [x] `/health/ready` **verified to fail** (503 `Unhealthy`) with Postgres stopped, and to recover without an API restart
+- [x] `/health/live` **verified to stay 200** with Postgres stopped — see below
+
+### Notes
+
+**The `Initial` migration is intentionally empty.** There are no entities yet; they arrive in Phase 1. It is kept rather than deleted because it applies cleanly, creates `__EFMigrationsHistory`, and commits a model-snapshot baseline that records the model-wide conventions — so Phase 1's migration is a clean incremental diff rather than a first-and-huge one.
+
+**`live` deliberately does not probe the database.** If Postgres blips, the orchestrator should stop routing traffic (`ready` fails), not kill and restart the container (`live` fails). A liveness probe that checks a dependency turns a brief database hiccup into a restart storm. Both behaviours were verified by actually stopping the container, not assumed.
+
+**Conventions are set once, model-wide,** in `AppDbContext.ConfigureConventions`: `decimal` → `numeric(19,4)`, `DateTimeOffset` → `timestamptz`, snake_case naming via `UseSnakeCaseNamingConvention()`. A new property therefore cannot be mapped at the provider's default `numeric(18,2)` by omission, which would silently truncate the 3rd and 4th decimals of a unit price.
+
+**Gotcha — user secrets only load in the Development environment.** `dotnet run --no-launch-profile` skips `launchSettings.json`, so `ASPNETCORE_ENVIRONMENT` defaults to Production and the connection string is not found. Set `ASPNETCORE_ENVIRONMENT=Development` explicitly when bypassing the launch profile. The startup guard in `Program.cs` fails fast with the exact command to run, rather than surfacing as a 500 on the first request.
+
+**Gotcha — generated migrations vs. style rules.** EF's scaffolder emits block-scoped namespaces, which `.editorconfig`'s `file_scoped` preference escalated to an error under `TreatWarningsAsErrors`; the first `database update` failed to build. `.editorconfig` now exempts `**/Migrations/*.cs` from **style** rules only. Correctness analysers still apply, and every generated migration must still be read before committing — EF sometimes emits a destructive change for an innocuous model edit.
+
+**`retryOnFailure` and explicit transactions do not mix.** `EnableRetryOnFailure` is on for transient managed-Postgres faults, but an execution strategy cannot wrap a user-initiated transaction without explicit handling. Phase 3.6's sale transaction must therefore go through `CreateExecutionStrategy()`.
 
 ## 0.5 Web scaffold
 
