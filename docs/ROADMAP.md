@@ -11,16 +11,16 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 0 — Foundation & environment |
-| **Next up** | 0.7 CI — the last of Phase 0. Done: 0.1 toolchain, 0.2 scaffold, 0.3 architecture tests, 0.4 Postgres, 0.5 web scaffold, 0.6 docs. |
+| **Current phase** | Phase 0 complete — next is Phase 1, multi-tenancy & auth spine |
+| **Next up** | 1.1 Tenant primitives. Phase 0 is done end to end (0.1–0.7); CI is green on push and PR. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
-| **Last updated** | 2026-07-30 |
+| **Last updated** | 2026-07-31 |
 
 ## Phase overview
 
 | Phase | Name | Scope | Status |
 |---|---|---|---|
-| 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | 🔨 In progress |
+| 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | ✅ Done |
 | 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ⬜ Not started |
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ⬜ Not started |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ⬜ Not started |
@@ -47,7 +47,7 @@ Detail: [phases/PHASE-0-foundation.md](phases/PHASE-0-foundation.md)
 - [x] **0.4 Local Postgres** — Postgres 17.10 + pgAdmin via Compose; `AppDbContext` connects with model-wide conventions (`numeric(19,4)`, `timestamptz`, snake_case); `Initial` migration applied; secrets in user-secrets only. `/health/ready` verified to actually fail with the DB stopped.
 - [x] **0.5 Web scaffold** — Vite 8 + React 19 + TS 6 + Tailwind v4 + shadcn/ui, oxlint (template default) + Prettier, Vitest (11 tests) + Playwright wired. `strict` was absent from the template and had to be added. Dev proxy verified reaching the API.
 - [x] **0.6 Docs** — `docs/` set + `CLAUDE.md` written, `DECISIONS.md` updated.
-- [ ] **0.7 CI** — GitHub Actions builds and tests both stacks on push; `.editorconfig`, `.gitignore`, `.gitattributes`.
+- [x] **0.7 CI** — GitHub Actions builds and tests both stacks on push and PR; `.editorconfig`, `.gitignore`, `.gitattributes` (landed early in 0.2). Negative verification performed: a deliberate warning and type error failed both jobs for the intended reasons.
 
 ## Phase 1 — Multi-tenancy & auth spine
 

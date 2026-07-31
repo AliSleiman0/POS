@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A second push to the same branch cancels the first — no point paying for a
+# run whose result is already superseded. Never cancel on main.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # Keyed on the central package manifest — the only file that can change
+      # what gets restored, since versions are managed centrally.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore
+
+      # --no-restore so a restore failure is reported by the step above rather
+      # than surfacing here. TreatWarningsAsErrors is set in Directory.Build.props,
+      # so any warning fails this step.
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      # Integration tests use Testcontainers from Phase 1 onward; the ubuntu
+      # runner has Docker available, so no service container is declared here.
+      - name: Test
+        run: dotnet test --no-build --configuration Release --verbosity normal
+
+  frontend:
+    name: frontend (web)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/Pos.Web
+    steps:
+      - uses: actions/checkout@v4
+
+      # `defaults.run.working-directory` applies only to `run` steps, so this action
+      # would otherwise look for package.json at the repo root and find no version.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: src/Pos.Web/package.json
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/Pos.Web/pnpm-lock.yaml
+
+      # --frozen-lockfile fails if package.json and the lockfile disagree,
+      # so CI can never silently resolve a different dependency tree than local.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      # `build` runs `tsc -b` first, so a type error fails here.
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test

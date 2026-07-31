@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using Pos.Core;
 
@@ -111,24 +110,39 @@ public sealed class ArchitectureTests
     }
 
     /// <summary>
-    /// Locates Pos.Core.csproj from this source file's compile-time path, so the test
-    /// does not depend on the working directory or on output-folder layout.
+    /// Locates Pos.Core.csproj by walking up to the repo root, so the test does not
+    /// depend on the working directory or on output-folder layout.
     /// </summary>
-    private static string CoreProjectPath([CallerFilePath] string thisFile = "")
+    /// <remarks>
+    /// Anchors on the test assembly's output directory, NOT on <c>[CallerFilePath]</c>.
+    /// <c>Directory.Build.props</c> sets <c>ContinuousIntegrationBuild</c> when <c>CI=true</c>,
+    /// which turns on deterministic source paths — the compiler then bakes in
+    /// <c>/_/tests/Pos.Core.Tests/ArchitectureTests.cs</c>, a path that exists nowhere on
+    /// disk. A CallerFilePath-based walk therefore cannot find the root on any CI runner,
+    /// which is the one environment where this guardrail has to work.
+    /// </remarks>
+    private static string CoreProjectPath()
     {
-        var dir = Directory.GetParent(thisFile)
-            ?? throw new InvalidOperationException($"Cannot resolve directory of '{thisFile}'.");
-
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Pos.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        var root = dir?.FullName
-            ?? throw new InvalidOperationException("Could not locate the repository root (Pos.slnx).");
+        var root = FindRepositoryRoot(AppContext.BaseDirectory)
+            ?? throw new InvalidOperationException(
+                $"Could not locate the repository root (Pos.slnx) walking up from '{AppContext.BaseDirectory}'.");
 
         var path = Path.Combine(root, "src", "Pos.Core", "Pos.Core.csproj");
         Assert.True(File.Exists(path), $"Expected Pos.Core.csproj at '{path}'.");
         return path;
+    }
+
+    /// <summary>Walks up from <paramref name="start"/> to the directory holding Pos.slnx.</summary>
+    private static string? FindRepositoryRoot(string start)
+    {
+        for (var dir = new DirectoryInfo(start); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "Pos.slnx")))
+            {
+                return dir.FullName;
+            }
+        }
+
+        return null;
     }
 }
