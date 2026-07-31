@@ -3,6 +3,10 @@
   <ItemGroup>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="EFCore.NamingConventions" />
+    <!-- Identity's EF stores. This is why ApplicationUser lives here and not in
+         Pos.Core: IdentityUser<T> ships in Microsoft.Extensions.Identity.Stores,
+         which the architecture test forbids Core from touching. -->
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
   </ItemGroup>
 
   <ItemGroup>

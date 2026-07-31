@@ -1,7 +1,10 @@
 using System.Linq.Expressions;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Pos.Core.Entities;
 using Pos.Core.Tenancy;
+using Pos.Data.Identity;
 
 namespace Pos.Data;
 
@@ -14,7 +17,15 @@ namespace Pos.Data;
 /// once rather than remembered per property. Tenant query filters are applied to every
 /// <see cref="ITenantOwned"/> type by reflection.
 /// </remarks>
-public class AppDbContext : DbContext
+public class AppDbContext : IdentityDbContext<
+    ApplicationUser,
+    ApplicationRole,
+    Guid,
+    ApplicationUserClaim,
+    ApplicationUserRole,
+    ApplicationUserLogin,
+    ApplicationRoleClaim,
+    ApplicationUserToken>
 {
     private readonly ITenantContext _tenantContext;
 
@@ -83,17 +94,28 @@ public class AppDbContext : DbContext
         base.ConfigureConventions(configurationBuilder);
     }
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void OnModelCreating(ModelBuilder builder)
     {
-        ArgumentNullException.ThrowIfNull(modelBuilder);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        // Identity first, so our configurations can replace the indexes it declares —
+        // notably the platform-wide unique index on the user name, which would stop one
+        // person holding an account at two tenants.
+        base.OnModelCreating(builder);
+
+        // .NET 10's Identity adds a WebAuthn passkey table. We do not do WebAuthn, and an
+        // unused table is not free here: it would be the one table in the schema with no
+        // tenant column, no query filter and no RLS policy — the exception that makes
+        // "every table is scoped" stop being a checkable statement. Dropping it entirely
+        // is cleaner than scoping something nothing writes to.
+        builder.Ignore<IdentityUserPasskey<Guid>>();
 
         // One IEntityTypeConfiguration<T> per entity, discovered by assembly scan,
         // so adding an entity never means editing this method.
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+        builder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
-        ApplyTenantQueryFilters(modelBuilder);
-
-        base.OnModelCreating(modelBuilder);
+        // Last, so it sees every entity type either of the above introduced.
+        ApplyTenantQueryFilters(builder);
     }
 
     /// <summary>

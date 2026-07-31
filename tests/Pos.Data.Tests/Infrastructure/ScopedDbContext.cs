@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Pos.Core.Auditing;
 using Pos.Core.Tenancy;
+using Pos.Data.Identity;
 
 namespace Pos.Data.Tests.Infrastructure;
 
@@ -27,6 +28,9 @@ public sealed class ScopedDbContext : IAsyncDisposable
 
     public AppDbContext Db { get; }
 
+    /// <summary>The scope's services, for resolving <c>UserManager</c> and friends.</summary>
+    public IServiceProvider Services => _scope.ServiceProvider;
+
     /// <summary>Opens a scope with <paramref name="tenantId"/> resolved as the ambient tenant.</summary>
     public static ScopedDbContext ForTenant(string connectionString, Guid tenantId, Guid? actorId = null)
     {
@@ -48,7 +52,9 @@ public sealed class ScopedDbContext : IAsyncDisposable
             services.AddScoped<ICurrentActor>(_ => new FixedActor(actorId.Value));
         }
 
+        services.AddLogging();
         services.AddPosData(connectionString);
+        services.AddPosIdentity();
 
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateAsyncScope();
