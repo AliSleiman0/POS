@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "oxc"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    "eqeqeq": "error",
+    "typescript/no-explicit-any": "error"
+  },
+  "overrides": [
+    {
+      // shadcn/ui components are vendored generated code, re-fetched by the CLI.
+      // They legitimately export variant objects alongside the component, which
+      // trips the fast-refresh rule. Holding them to our style rules means
+      // hand-editing files that `shadcn add` will overwrite.
+      "files": ["src/components/ui/**"],
+      "rules": {
+        "react/only-export-components": "off"
+      }
+    }
+  ]
+}

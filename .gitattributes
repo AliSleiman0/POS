@@ -1,0 +1,32 @@
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF or they can misbehave
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Shell scripts must always be LF, even on Windows checkouts
+*.sh    text eol=lf
+
+# Treat as binary — never diff, never normalize
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.snk   binary
+*.pfx   binary
+*.dll   binary
+*.exe   binary
+
+# Generated files: collapse in PR diffs
+pnpm-lock.yaml linguist-generated=true
+**/Migrations/*.Designer.cs linguist-generated=true

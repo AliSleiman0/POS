@@ -1,0 +1,58 @@
+# Local development only. Production uses managed Postgres — see
+# docs/phases/PHASE-8-deployment.md.
+#
+# The credentials here are deliberately obvious throwaways. They are safe to
+# commit precisely because they only ever bind to localhost on a dev machine.
+# Real secrets live in `dotnet user-secrets` locally and env/vault in production;
+# nothing in this file is reused there.
+
+services:
+  db:
+    image: postgres:17
+    container_name: pos-db
+    environment:
+      POSTGRES_DB: pos_dev
+      POSTGRES_USER: pos
+      POSTGRES_PASSWORD: dev_only_not_a_secret
+      # Deterministic collation so ORDER BY and unique indexes behave the same
+      # here as in production, regardless of the host's locale.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone reports true during initdb, before the DB accepts real
+      # queries — so run an actual query. Without this, `compose up -d` followed
+      # immediately by `ef database update` races and fails intermittently.
+      test: ["CMD-SHELL", "psql -U pos -d pos_dev -c 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pos-pgadmin
+    environment:
+      # pgAdmin validates this and crash-loops if it fails, so it must be a
+      # normal-looking address. Both 'dev@localhost' (no period) and
+      # 'dev@pos.local' (.local is a reserved special-use domain) are rejected.
+      # Nothing ever resolves it — it is only a login id.
+      PGADMIN_DEFAULT_EMAIL: dev@example.com
+      PGADMIN_DEFAULT_PASSWORD: dev_only_not_a_secret
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  pgadmin:

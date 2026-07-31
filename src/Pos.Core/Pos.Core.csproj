@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    INVARIANT: Pos.Core references NOTHING outside the BCL.
+    No EF Core, no ASP.NET, no Npgsql, no HTTP, no file or clock access.
+    Time enters through TimeProvider; persistence through interfaces Core
+    declares and Pos.Data implements.
+
+    Enforced by ArchitectureTests in tests/Pos.Core.Tests. If that test fails,
+    the fix is to move the code, not to relax the test.
+  -->
+
+</Project>
