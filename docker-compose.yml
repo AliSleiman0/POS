@@ -36,7 +36,11 @@ services:
     image: dpage/pgadmin4
     container_name: pos-pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: dev@localhost
+      # pgAdmin validates this and crash-loops if it fails, so it must be a
+      # normal-looking address. Both 'dev@localhost' (no period) and
+      # 'dev@pos.local' (.local is a reserved special-use domain) are rejected.
+      # Nothing ever resolves it — it is only a login id.
+      PGADMIN_DEFAULT_EMAIL: dev@example.com
       PGADMIN_DEFAULT_PASSWORD: dev_only_not_a_secret
       PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"

@@ -43,7 +43,7 @@ Then:
 
 - API: `https://localhost:7xxx/openapi/v1.json` (port from `src/Pos.Api/Properties/launchSettings.json`)
 - Health: `/health/live` (process) and `/health/ready` (process + database)
-- pgAdmin: <http://localhost:5050> — `dev@localhost` / `dev_only_not_a_secret`
+- pgAdmin: <http://localhost:5050> — `dev@example.com` / `dev_only_not_a_secret`
 
 First run over HTTPS also needs the dev certificate trusted. This opens a Windows dialog, so it cannot be scripted:
 

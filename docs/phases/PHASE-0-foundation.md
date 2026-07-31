@@ -131,7 +131,7 @@ volumes: { pgdata: }
 Connection string via `dotnet user-secrets` in `Pos.Api`, never in `appsettings.json`. Add `Npgsql.EntityFrameworkCore.PostgreSQL` to `Pos.Data`.
 
 **Exit criteria**
-- [x] `docker compose up -d` → Postgres **17.10** reports healthy, pgAdmin on `:5050`
+- [x] `docker compose up -d` → Postgres **17.10** reports healthy; pgAdmin serves on `:5050` (HTTP 302, 0 restarts)
 - [x] `AppDbContext` connects; `migrations add Initial` generated and `database update` applied (`__EFMigrationsHistory` present)
 - [x] `git grep` finds no connection string or password in tracked files — the connection string lives only in `%APPDATA%\Microsoft\UserSecrets\<id>\secrets.json`
 - [x] `/health/ready` **verified to fail** (503 `Unhealthy`) with Postgres stopped, and to recover without an API restart
@@ -144,6 +144,8 @@ Connection string via `dotnet user-secrets` in `Pos.Api`, never in `appsettings.
 **`live` deliberately does not probe the database.** If Postgres blips, the orchestrator should stop routing traffic (`ready` fails), not kill and restart the container (`live` fails). A liveness probe that checks a dependency turns a brief database hiccup into a restart storm. Both behaviours were verified by actually stopping the container, not assumed.
 
 **Conventions are set once, model-wide,** in `AppDbContext.ConfigureConventions`: `decimal` → `numeric(19,4)`, `DateTimeOffset` → `timestamptz`, snake_case naming via `UseSnakeCaseNamingConvention()`. A new property therefore cannot be mapped at the provider's default `numeric(18,2)` by omission, which would silently truncate the 3rd and 4th decimals of a unit price.
+
+**Gotcha — pgAdmin crash-loops on an invalid `PGADMIN_DEFAULT_EMAIL`.** It validates the address at startup and exits if it fails, so the container restarts forever while Postgres stays healthy and everything else appears fine. `dev@localhost` is rejected (no period) and `dev@pos.local` is rejected (`.local` is a reserved special-use domain); `dev@example.com` works. This was **missed on the first pass** — the checkbox above was ticked from `compose up` reporting "Started", without checking that `:5050` actually served anything. `docker compose ps` shows `Started` for a container that is crash-looping; check `docker inspect -f '{{.State.Status}}, restarts={{.RestartCount}}'` or curl the port.
 
 **Gotcha — user secrets only load in the Development environment.** `dotnet run --no-launch-profile` skips `launchSettings.json`, so `ASPNETCORE_ENVIRONMENT` defaults to Production and the connection string is not found. Set `ASPNETCORE_ENVIRONMENT=Development` explicitly when bypassing the launch profile. The startup guard in `Program.cs` fails fast with the exact command to run, rather than surfacing as a 500 on the first request.
 

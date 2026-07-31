@@ -4,6 +4,7 @@
 
 | File | For |
 |---|---|
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | **Start here.** State from the last session: what's done, what's next, what will bite you. Session state, not durable truth — overwrite it when you finish. |
 | [`DECISIONS.md`](DECISIONS.md) | **Why** the architecture is what it is. Locked decisions — challenge them explicitly, don't drift from them silently. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Where we are** and what's next. Update the checkboxes as work lands. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Layering, multi-tenancy mechanism, auth flow, API conventions. |
@@ -11,7 +12,9 @@
 | [`docs/API.md`](docs/API.md) | Endpoint contracts and semantics. |
 | `docs/phases/PHASE-N-*.md` | The phase you're working on: tasks, exit criteria, verification. |
 
-**Start of a session:** read `docs/ROADMAP.md` for current state, then the relevant phase doc. Don't re-derive the plan.
+**Start of a session:** read `docs/HANDOFF.md`, then `docs/ROADMAP.md` for current state, then the relevant phase doc. Don't re-derive the plan.
+
+**End of a session:** overwrite `docs/HANDOFF.md` with the new state.
 
 ## Project shape
 
