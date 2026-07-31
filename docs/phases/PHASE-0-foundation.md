@@ -2,7 +2,7 @@
 
 **Goal:** a repo where `dotnet build`, `dotnet test` and `pnpm build` all run clean against a real Postgres, with the rules that keep the codebase honest already enforced.
 
-**Status:** 🔨 In progress — 0.1 and 0.6 done; next is 0.2.
+**Status:** ✅ Done — 0.1 through 0.7 complete. Next phase is [Phase 1](PHASE-1-tenancy-auth.md).
 
 ---
 
@@ -213,8 +213,24 @@ Starting the API with `until grep -qE "Now listening|Unhandled"` hung, because t
 Also `.editorconfig` (C# + TS formatting), `.gitignore` (`bin/`, `obj/`, `node_modules/`, `.env*`, `*.user`), `.gitattributes` (`* text=auto eol=lf`, so a Windows checkout doesn't churn line endings for everyone else).
 
 **Exit criteria**
-- [ ] CI green on a pushed branch
-- [ ] A deliberately broken build fails CI (verify, don't assume)
+- [x] CI green on a pushed branch — runs `30630171848` and `30630509285` on `phase-0/ci`
+- [x] A deliberately broken build fails CI — run `30630365853`. Backend failed on `CS0219` **escalated to `error`**, proving `TreatWarningsAsErrors` is in force on the runner and not merely locally; frontend failed on `TS2322`, proving `tsc -b` runs inside `pnpm build`. Both failed for the intended reason, not incidentally.
+
+### Gotcha — the architecture test could not run in CI at all
+
+`Core_csproj_declares_no_infrastructure_references` located the repo root by walking up from `[CallerFilePath]`. `Directory.Build.props` sets `ContinuousIntegrationBuild` when `CI=true`, which enables **deterministic source paths**: the compiler then bakes in `/_/tests/Pos.Core.Tests/ArchitectureTests.cs`, a path that exists nowhere on disk. The walk could never find `Pos.slnx`, so the test threw on every CI run.
+
+It passed locally throughout, because a normal Debug build keeps real absolute paths. The guardrail was therefore broken in precisely the environment where it is the only thing enforcing invariant 1. Now anchored on `AppContext.BaseDirectory`, which is real everywhere. **Reproduce this class of bug locally by setting `$env:CI="true"` before building** — no CI round-trip needed.
+
+This is the second time a check in this file was found to be non-functional (see 0.3). Both were caught only by deliberately exercising the failure path.
+
+### Gotcha — `pnpm/action-setup` ignores `working-directory`
+
+The action resolves its version from `package.json` at the **repo root**; `defaults.run.working-directory` applies only to `run` steps. With the web app at `src/Pos.Web`, it found no `packageManager` field and failed with *"No pnpm version is specified"*. Fixed with `package_json_file: src/Pos.Web/package.json`, and `packageManager: pnpm@9.15.9` pinned in `src/Pos.Web/package.json` so CI and local cannot resolve different pnpm versions.
+
+### Gotcha — Smart App Control blocks freshly built DLLs on this machine
+
+`dotnet test` fails locally with `FileLoadException ... An Application Control policy has blocked this file (0x800711C7)` on `Pos.Core.dll`. Smart App Control is **enforced** (`HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy` → `VerifiedAndReputablePolicyState = 1`) and blocks newly produced unsigned binaries; confirm with event 3077 in `Microsoft-Windows-CodeIntegrity/Operational`. It is a local-only problem — the Ubuntu runner is unaffected and CI is green. Turning SAC off is **irreversible without reinstalling Windows**, so it is left as the user's call; see `docs/HANDOFF.md`.
 
 ---
 
