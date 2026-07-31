@@ -38,6 +38,7 @@ public static class ServiceCollectionExtensions
         services.TryAddScoped<ICurrentActor, SystemActor>();
 
         services.AddScoped<TenantSaveChangesInterceptor>();
+        services.AddScoped<TenantConnectionInterceptor>();
 
         services.AddDbContext<AppDbContext>((serviceProvider, options) =>
             options
@@ -53,8 +54,14 @@ public static class ServiceCollectionExtensions
                     // Migrations live in Pos.Data, not the startup project.
                     npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
                 })
-                // Resolved per scope so the interceptor sees this request's tenant.
-                .AddInterceptors(serviceProvider.GetRequiredService<TenantSaveChangesInterceptor>())
+                // Resolved per scope so the interceptors see this request's tenant.
+                .AddInterceptors(
+                    serviceProvider.GetRequiredService<TenantSaveChangesInterceptor>(),
+                    // Publishes app.tenant_id to the session on every connection open, which
+                    // is what the RLS policies read. Session-scoped and safe only because
+                    // Npgsql resets pooled connections — see the interceptor's remarks
+                    // before touching anything about pooling in the connection string.
+                    serviceProvider.GetRequiredService<TenantConnectionInterceptor>())
                 // snake_case tables and columns, applied model-wide rather than
                 // per-property. See docs/DATA-MODEL.md#conventions.
                 .UseSnakeCaseNamingConvention());

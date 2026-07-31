@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Pos.Core.Auditing;
 using Pos.Core.Tenancy;
 using Pos.Data.Interceptors;
+using Pos.Data.Migrations;
 
 namespace Pos.Data.Tests.Infrastructure;
 
@@ -45,7 +46,13 @@ public sealed class ThrowawayEntityDbContext(DbContextOptions options, ITenantCo
         var options = new DbContextOptionsBuilder<ThrowawayEntityDbContext>()
             .UseNpgsql(connectionString)
             .UseSnakeCaseNamingConvention()
-            .AddInterceptors(new TenantSaveChangesInterceptor(tenantContext, new SystemActor(), TimeProvider.System))
+            .AddInterceptors(
+                new TenantSaveChangesInterceptor(tenantContext, new SystemActor(), TimeProvider.System),
+                // Publishes app.tenant_id, which the RLS policies read. Present here so a
+                // hand-built context is subject to layer 3 exactly as the application is —
+                // without it, an RLS assertion on this context would pass because no tenant
+                // was ever set, which is the wrong reason to be green.
+                new TenantConnectionInterceptor(tenantContext))
             .Options;
 
         return new ThrowawayEntityDbContext(options, tenantContext);
@@ -72,5 +79,12 @@ public sealed class ThrowawayEntityDbContext(DbContextOptions options, ITenantCo
                 updated_by  uuid NULL
             );
             """);
+
+        // The same SQL the migrations run, not a second copy of it. A table added by a
+        // later phase gets its policy this way too — which is precisely what this entity
+        // is standing in for. Grants come free: the RLS migration set ALTER DEFAULT
+        // PRIVILEGES for the owner, so a table it creates afterwards is already reachable
+        // by pos_app, and this table quietly proves that as well.
+        await context.Database.ExecuteSqlRawAsync(TenantSecurityMigrationExtensions.ApplySql);
     }
 }

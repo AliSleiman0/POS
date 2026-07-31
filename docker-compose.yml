@@ -12,8 +12,14 @@ services:
     container_name: pos-db
     environment:
       POSTGRES_DB: pos_dev
+      # The schema owner. A superuser, so it bypasses row-level security
+      # unconditionally — which is right for migrations and wrong for the API.
       POSTGRES_USER: pos
       POSTGRES_PASSWORD: dev_only_not_a_secret
+      # What the API connects as: NOBYPASSRLS, created by the init script below.
+      # Overridable so the same compose file can be pointed at a real secret;
+      # the default is a throwaway on the same terms as the one above.
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-dev_only_not_a_secret}
       # Deterministic collation so ORDER BY and unique indexes behave the same
       # here as in production, regardless of the host's locale.
       POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
@@ -21,6 +27,10 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Runs ONLY against an empty data directory. Changing anything in here
+      # means `docker compose down -v` — which destroys the local database — or
+      # it silently has no effect.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       # `pg_isready` alone reports true during initdb, before the DB accepts real
       # queries — so run an actual query. Without this, `compose up -d` followed

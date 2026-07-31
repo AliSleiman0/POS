@@ -36,7 +36,12 @@ dotnet build                                           # warnings are errors
 dotnet test                                            # all .NET tests
 dotnet run --project src/Pos.Api                       # API + /swagger
 dotnet ef migrations add <Name> --project src/Pos.Data --startup-project src/Pos.Api
-dotnet ef database update  --project src/Pos.Data --startup-project src/Pos.Api
+
+# Migrations connect as the schema OWNER. The app's connection string is pos_app, which
+# is NOBYPASSRLS and has no CREATE on the schema — so `database update` must be given the
+# owner explicitly or it fails with "permission denied for schema public".
+dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
+  --connection "Host=localhost;Port=5432;Database=pos_dev;Username=pos;Password=dev_only_not_a_secret"
 
 pnpm --dir src/Pos.Web dev
 pnpm --dir src/Pos.Web build

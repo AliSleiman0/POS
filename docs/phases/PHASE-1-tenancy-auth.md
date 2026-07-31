@@ -140,13 +140,20 @@ Two roles: a migration owner that bypasses RLS, and the application role that do
 
 `FORCE ROW LEVEL SECURITY` matters: without it, the table owner silently bypasses its own policy, and if the app connects as owner the policies do nothing while appearing to be in place.
 
+### As built
+
+- The loop lives in `Pos.Data/Migrations/TenantSecurityMigrationExtensions.cs`, not inside the migration. **A migration that has already been applied does not re-run**, so the catalog loop does not cover a table introduced in Phase 2 — that migration has to call `migrationBuilder.ApplyTenantRowLevelSecurity()` itself. `RowLevelSecurityTests.Every_tenant_owned_table_is_covered` is what fails when somebody forgets, which is the point: it is a build failure rather than a code review's job.
+- `nullif(current_setting('app.tenant_id', true), '')::uuid`, not the bare `current_setting`. An unset GUC reads as NULL but a **reset** one reads as the empty string, and `''::uuid` raises instead of yielding NULL. Both have to collapse to NULL so "no tenant" means "no rows".
+- `WITH CHECK` as well as `USING`, so a raw INSERT cannot write a row into a tenant it could never read back.
+- The whole `Pos.Api.Tests` suite now connects as `pos_app`. Run as the container's owner it would pass with no policies at all, because a superuser bypasses RLS unconditionally — `The_application_role_does_not_bypass_row_level_security` guards that.
+
 **Exit criteria**
-- [ ] RLS enabled and forced on every tenant table — by a `DO` block looping every table with a `tenant_id` column, not a hand-written list, so later phases inherit it
-- [ ] A test asserts every such table has RLS enabled, forced, and a policy
-- [ ] The app connects as a non-owner role
-- [ ] `set_config('app.tenant_id', $1, false)` issued from a connection interceptor
-- [ ] A test proves a pooled connection does not inherit the previous request's tenant
-- [ ] A raw-SQL query for another tenant's rows returns nothing, with a test
+- [x] RLS enabled and forced on every tenant table — by a `DO` block looping every table with a `tenant_id` column, not a hand-written list, so later phases inherit it
+- [x] A test asserts every such table has RLS enabled, forced, and a policy
+- [x] The app connects as a non-owner role
+- [x] `set_config('app.tenant_id', $1, false)` issued from a connection interceptor
+- [x] A test proves a pooled connection does not inherit the previous request's tenant
+- [x] A raw-SQL query for another tenant's rows returns nothing, with a test
 
 ## 1.7 Isolation test suite
 

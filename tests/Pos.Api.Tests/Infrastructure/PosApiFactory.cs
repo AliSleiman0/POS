@@ -9,6 +9,7 @@ using Pos.Core.Security;
 using Pos.Core.Tenancy;
 using Pos.Data;
 using Pos.Data.Identity;
+using Pos.TestSupport;
 using Testcontainers.PostgreSql;
 
 namespace Pos.Api.Tests.Infrastructure;
@@ -43,15 +44,36 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
     public const string Issuer = "https://pos.test";
     public const string Audience = "https://pos.test";
 
+    /// <summary>
+    /// What the hosted application connects as: <c>pos_app</c>, which is
+    /// <c>NOBYPASSRLS</c>. Set before the host is built, since that is when
+    /// <see cref="ConfigureWebHost"/> reads it.
+    /// </summary>
+    private string _appConnectionString = string.Empty;
+
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
 
+        var ownerConnectionString = _container.GetConnectionString();
+
+        await AppRoleBootstrap.CreateAsync(ownerConnectionString);
+        _appConnectionString = AppRoleBootstrap.ConnectionStringFor(ownerConnectionString);
+
+        // Migrations run as the owner, in a service provider of their own. They cannot run
+        // through the hosted app's provider any more: pos_app has no CREATE on the schema,
+        // which is the point of it. Splitting the two roles here is what makes the suite
+        // exercise the same privilege boundary a real deployment has.
+        var migrator = new ServiceCollection();
+        migrator.AddPosData(ownerConnectionString);
+
+        await using (var provider = migrator.BuildServiceProvider())
+        {
+            await using var migrationScope = provider.CreateAsyncScope();
+            await migrationScope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
+        }
+
         await using var scope = Services.CreateAsyncScope();
-
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await db.Database.MigrateAsync();
-
         await SeedRolesAsync(scope.ServiceProvider);
     }
 
@@ -75,7 +97,10 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
         // built, but Program.cs reads builder.Configuration *before* Build() — to fail fast
         // on a missing connection string and signing key. Values added the other way arrive
         // too late to be read, and the app starts with neither.
-        builder.UseSetting("ConnectionStrings:Postgres", _container.GetConnectionString());
+        // pos_app, not the container's owner account. The owner is a superuser and
+        // bypasses row-level security unconditionally, so a suite run as the owner asserts
+        // that isolation works while proving only that the query filters do.
+        builder.UseSetting("ConnectionStrings:Postgres", _appConnectionString);
         builder.UseSetting(JwtOptions.Keys.Issuer, Issuer);
         builder.UseSetting(JwtOptions.Keys.Audience, Audience);
         builder.UseSetting(JwtOptions.Keys.SigningKey, SigningKey);

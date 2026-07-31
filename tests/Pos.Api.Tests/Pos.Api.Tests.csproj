@@ -16,6 +16,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Linked, not copied: the pos_app bootstrap is a security fixture, and two
+         copies of one drift while only one of them gets read. -->
+    <Compile Include="..\Shared\AppRoleBootstrap.cs" Link="Infrastructure\AppRoleBootstrap.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

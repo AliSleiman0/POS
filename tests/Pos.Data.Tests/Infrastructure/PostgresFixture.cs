@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Pos.TestSupport;
 using Testcontainers.PostgreSql;
 
 namespace Pos.Data.Tests.Infrastructure;
@@ -23,11 +24,27 @@ public sealed class PostgresFixture : IAsyncLifetime
         .WithPassword("test_only_not_a_secret")
         .Build();
 
+    /// <summary>
+    /// Connected as the schema owner — a superuser, which <b>bypasses row-level security
+    /// unconditionally</b>. Correct for migrations and for a test that needs to see across
+    /// tenants to prove something was written. Never how the application connects.
+    /// </summary>
     public string ConnectionString => _container.GetConnectionString();
+
+    /// <summary>
+    /// Connected as <c>pos_app</c>, which is how the application connects and therefore the
+    /// only connection an isolation assertion means anything on.
+    /// </summary>
+    public string AppConnectionString { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
+
+        // Before migrating: the RLS migration refuses to run without this role, deliberately,
+        // rather than granting to a role that does not exist and failing halfway.
+        await AppRoleBootstrap.CreateAsync(ConnectionString);
+        AppConnectionString = AppRoleBootstrap.ConnectionStringFor(ConnectionString);
 
         // Migrations, not EnsureCreated: the schema under test has to be the schema the
         // migrations produce, or the suite validates a model that never reaches a database.

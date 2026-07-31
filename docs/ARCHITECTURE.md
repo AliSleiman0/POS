@@ -68,9 +68,27 @@ A `SaveChangesInterceptor`:
 
 ### Layer 3 — Postgres row-level security
 
-Global query filters **do not apply** to `FromSqlRaw`, `ExecuteSqlRaw`, Dapper, or anything hand-written. That gap is covered in the database: every tenant table has an RLS policy comparing `tenant_id` to `current_setting('app.tenant_id')`, and the application sets that setting with `SET LOCAL` when a connection is checked out.
+Global query filters **do not apply** to `FromSqlRaw`, `ExecuteSqlRaw`, Dapper, or anything hand-written. That gap is covered in the database: every table carrying a `tenant_id` column has RLS `ENABLE`d, `FORCE`d, and a `tenant_isolation` policy comparing `tenant_id` to `app.tenant_id`.
 
-If layers 1 and 2 are bypassed by a bug, the database still returns nothing. The migration owner role bypasses RLS; the application role does not.
+`TenantConnectionInterceptor` publishes that setting on every connection open:
+
+```sql
+SELECT set_config('app.tenant_id', $1, false)
+```
+
+**Session-level, not `SET LOCAL`.** `SET LOCAL` is scoped to the enclosing transaction, and outside an explicit one that is the implicit single-statement transaction — which ends immediately. EF reads open no transaction, so the setting would be gone before the query that needed it. RLS would have looked configured and enforced nothing.
+
+Session scoping is safe only because Npgsql sends `DISCARD ALL` when a pooled connection is returned. Two things must therefore stay as they are: **`No Reset On Close` must not be enabled, and multiplexing must stay off.** `RowLevelSecurityTests.A_pooled_connection_does_not_inherit_the_previous_scopes_tenant` pins both, using `Max Pool Size=1` so connection reuse is guaranteed rather than likely.
+
+The value is passed as a **parameter**. `set_config` exists precisely so a session variable can be set without string concatenation; `SET` cannot take a parameter, which is how this becomes an injection point.
+
+The policy reads `nullif(current_setting('app.tenant_id', true), '')::uuid` — an unset GUC reads as NULL, a *reset* one as the empty string, and `''::uuid` raises rather than yielding NULL. Both collapse to NULL so that "no tenant" means "no rows". It carries `WITH CHECK` as well as `USING`, so a raw INSERT cannot write into a tenant it could never read back.
+
+**Two roles.** `pos` owns the schema and runs migrations. `pos_app` is `NOBYPASSRLS`, has no `CREATE` on the schema, and is what the API connects as — a role that can create a table can create one with no policy on it. `FORCE` is what stops a non-superuser owner bypassing its own policy; `NOBYPASSRLS` is what stops a superuser doing it.
+
+Role creation needs a password, so it is a bootstrap step (`docker/postgres-init/01-app-role.sh`) rather than a migration — no secrets in committed SQL. The migration does the grants and `ALTER DEFAULT PRIVILEGES`, so tables added later are reachable without anyone remembering.
+
+**One thing that does not take care of itself:** an applied migration does not re-run, so the catalog loop does not reach a table added in a later phase. Any migration introducing a tenant-owned table must call `migrationBuilder.ApplyTenantRowLevelSecurity()`. `RowLevelSecurityTests.Every_tenant_owned_table_is_covered` fails the build when it does not.
 
 ### Testing the isolation
 
@@ -89,11 +107,36 @@ These tests are not optional and are re-run against production in Phase 8.6.
 
 Retail reality: a register is a shared device on a counter, and a cashier cannot type an email and password between customers.
 
-1. **Credential login** (`POST /auth/login`) — email + password, for Owner/Manager and for the initial registration of a device. Returns an access token + refresh token.
-2. **Device registration** — a register is enrolled once by a Manager/Owner and holds a long-lived device token.
-3. **PIN login** (`POST /auth/pin`) — from an enrolled device only, a cashier presents a 4–6 digit PIN to start a session. PINs are hashed (never compared in plaintext), rate-limited, and locked out after repeated failures.
+1. **Credential login** (`POST /auth/login`) — **tenant slug** + email + password, for Owner/Manager and for enrolling a device. Returns an access token + refresh token.
+2. **Device enrollment** — a register is enrolled once by an Owner and receives a device token, shown exactly once and stored only as a SHA-256 digest.
+3. **PIN login** (`POST /auth/pin`) — from an enrolled device only, a cashier presents a 4–6 digit PIN to start a session. PINs are hashed with the password hasher (never compared in plaintext), rate-limited per device, and locked out per user after repeated failures.
+
+**Login names the tenant, and that is load-bearing.** The server resolves the `tenant` row by slug — that table is the tenant list, so it carries no `TenantId`, no query filter and no RLS — and only then looks for a user. The alternative, finding the user first and reading the tenant off their row, would force `application_user`, `refresh_token` and `register` permanently outside both the query filter and RLS: the three tables an attacker would most like to read across tenants. Naming the tenant first is what makes "no table is an exception" true, and therefore checkable by a test.
+
+A slug is a pre-authentication **selector**, not a `TenantId` — it narrows the search, and the credentials still have to match a user inside that tenant. After login, `TenantId` comes from the validated token and nowhere else, so this is not a breach of invariant 2. Login returns one identical response, with comparable timing, for unknown slug, unknown email and wrong password.
 
 **A PIN is never sufficient authentication on its own.** It authenticates a person *to an already-trusted device*, which is why the device token exists. A 4-digit secret is otherwise trivially brute-forced.
+
+#### The `DeviceToken` scheme and the `EnrolledDevice` policy
+
+`X-Device-Token` is validated by a real authentication scheme (`DeviceTokenAuthenticationHandler`), not by a check inside the endpoint — **authentication runs before the endpoint does**, so a PIN request from an unenrolled till is rejected before the PIN is read. It cannot be used as a PIN oracle, and it cannot be used to lock every cashier out by burning their attempt budgets.
+
+The `EnrolledDevice` policy **names the scheme explicitly** (`.AddAuthenticationSchemes(...)`). Left to the default, a cashier's ordinary access token would satisfy "enrolled device" and the second factor would disappear with nothing going red. It is registered outside `PolicyCatalog`, which maps policies to *roles* and is pinned to the table below by a test; a device has no role.
+
+Two independent caps, and neither replaces the other:
+
+| | Counts | Stops |
+|---|---|---|
+| Identity lockout | failures per **user** | one person's PIN being guessed from anywhere |
+| `pin-attempts` rate limit | attempts per **device token** | one till walking the staff list, 5 attempts per name — the list being served by `GET /employees/pin-eligible` |
+
+#### Opaque tokens
+
+Refresh tokens and device tokens share one format: `base64url(tenantId) "." base64url(32 random bytes)`. Both are presented when no tenant is known yet, and without the prefix, looking one up would mean querying across every tenant — the exact unscoped read this design exists to prevent.
+
+The prefix is **not** a credential. It selects which tenant to search; the 256-bit half authenticates, matched by digest inside that tenant. A forged prefix lands the caller in a tenant where their hash matches nothing.
+
+Note the deliberate asymmetry: PINs and passwords use the slow salted password hasher because a human chose them; device and refresh tokens use a plain SHA-256 because they are 256 random bits and a *deterministic* digest is required to find the row at all.
 
 ### Tokens
 
