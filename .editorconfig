@@ -69,6 +69,11 @@ dotnet_diagnostic.CA1707.severity = none
 dotnet_diagnostic.CA1861.severity = none
 dotnet_diagnostic.CA5394.severity = none
 
+# CA1711 reserves the "Collection" suffix for ICollection implementations. xUnit's
+# [CollectionDefinition] classes are named that way by convention and by every example
+# in its docs; renaming them to satisfy the rule makes the fixture wiring harder to find.
+dotnet_diagnostic.CA1711.severity = none
+
 [*.{ts,tsx,js,jsx,json,jsonc,css,scss,html,yml,yaml}]
 indent_size = 2
 
