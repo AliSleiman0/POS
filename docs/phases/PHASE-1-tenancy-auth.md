@@ -159,15 +159,41 @@ Two roles: a migration owner that bypasses RLS, and the application role that do
 
 `tests/Pos.Api.Tests/Isolation/` — the tests this whole phase exists to pass. Seed two tenants with deliberately similar data (same product names, same emails, same SKUs) so a leak is unmistakable.
 
-- [ ] Every collection endpoint, as tenant B, returns none of tenant A's rows
-- [ ] `GET /{resource}/{tenantA-id}` as tenant B → **404, not 403** (403 confirms existence)
-- [ ] A direct `DbContext` query in the test host is filtered
-- [ ] A raw-SQL path returns nothing (RLS)
-- [ ] A request body containing tenant A's `TenantId` is rejected, not honoured
-- [ ] A token with a forged/absent `tenant_id` claim is rejected
-- [ ] Tenant A's user cannot authenticate into tenant B's data with valid credentials
+- [x] Every collection endpoint, as tenant B, returns none of tenant A's rows
+- [x] `GET /{resource}/{tenantA-id}` as tenant B → **404, not 403** (403 confirms existence)
+- [x] A direct `DbContext` query in the test host is filtered
+- [x] A raw-SQL path returns nothing (RLS)
+- [x] A request body containing tenant A's `TenantId` is **never honoured** — see the note below
+- [x] A token with a forged/absent `tenant_id` claim is rejected
+- [x] Tenant A's user cannot authenticate into tenant B's data with valid credentials
 
 Uses `WebApplicationFactory` + Testcontainers Postgres so it runs against real RLS, not an in-memory provider that silently ignores it.
+
+### As built
+
+The suite is **driven off a manifest** (`Isolation/IsolationManifest.cs`) listing every endpoint and
+how its tenancy is proven; `EndpointCoverageTests` diffs that manifest against the router's own
+endpoint table in both directions. Mapping an endpoint without deciding how it is isolation-tested is
+therefore a build failure naming the route, which is the same mechanism as
+`RowLevelSecurityTests.Every_tenant_owned_table_is_covered` one layer down. **Phase 2 adds a row, not
+a test file** — and an `Exempt` row must name the test where the coverage does live, so the manifest
+reads as this phase's audit record rather than a list of skips.
+
+Three things worth keeping:
+
+- **Item 5 says "rejected"; what the server does is ignore.** `CreateRegisterRequest` has no
+  `TenantId` to bind to, so an extra property in the body goes nowhere and the interceptor stamps the
+  tenant from the token regardless. The guarantee asserted is therefore *never honoured*, which is the
+  one that matters. Rejecting unknown properties outright (`UnmappedMemberHandling.Disallow`) was
+  considered and not done: it breaks every client on the first field the server has not heard of yet,
+  and buys nothing here.
+- **A 404-asserting test passes when the URL is wrong.** The by-id theory builds its URLs by
+  substituting into the route template from the manifest key — the same key `EndpointCoverageTests`
+  has already matched against the routing table — so a route that does not exist cannot be addressed.
+  Verified by pointing the theory at a *reachable* id and watching the 404 become a 204.
+- **The negative-authorization theory probes an id that exists in no tenant.** If an authorization
+  check were removed, the answer is 404 rather than a real write against a real till, and 404 fails
+  the assertion.
 
 ---
 

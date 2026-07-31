@@ -51,6 +51,9 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
     /// </summary>
     private string _appConnectionString = string.Empty;
 
+    private readonly SemaphoreSlim _worldGate = new(1, 1);
+    private Isolation.TwoTenantWorld? _world;
+
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
@@ -195,6 +198,54 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
         await db.SaveChangesAsync();
 
         return new EnrolledRegister(register.Id, token);
+    }
+
+    /// <summary>Creates a till and leaves it unenrolled, as <c>POST /registers</c> does.</summary>
+    public async Task<Guid> CreateRegisterAsync(Guid tenantId, string name)
+    {
+        var id = Guid.Empty;
+
+        await AsTenantAsync(tenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var register = new Register { Name = name };
+
+            db.Registers.Add(register);
+            await db.SaveChangesAsync();
+
+            id = register.Id;
+        });
+
+        return id;
+    }
+
+    /// <summary>
+    /// The two deliberately identical tenants the isolation suite attacks across, seeded
+    /// once for the whole assembly.
+    /// </summary>
+    /// <remarks>
+    /// Seeding costs several Identity password hashes per tenant, which are slow by design,
+    /// so this is built on first use and shared. It is safe to share only because no test
+    /// adds to or removes from the collections the suite asserts on — see the note on
+    /// <see cref="Isolation.TwoTenantWorld"/>.
+    /// </remarks>
+    public async Task<Isolation.TwoTenantWorld> IsolationWorldAsync()
+    {
+        if (_world is not null)
+        {
+            return _world;
+        }
+
+        await _worldGate.WaitAsync();
+
+        try
+        {
+            return _world ??= await Isolation.TwoTenantWorld.SeedAsync(this);
+        }
+        finally
+        {
+            _worldGate.Release();
+        }
     }
 
     /// <summary>Clears a till's device token, as <c>POST /registers/{id}/revoke</c> does.</summary>

@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 1 in progress — 1.1–1.6 done, 1.7 next |
-| **Next up** | 1.7, the isolation suite. It gates Phase 2. Branch `phase-1/tenancy-auth`. |
+| **Current phase** | Phase 1 complete — 1.1–1.7 done, 133 tests green |
+| **Next up** | Phase 2, catalog & inventory. Phase 1's gate is passed. Branch `phase-1/tenancy-auth` is ready to merge. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-07-31 |
 
@@ -21,7 +21,7 @@
 | Phase | Name | Scope | Status |
 |---|---|---|---|
 | 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | ✅ Done |
-| 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | 🔨 In progress (1.1–1.6 done) |
+| 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ✅ Done |
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ⬜ Not started |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ⬜ Not started |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ⬜ Not started |
@@ -59,7 +59,7 @@ The load-bearing phase. Everything after it assumes tenant scoping is automatic 
 - [x] **1.4 JWT + RBAC** — access + rotating refresh tokens with `FamilyId` revoke-on-reuse; named policies registered from one catalog that a test compares against the table in `ARCHITECTURE.md`. No `FallbackPolicy`: a missing authorization decision fails the build instead of defaulting.
 - [x] **1.5 PIN login** — enrolled register + hashed 4–6 digit cashier PIN. The device check is an authentication *scheme*, so an unenrolled till is turned away before the PIN is read. Two independent caps: per-user lockout, and a rate limit partitioned on the device token so one till cannot walk the staff list to get around it.
 - [x] **1.6 RLS hardening** — Postgres row-level security on `current_setting('app.tenant_id')`, published session-level by a connection interceptor. The app connects as `pos_app` (`NOBYPASSRLS`); migrations run as the owner. Enabled, forced and policied by a catalog loop, not a hand-written table list — **but an applied migration does not re-run, so a Phase 2 migration adding a tenant table must call `ApplyTenantRowLevelSecurity()`**; a test fails the build if it does not.
-- [ ] **1.7 Isolation test suite** — two seeded tenants; every read path (endpoint, `DbContext`, raw SQL) proven blind to the other tenant; a cross-tenant `TenantId` in a request body is rejected, not honoured.
+- [x] **1.7 Isolation test suite** — two tenants seeded with identical data, so a leak doubles a list instead of having to be spotted by id. Every read path (endpoint, `DbContext`, raw SQL) proven blind to the other tenant; a cross-tenant `TenantId` in a request body is never honoured. Driven off a **manifest of every endpoint** that a test diffs against the router's own table — **so Phase 2 adds a row, not a test file, and forgetting fails the build**.
 
 ## Phase 2 — Catalog & inventory
 

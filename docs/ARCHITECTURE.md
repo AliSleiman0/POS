@@ -97,7 +97,18 @@ Role creation needs a password, so it is a bootstrap step (`docker/postgres-init
 - every collection endpoint returns none of tenant A's rows,
 - fetching tenant A's row by its known id returns **404, not 403** (a 403 confirms the row exists — an information leak),
 - a raw-SQL query path returns nothing,
-- posting a body containing tenant A's `TenantId` is rejected.
+- posting a body containing tenant A's `TenantId` does not put the row in tenant A.
+
+The two tenants hold **identical** data — same emails, same display names, same till names — so a leak
+doubles a list rather than being something to spot by comparing ids.
+
+**Adding an endpoint means adding a row to `Isolation/IsolationManifest.cs`.** That manifest lists
+every endpoint and how its tenancy is proven, and `EndpointCoverageTests` diffs it against the router's
+own endpoint table in both directions — so mapping a route without deciding how it is isolation-tested
+fails the build with the route named, and a manifest row for a route that no longer exists fails too.
+An endpoint that genuinely needs no isolation test is marked `Exempt` **with the test where its
+coverage does live**. The same manifest drives the negative-authorization theory, so both halves of
+CLAUDE.md invariant 9 arrive together.
 
 These tests are not optional and are re-run against production in Phase 8.6.
 
@@ -114,6 +125,8 @@ Retail reality: a register is a shared device on a counter, and a cashier cannot
 **Login names the tenant, and that is load-bearing.** The server resolves the `tenant` row by slug — that table is the tenant list, so it carries no `TenantId`, no query filter and no RLS — and only then looks for a user. The alternative, finding the user first and reading the tenant off their row, would force `application_user`, `refresh_token` and `register` permanently outside both the query filter and RLS: the three tables an attacker would most like to read across tenants. Naming the tenant first is what makes "no table is an exception" true, and therefore checkable by a test.
 
 A slug is a pre-authentication **selector**, not a `TenantId` — it narrows the search, and the credentials still have to match a user inside that tenant. After login, `TenantId` comes from the validated token and nowhere else, so this is not a breach of invariant 2. Login returns one identical response, with comparable timing, for unknown slug, unknown email and wrong password.
+
+**The signing key is the tenancy boundary.** The three layers above all scope a request to the tenant its token *claims*; none of them second-guesses the claim, and nothing re-checks per request that the token's `sub` belongs to its `tenant_id`. That is accepted rather than overlooked — minting such a token needs the key, and a key holder can mint anything — but it is the reason key handling is not merely a deployment detail. The reasoning, and what closing it would cost, is in [`DECISIONS.md`](../DECISIONS.md#resolved-2026-07-31-during-phase-1).
 
 **A PIN is never sufficient authentication on its own.** It authenticates a person *to an already-trusted device*, which is why the device token exists. A 4-digit secret is otherwise trivially brute-forced.
 

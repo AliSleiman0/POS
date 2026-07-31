@@ -105,6 +105,26 @@ Four gaps the planning docs left open. All four are load-bearing for tenant isol
 
 - **RLS uses session-level `set_config`, not `SET LOCAL`.** `PHASE-1.6` says `SET LOCAL`, which is wrong in a way that would have shipped silently: outside an explicit transaction it is scoped to the implicit single-statement transaction, and EF reads do not open transactions. RLS would have looked configured and enforced nothing. The setting is issued from a connection interceptor as `SELECT set_config('app.tenant_id', $1, false)` — parameterised, never interpolated. Safe with pooling because Npgsql sends `DISCARD ALL` on reset, so the connection string must **not** set `No Reset On Close=true` and multiplexing must stay off.
 
+- **A validly signed access token is trusted for whatever tenant it names.** Nothing re-checks, per
+  request, that the token's `sub` actually belongs to its `tenant_id`. So a token minted with another
+  tenant's id and `role: Owner` reads that tenant's data on any path that does not itself load the
+  user — `GET /registers` needs only the role claim, whereas `/auth/me` happens to catch the mismatch
+  because it looks the subject up.
+
+  **Accepted, and recorded rather than fixed.** Producing such a token requires the signing key, and
+  anyone holding it can mint any claim they like — so this is not reachable from outside. What it
+  means is that **the signing key is the tenancy boundary**, and it should be read alongside the three
+  layers, which all sit *below* it: they scope a request to the tenant the token claims, and none of
+  them second-guesses the claim.
+
+  Closing it means an `OnTokenValidated` that confirms the subject exists in the claimed tenant and is
+  still active — one indexed lookup per request, which would also stop a deactivated user's token
+  working for the remainder of its 15 minutes. Worth doing when there is a reason to (a key rotation
+  story, or staff turnover complaints); not worth the per-request cost purely on the strength of a
+  threat that starts with "the signing key leaked". Pinned by
+  `ForgedTenancyTests.A_validly_signed_token_is_trusted_for_whatever_tenant_it_names`, which goes red
+  if anyone changes it — deliberately, so the change is a decision and not a surprise.
+
 ### Resolved 2026-07-30
 
 - ~~Postgres vs. SQL Server~~ → **Postgres** (see Tech Stack).
@@ -121,6 +141,9 @@ Called out because they are cheap now and expensive-to-impossible later:
 
 ## Current State
 
-Planning docs written; **no application code yet**. Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 0.
+**Phases 0 and 1 are complete**, on branch `phase-1/tenancy-auth`. Tenant isolation is built and
+proven at all three layers; Identity, JWT, RBAC and PIN login are in. 133 tests green, the Data and Api
+suites against real Postgres via Testcontainers.
 
-Phase 0 is blocked on prerequisites that need a human: this machine has Node 24, pnpm and git, but **no .NET SDK, no Docker and no WSL2**. `wsl --install` requires a reboot and Docker Desktop's first run is interactive. See [Phase 0.1](docs/phases/PHASE-0-foundation.md).
+Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 2, and read
+[`docs/HANDOFF.md`](docs/HANDOFF.md) first for session state.

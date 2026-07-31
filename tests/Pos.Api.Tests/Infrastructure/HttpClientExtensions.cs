@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Pos.Api.Auth;
 
 namespace Pos.Api.Tests.Infrastructure;
 
@@ -35,6 +36,16 @@ public static class HttpClientExtensions
         ArgumentNullException.ThrowIfNull(client);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        return client;
+    }
+
+    /// <summary>Presents an enrolled till's device token, as a register would.</summary>
+    public static HttpClient WithDeviceToken(this HttpClient client, string deviceToken)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+
+        client.DefaultRequestHeaders.Remove(DeviceTokenAuthenticationHandler.HeaderName);
+        client.DefaultRequestHeaders.Add(DeviceTokenAuthenticationHandler.HeaderName, deviceToken);
         return client;
     }
 
