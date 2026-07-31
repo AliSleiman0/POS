@@ -87,6 +87,24 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - **Payment processor** — Stripe leads (best API, and Stripe Terminal covers physical readers for the desktop app), but the MVP is cash-only so the choice is deferred to [Phase 11](docs/ROADMAP.md#beyond-mvp) behind an `IPaymentProvider` port.
 
+### Resolved 2026-07-31 (during Phase 1)
+
+Four gaps the planning docs left open. All four are load-bearing for tenant isolation; none should be revisited without reading the reasoning here first.
+
+- **Login names the tenant.** `POST /auth/login` takes `{ tenantSlug, email, password }`. The server resolves the `tenant` row by slug — that table is the tenant list, so it carries no `TenantId`, no query filter and no RLS — sets the ambient tenant, and only then looks for a user.
+
+  The alternative, which `PHASE-1.3` originally described, was to find the user first and read the tenant off their row. That forces `application_user` (and `refresh_token`, and `register`) permanently outside both the query filter and RLS — the three tables an attacker would most like to read across tenants. Naming the tenant first means **no table is an exception**, which is what makes "every tenant table is scoped" a statement a test can check.
+
+  **This is not a breach of invariant 2.** A slug is a pre-authentication *selector*, not a `TenantId`: it only narrows the search, and the credentials still have to match a user inside that tenant. After login, `TenantId` comes from the validated token and nowhere else. Login returns one identical response and comparable timing for unknown slug, unknown email and wrong password, so it is not a tenant-enumeration oracle.
+
+- **Every non-JWT token carries its tenant as a prefix**: `base64url(tenantId).base64url(32 random bytes)`. Applies to refresh tokens and register device tokens, both of which are presented when no tenant is known. Without the prefix, looking one up means querying across every tenant — the exact unscoped read this phase exists to prevent. The prefix is untrusted and only selects which tenant to search; the 256-bit half authenticates, matched by SHA-256 inside that tenant. A forged prefix lands the caller in a tenant where their hash matches nothing.
+
+  Note the deliberate asymmetry in hashing: PINs and passwords use the slow salted password hasher because a human chose them and a 4-digit PIN has 10,000 values; device and refresh tokens use a plain SHA-256 because they are 256 random bits and a *deterministic* digest is required to look the row up at all.
+
+- **Two Postgres roles.** `pos` owns the schema and runs migrations; `pos_app` is `NOBYPASSRLS` and is what the API connects as. `FORCE ROW LEVEL SECURITY` is set regardless. Role *creation* needs a password so it is a bootstrap step, not a migration — no secrets in committed SQL. The migration does the grants and `ALTER DEFAULT PRIVILEGES`, so tables added in later phases are covered without anyone remembering.
+
+- **RLS uses session-level `set_config`, not `SET LOCAL`.** `PHASE-1.6` says `SET LOCAL`, which is wrong in a way that would have shipped silently: outside an explicit transaction it is scoped to the implicit single-statement transaction, and EF reads do not open transactions. RLS would have looked configured and enforced nothing. The setting is issued from a connection interceptor as `SELECT set_config('app.tenant_id', $1, false)` — parameterised, never interpolated. Safe with pooling because Npgsql sends `DISCARD ALL` on reset, so the connection string must **not** set `No Reset On Close=true` and multiplexing must stay off.
+
 ### Resolved 2026-07-30
 
 - ~~Postgres vs. SQL Server~~ → **Postgres** (see Tech Stack).
