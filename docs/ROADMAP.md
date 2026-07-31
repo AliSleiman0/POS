@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 0 complete — next is Phase 1, multi-tenancy & auth spine |
-| **Next up** | 1.1 Tenant primitives. Phase 0 is done end to end (0.1–0.7); CI is green on push and PR. |
+| **Current phase** | Phase 1 complete — 1.1–1.7 done, 133 tests green |
+| **Next up** | Phase 2, catalog & inventory. Phase 1's gate is passed and merged to `main`. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-07-31 |
 
@@ -21,7 +21,7 @@
 | Phase | Name | Scope | Status |
 |---|---|---|---|
 | 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | ✅ Done |
-| 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ⬜ Not started |
+| 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ✅ Done |
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ⬜ Not started |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ⬜ Not started |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ⬜ Not started |
@@ -53,13 +53,13 @@ Detail: [phases/PHASE-0-foundation.md](phases/PHASE-0-foundation.md)
 
 The load-bearing phase. Everything after it assumes tenant scoping is automatic and unforgeable. Detail: [phases/PHASE-1-tenancy-auth.md](phases/PHASE-1-tenancy-auth.md)
 
-- [ ] **1.1 Tenant primitives** — `ITenantContext` resolved per request from the JWT `tenant_id` claim; `Tenant` entity; abstract `TenantEntity` base.
-- [ ] **1.2 Automatic scoping** — global query filters applied to every `TenantEntity` **by reflection** so a new entity can't be forgotten; `SaveChangesInterceptor` stamps `TenantId` on insert and throws on cross-tenant modification.
-- [ ] **1.3 Tenant-scoped Identity** — `ApplicationUser` with `TenantId`; Identity's unique index on `NormalizedEmail` replaced with composite `(TenantId, NormalizedEmail)`.
-- [ ] **1.4 JWT + RBAC** — access + rotating refresh tokens; `Cashier`/`Manager`/`Owner` behind *named policies* (`CanRefund`, `CanEditPrice`, …), not role literals at call sites.
-- [ ] **1.5 PIN login** — device-registered register + hashed 4–6 digit cashier PIN, rate-limited with lockout. PIN alone is never sufficient from an unregistered device.
-- [ ] **1.6 RLS hardening** — Postgres row-level security on `current_setting('app.tenant_id')`, set via `SET LOCAL` per connection. Covers the raw-SQL paths EF filters miss.
-- [ ] **1.7 Isolation test suite** — two seeded tenants; every read path (endpoint, `DbContext`, raw SQL) proven blind to the other tenant; a cross-tenant `TenantId` in a request body is rejected, not honoured.
+- [x] **1.1 Tenant primitives** — `ITenantContext` resolved per request from the JWT `tenant_id` claim; `Tenant` entity; abstract `TenantEntity` base. Unresolved tenant **throws**; `AmbientTenantContext` resolves once per scope and refuses to switch.
+- [x] **1.2 Automatic scoping** — query filters applied by reflection to every `ITenantOwned` (an interface, not the base class — `ApplicationUser` must inherit `IdentityUser<Guid>`); `SaveChangesInterceptor` stamps on insert and **rejects** an insert carrying another tenant's id rather than correcting it. Proved against a throwaway entity that nothing registers.
+- [x] **1.3 Tenant-scoped Identity** — `ApplicationUser : ITenantOwned`; Identity's platform-wide unique indexes replaced with composites leading on `TenantId`; Identity's satellite tables carry `TenantId`; the .NET 10 passkey table is ignored outright.
+- [x] **1.4 JWT + RBAC** — access + rotating refresh tokens with `FamilyId` revoke-on-reuse; named policies registered from one catalog that a test compares against the table in `ARCHITECTURE.md`. No `FallbackPolicy`: a missing authorization decision fails the build instead of defaulting.
+- [x] **1.5 PIN login** — enrolled register + hashed 4–6 digit cashier PIN. The device check is an authentication *scheme*, so an unenrolled till is turned away before the PIN is read. Two independent caps: per-user lockout, and a rate limit partitioned on the device token so one till cannot walk the staff list to get around it.
+- [x] **1.6 RLS hardening** — Postgres row-level security on `current_setting('app.tenant_id')`, published session-level by a connection interceptor. The app connects as `pos_app` (`NOBYPASSRLS`); migrations run as the owner. Enabled, forced and policied by a catalog loop, not a hand-written table list — **but an applied migration does not re-run, so a Phase 2 migration adding a tenant table must call `ApplyTenantRowLevelSecurity()`**; a test fails the build if it does not.
+- [x] **1.7 Isolation test suite** — two tenants seeded with identical data, so a leak doubles a list instead of having to be spotted by id. Every read path (endpoint, `DbContext`, raw SQL) proven blind to the other tenant; a cross-tenant `TenantId` in a request body is never honoured. Driven off a **manifest of every endpoint** that a test diffs against the router's own table — **so Phase 2 adds a row, not a test file, and forgetting fails the build**.
 
 ## Phase 2 — Catalog & inventory
 
@@ -161,6 +161,17 @@ A phase is done when:
 
 1. Every milestone's exit criteria is met.
 2. `dotnet build` and `pnpm build` are warning-free (warnings are errors).
-3. All tests pass.
+3. **The phase's own tests are written and green** — locally *and* in CI. See below.
 4. The checkboxes here and the phase doc are updated.
 5. Work is committed on a branch with a phase-scoped message.
+
+### Test the phase before starting the next one
+
+**Testing is not allowed to accumulate.** Each phase is tested and green before the next phase begins — no "we'll write the tests later", no batched testing pass three phases downstream.
+
+- **UI testing is the one that must never accumulate.** In Phases 4–7 a milestone is not done until its Vitest/Playwright coverage exists *and* somebody has looked at the screen in a browser. jsdom does not paint, so a green component suite is not evidence the UI works — "we'll add Playwright later" is how a frontend ends up with none.
+- A trailing `N.x Tests` milestone in a phase doc is the **floor, not the plan**. Tests land with each milestone as it is built (invariant 9 in [`CLAUDE.md`](../CLAUDE.md) — tests ship with the behaviour).
+- Green means green **in CI**, not just on this machine. Phase 0 shipped two bugs that were invisible locally and only failed on the runner; `$env:CI="true"` before building reproduces that environment.
+- A phase with missing or failing tests is ⏸️ blocked, not ✅ done. If the next phase starts anyway, say so out loud and record it here — don't let it pass silently.
+
+The reason is that the phases are load-bearing on each other. Phase 1's tenant isolation and Phase 3's money and idempotency rules are inherited by everything built after them; a gap found late means auditing all of it by hand instead of reading one failing test.

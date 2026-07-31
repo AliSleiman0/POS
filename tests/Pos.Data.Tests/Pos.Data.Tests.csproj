@@ -5,10 +5,20 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Real Postgres. An in-memory provider silently ignores row-level security,
+         check constraints and column types — every guarantee this project exists
+         to verify. A suite built on one would be green and worthless. -->
+    <PackageReference Include="Testcontainers.PostgreSql" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Pos.Data\Pos.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Linked, not copied: the pos_app bootstrap is a security fixture, and two
+         copies of one drift while only one of them gets read. -->
+    <Compile Include="..\Shared\AppRoleBootstrap.cs" Link="Infrastructure\AppRoleBootstrap.cs" />
   </ItemGroup>
 
   <ItemGroup>

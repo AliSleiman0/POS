@@ -1,0 +1,317 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Pos.Api.Tests.Infrastructure;
+using Pos.Core.Security;
+using Pos.Data;
+using Pos.Data.Identity;
+
+namespace Pos.Api.Tests.Isolation;
+
+/// <summary>How an endpoint is attacked across a tenant boundary.</summary>
+public enum IsolationKind
+{
+    /// <summary>Returns a list. As tenant B it must return B's rows and only B's rows.</summary>
+    Collection,
+
+    /// <summary>Takes an id. Given tenant A's id, as tenant B, it must answer 404 — not 403.</summary>
+    ById,
+
+    /// <summary>Neither, for a stated reason. <see cref="IsolationCase.Exemption"/> says which.</summary>
+    Exempt,
+}
+
+/// <summary>Who is making the request.</summary>
+public enum Actor
+{
+    /// <summary>No credentials at all.</summary>
+    Anonymous,
+
+    /// <summary>Tenant B's owner, holding every policy.</summary>
+    OwnerOfB,
+
+    /// <summary>Tenant B's cashier, holding only <c>CanSell</c>.</summary>
+    CashierOfB,
+
+    /// <summary>Tenant B's enrolled till, which has a tenant but no user and no role.</summary>
+    DeviceOfB,
+}
+
+/// <summary>One endpoint's entry in the manifest.</summary>
+public sealed record IsolationCase
+{
+    /// <summary>
+    /// <c>"POST api/v1/registers/{id:guid}/enroll"</c> — the HTTP method and the route
+    /// pattern exactly as the router reports it, with the slashes trimmed.
+    /// </summary>
+    public required string Key { get; init; }
+
+    public required IsolationKind Kind { get; init; }
+
+    /// <summary>The caller that performs the cross-tenant attempt.</summary>
+    public Actor Caller { get; init; } = Actor.OwnerOfB;
+
+    /// <summary>Callers this endpoint must never admit.</summary>
+    public Actor[] Refused { get; init; } = [];
+
+    /// <summary>
+    /// Tenant A's row that this endpoint is asked for while the caller is in tenant B.
+    /// Required for <see cref="IsolationKind.ById"/>.
+    /// </summary>
+    public Func<TwoTenantWorld, Guid>? VictimId { get; init; }
+
+    public Func<TwoTenantWorld, object?>? Body { get; init; }
+
+    /// <summary>The ids a <see cref="IsolationKind.Collection"/> must return for tenant B.</summary>
+    public Func<TwoTenantWorld, IReadOnlyList<Guid>>? Expected { get; init; }
+
+    /// <summary>The ids of tenant A's rows, none of which may appear.</summary>
+    public Func<TwoTenantWorld, IReadOnlyList<Guid>>? Forbidden { get; init; }
+
+    /// <summary>
+    /// For a write: asserts the cross-tenant attempt changed nothing. A 404 is the promise;
+    /// this is the evidence.
+    /// </summary>
+    public Func<PosApiFactory, TwoTenantWorld, Task>? AssertUntouched { get; init; }
+
+    /// <summary>Required when <see cref="Kind"/> is <see cref="IsolationKind.Exempt"/>.</summary>
+    public string? Exemption { get; init; }
+
+    public string Method => Key[..Key.IndexOf(' ', StringComparison.Ordinal)];
+
+    /// <summary>The route template, exactly as the router holds it.</summary>
+    public string Template => Key[(Key.IndexOf(' ', StringComparison.Ordinal) + 1)..];
+
+    /// <summary>
+    /// The request URL, built by substituting <paramref name="id"/> into the route template.
+    /// </summary>
+    /// <remarks>
+    /// Built rather than written out, and this matters more than it looks. The by-id theory
+    /// asserts a 404 — and a mistyped URL returns 404 as well, so a hand-written path could
+    /// make that test pass while reaching no endpoint at all. Templates here come from
+    /// <see cref="IsolationCase.Key"/>, which <see cref="EndpointCoverageTests"/> has already
+    /// checked against the routing table, so a route that does not exist cannot be addressed
+    /// in the first place.
+    /// </remarks>
+    public string UrlFor(Guid id)
+    {
+        var open = Template.IndexOf('{', StringComparison.Ordinal);
+
+        if (open < 0)
+        {
+            return "/" + Template;
+        }
+
+        var close = Template.IndexOf('}', StringComparison.Ordinal);
+
+        return string.Concat("/", Template[..open], id.ToString(), Template[(close + 1)..]);
+    }
+
+    public override string ToString() => Key;
+}
+
+/// <summary>
+/// Every endpoint the application exposes, and how tenant isolation is proven for it.
+/// </summary>
+/// <remarks>
+/// <b>This is the file Phase 2 edits.</b> Mapping a new endpoint without adding a row here
+/// fails <see cref="EndpointCoverageTests"/>, which is the whole point of the arrangement:
+/// isolation coverage is a build failure when it is missing, not something a reviewer has
+/// to notice. It is the same mechanism as
+/// <c>RowLevelSecurityTests.Every_tenant_owned_table_is_covered</c> one layer down.
+/// <para>
+/// An <see cref="IsolationKind.Exempt"/> row must say where the coverage actually lives, so
+/// the manifest reads as the phase's audit record rather than as a list of skips.
+/// </para>
+/// </remarks>
+public static class IsolationManifest
+{
+    public static IReadOnlyList<IsolationCase> Cases { get; } =
+    [
+        // ---- Collections ------------------------------------------------------------
+        new()
+        {
+            Key = "GET api/v1/registers",
+            Kind = IsolationKind.Collection,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Expected = w => w.B.RegisterIds,
+            Forbidden = w => w.A.RegisterIds,
+        },
+        new()
+        {
+            Key = "GET api/v1/employees/pin-eligible",
+            Kind = IsolationKind.Collection,
+            Caller = Actor.DeviceOfB,
+            Refused = [Actor.Anonymous, Actor.OwnerOfB, Actor.CashierOfB],
+            Expected = w => w.B.PinEligibleIds,
+            Forbidden = w => w.A.PinEligibleIds,
+        },
+
+        // ---- By id ------------------------------------------------------------------
+        new()
+        {
+            Key = "POST api/v1/registers/{id:guid}/enroll",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.FrontCounter.Id,
+            Body = _ => new { },
+            AssertUntouched = AssertTheFrontCounterStillHoldsItsOriginalToken,
+        },
+        new()
+        {
+            Key = "POST api/v1/registers/{id:guid}/revoke",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.FrontCounter.Id,
+            Body = _ => new { },
+            AssertUntouched = AssertTheFrontCounterStillHoldsItsOriginalToken,
+        },
+        new()
+        {
+            Key = "POST api/v1/employees/{id:guid}/set-pin",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.CashierId,
+
+            // A well-formed PIN, and not the world's. The endpoint validates the PIN before
+            // it looks the user up, so a malformed one would be answered 400 and the
+            // cross-tenant lookup this row exists to test would never run.
+            Body = _ => new { pin = "9999" },
+            AssertUntouched = AssertTheCashiersPinIsStillTheOneTheWorldSet,
+        },
+
+        // ---- Exempt, each saying where the coverage is --------------------------------
+        new()
+        {
+            Key = "POST api/v1/registers",
+            Kind = IsolationKind.Exempt,
+            Exemption = "A write with no id, so neither shape fits. The tenancy question for "
+                      + "it is whether a TenantId in the body is honoured: "
+                      + "ForgedTenancyTests.A_tenant_id_in_the_request_body_is_never_honoured.",
+        },
+        new()
+        {
+            Key = "POST api/v1/auth/login",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Anonymous, and the endpoint that chooses a tenant rather than acting "
+                      + "within one. Covered by LoginTests.A_users_credentials_do_not_work_against_another_tenant "
+                      + "and CrossTenantCredentialTests.Identical_credentials_in_both_tenants_resolve_to_the_slug_that_was_named.",
+        },
+        new()
+        {
+            Key = "POST api/v1/auth/refresh",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Anonymous; the tenant comes from the token's own prefix. Covered by "
+                      + "RefreshTokenTests.A_refresh_token_from_another_tenant_is_rejected.",
+        },
+        new()
+        {
+            Key = "POST api/v1/auth/pin",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Covered by PinLoginTests.A_device_token_from_another_tenant_admits_nobody. "
+                      + "Deliberately kept out of the theories as well: every attempt costs one of "
+                      + "the world cashiers' five lockout attempts and one of the till's ten "
+                      + "rate-limited requests a minute, so a data-driven loop over it would make "
+                      + "unrelated tests fail depending on the order they ran in.",
+        },
+        new()
+        {
+            Key = "POST api/v1/auth/logout",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Answers 204 whatever it is given, on purpose, so its status code proves "
+                      + "nothing. Asserted by effect in "
+                      + "CrossTenantCredentialTests.Logging_out_cannot_revoke_another_tenants_session.",
+        },
+        new()
+        {
+            Key = "GET api/v1/auth/me",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Self-scoped: it takes no id and returns the caller's own user and tenant. "
+                      + "The tenancy question for it is whether the tenant claim can be forged, in "
+                      + "ForgedTenancyTests.",
+        },
+        new()
+        {
+            // "ANY", not "GET": health checks are mapped without any method metadata, so the
+            // router will route every verb to them.
+            Key = "ANY health/live",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Liveness only. Touches no tenant-owned data and reaches no database.",
+        },
+        new()
+        {
+            Key = "ANY health/ready",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Readiness only. Opens a connection but reads no tenant-owned row.",
+        },
+    ];
+
+    public static IReadOnlyDictionary<string, IsolationCase> ByKey { get; } =
+        Cases.ToDictionary(c => c.Key, StringComparer.Ordinal);
+
+    public static TheoryData<string> KeysOf(IsolationKind kind)
+    {
+        var data = new TheoryData<string>();
+
+        foreach (var testCase in Cases.Where(c => c.Kind == kind))
+        {
+            data.Add(testCase.Key);
+        }
+
+        return data;
+    }
+
+    /// <summary>Every (endpoint, caller-who-must-be-refused) pair, as theory rows.</summary>
+    public static TheoryData<string, Actor> RefusedCallers()
+    {
+        var data = new TheoryData<string, Actor>();
+
+        foreach (var testCase in Cases.Where(c => c.Kind != IsolationKind.Exempt))
+        {
+            foreach (var actor in testCase.Refused)
+            {
+                data.Add(testCase.Key, actor);
+            }
+        }
+
+        return data;
+    }
+
+    /// <summary>
+    /// Tenant A's till still answers to the token it was enrolled with — so the attempt to
+    /// enroll or revoke it from tenant B neither replaced it nor cleared it.
+    /// </summary>
+    private static Task AssertTheFrontCounterStillHoldsItsOriginalToken(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var till = await db.Registers.FirstAsync(r => r.Id == world.A.FrontCounter.Id);
+
+            Assert.Equal(OpaqueToken.Hash(world.A.FrontCounter.DeviceToken), till.DeviceTokenHash);
+        });
+
+    /// <summary>
+    /// Tenant A's cashier still has the PIN the world gave them, not the one the request
+    /// from tenant B tried to set.
+    /// </summary>
+    private static Task AssertTheCashiersPinIsStillTheOneTheWorldSet(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var users = services.GetRequiredService<UserManager<ApplicationUser>>();
+            var cashier = await users.Users.FirstAsync(u => u.Id == world.A.CashierId);
+
+            Assert.NotNull(cashier.PinHash);
+            Assert.Equal(
+                PasswordVerificationResult.Success,
+                users.PasswordHasher.VerifyHashedPassword(
+                    cashier, cashier.PinHash, TwoTenantWorld.CashierPin));
+        });
+}

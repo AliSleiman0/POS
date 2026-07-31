@@ -36,7 +36,12 @@ dotnet build                                           # warnings are errors
 dotnet test                                            # all .NET tests
 dotnet run --project src/Pos.Api                       # API + /swagger
 dotnet ef migrations add <Name> --project src/Pos.Data --startup-project src/Pos.Api
-dotnet ef database update  --project src/Pos.Data --startup-project src/Pos.Api
+
+# Migrations connect as the schema OWNER. The app's connection string is pos_app, which
+# is NOBYPASSRLS and has no CREATE on the schema — so `database update` must be given the
+# owner explicitly or it fails with "permission denied for schema public".
+dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
+  --connection "Host=localhost;Port=5432;Database=pos_dev;Username=pos;Password=dev_only_not_a_secret"
 
 pnpm --dir src/Pos.Web dev
 pnpm --dir src/Pos.Web build
@@ -93,6 +98,8 @@ Frontend gating is convenience. The server always re-checks. Fields a role may n
 
 Not a later cleanup pass. Every new endpoint gets a tenant-isolation test and a negative authorization test. Concurrency tests must actually run concurrently.
 
+This scales up to the phase: **each phase is fully tested and green — locally and in CI — before the next one starts.** No accumulated testing debt, no batched testing pass later. See [`docs/ROADMAP.md`](docs/ROADMAP.md#test-the-phase-before-starting-the-next-one).
+
 ### 10. No blocking browser dialogs in the register
 
 No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. Use in-page confirmations.
@@ -131,9 +138,11 @@ No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. 
 
 1. Exit criteria in the phase doc all met
 2. `dotnet build` and `pnpm build` warning-free
-3. All tests pass
+3. All tests pass — the milestone's own tests included, locally **and** in CI
 4. Tick the checkboxes in `docs/ROADMAP.md` **and** the phase doc
 5. If a decision changed along the way, update `DECISIONS.md` — the next session reads it as truth
+
+**A phase is tested before the next phase starts, and UI testing especially never accumulates** — it happens in the phase that builds the UI, not in a later catch-up pass. Full rule in [`docs/ROADMAP.md`](docs/ROADMAP.md#test-the-phase-before-starting-the-next-one).
 
 ## Things that have already been decided — don't relitigate silently
 

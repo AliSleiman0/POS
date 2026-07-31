@@ -44,25 +44,35 @@ Offsets are not offered. During trading hours rows are being inserted underneath
 
 | Method | Route | Auth | Purpose |
 |---|---|---|---|
-| POST | `/auth/login` | anonymous | Email + password → access + refresh token |
+| POST | `/auth/login` | anonymous | Tenant slug + email + password → access + refresh token |
 | POST | `/auth/pin` | device token | Cashier PIN → session on an enrolled register |
 | POST | `/auth/refresh` | refresh token | Rotate; returns a new pair |
 | POST | `/auth/logout` | authenticated | Revoke the current refresh-token family |
 | GET | `/auth/me` | authenticated | Current user, role, granted policies, tenant settings |
 
 ```
-POST /auth/login   { "email": "...", "password": "..." }
+POST /auth/login   { "tenantSlug": "...", "email": "...", "password": "..." }
 → 200 { "accessToken": "...", "refreshToken": "...", "expiresIn": 900,
         "user": { "id", "displayName", "role", "policies": ["CanSell", ...] } }
-→ 401 problem+json  (identical response and timing for unknown-email and wrong-password —
-                     a distinguishable response is a user-enumeration oracle)
+→ 401 problem+json  (identical response and timing for unknown-slug, unknown-email and
+                     wrong-password — a distinguishable response is an enumeration oracle)
 ```
+
+**Login names the tenant.** The slug is normalised (trimmed, lowercased, spaces to hyphens) and resolves the tenant *before* any user is looked up. It is a pre-authentication selector, not a `TenantId`: it narrows the search, and the credentials still have to match a user inside that tenant. Resolving the tenant first is what allows the user table itself to be tenant-scoped — see [`DECISIONS.md`](../DECISIONS.md#resolved-2026-07-31-during-phase-1).
 
 ```
 POST /auth/pin     { "userId": "...", "pin": "1234" }   + X-Device-Token: <token>
-→ 200 same shape as login
-→ 401 after N failures within the window, with a lockout expiry
+→ 200 same shape as login, plus a register_id claim in the access token
+→ 401 problem+json, type .../invalid-credentials
+→ 401 problem+json, type .../account-locked  + "lockoutEndsAt": <timestamp>
+→ 429 + Retry-After   (more than 10 attempts in a minute from one till)
 ```
+
+### Opaque tokens — refresh and `X-Device-Token`
+
+Both are `base64url(tenantId) "." base64url(32 random bytes)` and both are presented when no tenant is known yet. The prefix is **not** a credential: it only selects which tenant to search, and the 256-bit half authenticates by hash inside it. Clients treat the whole string as opaque and never parse it.
+
+A device token is returned once by `POST /registers/{id}/enroll` and is stored only as a SHA-256 digest, so it cannot be read back — see [Registers](#registers--registers).
 
 `GET /auth/me` returns the policy list so the UI can gate controls. **The UI gate is a convenience, never the enforcement** — every endpoint re-checks.
 
@@ -199,7 +209,9 @@ A sale requires an open shift. Without one there is nothing to reconcile the dra
 | POST | `/registers/{id}/enroll` | `CanManageEmployees` |
 | POST | `/registers/{id}/revoke` | `CanManageEmployees` |
 
-`enroll` returns the device token **once**. It is stored hashed and cannot be retrieved again. `revoke` is what you use when a tablet is lost.
+`enroll` returns the device token **once**. It is stored hashed and cannot be retrieved again — re-enrolling issues a new token and immediately invalidates the old one, which is also the route out of "the tablet was wiped". `revoke` is what you use when a tablet is lost.
+
+A register in another tenant answers **404, not 403**, on every route above. A 403 would confirm the id exists somewhere.
 
 ## Audit — `/audit`
 
