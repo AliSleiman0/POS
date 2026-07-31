@@ -58,8 +58,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `defaults.run.working-directory` applies only to `run` steps, so this action
+      # would otherwise look for package.json at the repo root and find no version.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          package_json_file: src/Pos.Web/package.json
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
