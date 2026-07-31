@@ -1,6 +1,6 @@
 # Session Handoff
 
-**Written:** 2026-07-31 · **Branch:** `phase-0/ci` (pushed, **not yet merged**) · CI green
+**Written:** 2026-07-31 · **Branch:** `main` · Phase 0.7 merged via [PR #2](https://github.com/AliSleiman0/POS/pull/2) · CI green
 
 > This file is session state, not durable truth. It goes stale — overwrite it at the end of each session. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
@@ -28,13 +28,13 @@ Both exit criteria were met **with evidence**, not assumed:
 
 ## First thing to do
 
-**Open the PR for `phase-0/ci` and merge it.** The branch is pushed and green; it was left unmerged because opening a PR wasn't authorised. Nothing else should start until this is on `main`.
+**Turn Smart App Control off** (decided 2026-07-31, see below) and confirm `dotnet test` runs locally again. Until that is done, local test results are unavailable and Phase 1's isolation work is a push-and-wait loop.
 
 ```powershell
-gh pr create --fill --base main --head phase-0/ci
+dotnet build && dotnet test    # expect 3 passed, not FileLoadException 0x800711C7
 ```
 
-## ⚠️ Smart App Control breaks local `dotnet test` — decide this first
+## ⚠️ Smart App Control breaks local `dotnet test`
 
 `dotnet test` now fails on this machine with:
 
@@ -47,7 +47,15 @@ An Application Control policy has blocked this file. (0x800711C7)
 
 This is **local only** — CI is unaffected and green. But Phase 1 is test-heavy (tenant isolation is proven by tests, not by inspection), so running tests locally matters from here on.
 
-**Turning SAC off is irreversible: re-enabling it requires reinstalling Windows.** That is the user's decision, deliberately not taken automatically. Windows Security → App & browser control → Smart App Control → Off. If it stays on, the fallback is to rely on CI for test results, which is a slow loop for Phase 1.
+**Decision (2026-07-31): turn SAC off.** A dev machine that compiles unsigned binaries every few minutes cannot work under it. Note this is **irreversible — re-enabling requires reinstalling Windows.**
+
+Windows Security → App & browser control → Smart App Control → **Off**. It is a GUI toggle requiring admin; the registry value is protected and reverts, so do not script it. Verify afterwards:
+
+```powershell
+(Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy").VerifiedAndReputablePolicyState  # expect 0
+```
+
+If it is still `1` after the toggle, a reboot is needed.
 
 ## Next task: Phase 1 — multi-tenancy & auth spine
 
