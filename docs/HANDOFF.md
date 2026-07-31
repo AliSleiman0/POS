@@ -1,8 +1,8 @@
 # Session Handoff
 
-**Written:** 2026-07-31 · **Branch:** `phase-1/tenancy-auth` (7 commits ahead of `main`, not pushed) · **Phase 1 complete — Phase 2 next**
+**Written:** 2026-07-31 · **Branch:** merged to `main` · **Phase 1 complete — Phase 2 next**
 
-> **1.7 is written, green and uncommitted.** Everything below is in the working tree; the last commit is 1.6. Commit it before starting Phase 2.
+> Phase 1 is shipped. `phase-1/tenancy-auth` is merged and CI is green on the merge — 133 tests, the same count as locally. Start Phase 2 from `main`.
 
 > This file is session state, not durable truth. It goes stale — overwrite it at the end of each session. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
@@ -14,7 +14,7 @@
 
 ## State
 
-**Working tree clean, build warning-free, 133 tests green** — 23 Core, 31 Data, 79 Api. Data and Api run against real Postgres via Testcontainers.
+**Working tree clean, build warning-free, 133 tests green locally and in CI** — 23 Core, 31 Data, 79 Api. Data and Api run against real Postgres via Testcontainers, which CI has now exercised for the first time: the ubuntu runner's Docker is enough, no service container needed, and the fixtures create `pos_app` themselves.
 
 Landed this session:
 
@@ -87,7 +87,6 @@ New this session (1–3); the rest carried forward and still true.
 
 ## Outstanding / deferred
 
-- **This branch has never been pushed and CI has never run the RLS or isolation suites.** They should just work — the fixtures create `pos_app` themselves — but that is unverified, and it is the last thing standing between Phase 1 and "done" in the sense CLAUDE.md means.
 - **Manual two-tenant check through Swagger** not done. The phase doc asks for it; the automated suite covers the same ground, so this is confirmation rather than coverage.
 - **`dotnet dev-certs https --trust`** still not run. Opens a Windows dialog that cannot be scripted.
 - **Playwright browsers not installed** — `pnpm exec playwright install --with-deps` in Phase 4, a ~500 MB download nothing needs before then.

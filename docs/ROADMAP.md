@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Current phase** | Phase 1 complete — 1.1–1.7 done, 133 tests green |
-| **Next up** | Phase 2, catalog & inventory. Phase 1's gate is passed. Branch `phase-1/tenancy-auth` is ready to merge. |
+| **Next up** | Phase 2, catalog & inventory. Phase 1's gate is passed and merged to `main`. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-07-31 |
 
