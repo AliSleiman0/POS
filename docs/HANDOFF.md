@@ -87,7 +87,9 @@ New this session (1–3); the rest carried forward and still true.
 
 ## Outstanding / deferred
 
-- **Manual two-tenant check through Swagger** not done. The phase doc asks for it; the automated suite covers the same ground, so this is confirmation rather than coverage.
+- **There is no API docs UI, and several phase docs assume one.** Phases 1, 2, 3 and 7 all have manual verification steps written as "via Swagger". Development only calls `MapOpenApi()`, which serves the raw document at `/openapi/v1.json`; nothing renders it, and no Swashbuckle or Scalar package is referenced. **This will come up in Phase 2.5**, whose verification is a click-through of the catalog. Adding Scalar is one package and about three dev-gated lines — **still undecided, and now the only thing standing between a seeded dev database and a by-hand catalog walkthrough.** Without it, 2.5's verification is a REST client or `Invoke-RestMethod` by hand.
+- ~~**The dev database has no data**~~ — **done 2026-07-31.** `dotnet run --project tools/Pos.Seed` creates `corner-shop` with an Owner/Manager/Cashier and two registers (one enrolled). Verified end to end against the running API: password login, `/auth/me`, `GET /registers`, and PIN login from the enrolled till with its device token. Re-running is idempotent and does not reissue the token. It seeds through `AddPosData` + `UserManager`, not SQL, so the rows are interceptor-stamped and the PIN/password hashes are the ones login verifies against.
+- **Manual two-tenant check deferred to Phase 4**, when a login screen exists. The automated suite covers the same ground on every endpoint on every run, so this is confirmation rather than coverage; Phase 1's gate does not rest on it.
 - **`dotnet dev-certs https --trust`** still not run. Opens a Windows dialog that cannot be scripted.
 - **Playwright browsers not installed** — `pnpm exec playwright install --with-deps` in Phase 4, a ~500 MB download nothing needs before then.
 - **No visual verification of the web UI.** Phase 1 is backend only. Eyeball it before Phase 4 builds on top.
@@ -96,6 +98,10 @@ New this session (1–3); the rest carried forward and still true.
 - **CI actions emit a Node 20 deprecation warning.** Bump to `@v5` when available.
 - **`Microsoft.OpenApi` pinned to 2.11.0** for GHSA-v5pm-xwqc-g5wc. Remove the pin when ASP.NET Core ships a patched dependency.
 - **Smart App Control is off** (irreversible, done 2026-07-31). Local `dotnet test` works.
+
+## Decided this session
+
+**Card payments are out of scope for the product — not deferred.** The shop takes cash across a counter, so there is no processor to integrate and **Phase 11 is dropped**, not postponed. `Tender` still stays a collection of rows with a `Method` discriminator: split tender and change due need that shape for cash alone, and it is what would keep a future terminal from being a `Sale` migration. Nothing in Phases 2–8 changes. Recorded in [`DECISIONS.md`](../DECISIONS.md#feature-roadmap-phased); the payment-processor open question is closed rather than deferred.
 
 ## Still genuinely open
 

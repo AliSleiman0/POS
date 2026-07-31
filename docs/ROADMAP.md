@@ -31,7 +31,7 @@
 | 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ⬜ Not started |
 | — | **← MVP line.** Everything above ships as v1. | | |
 | 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ⬜ Not started |
-| 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, card payments, desktop, platform admin | ⬜ Not started |
+| 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, desktop, platform admin (card payments dropped) | ⬜ Not started |
 
 Legend: ⬜ not started · 🔨 in progress · ✅ done · ⏸️ blocked
 
@@ -151,7 +151,7 @@ Scoped, not yet planned in detail. Order is a guess; revisit after the first pay
 | Phase | Name | Notes |
 |---|---|---|
 | 10 | Restaurant mode | Tables/tabs, modifiers, split bills, kitchen routing. A genuinely different order model — **not** a bolt-on to `Sale`, per `DECISIONS.md`. |
-| 11 | Card payments | `IPaymentProvider` port + Stripe adapter; Stripe Terminal for physical readers. |
+| ~~11~~ | ~~Card payments~~ | **Dropped 2026-07-31 — the product takes cash only.** Not deferred: no processor is planned. `Tender.Method` remains a discriminator so a standalone terminal would be additive, but nothing is built for it. See [`DECISIONS.md`](../DECISIONS.md#feature-roadmap-phased). |
 | 12 | Avalonia desktop | Same API, durable local DB, real offline. |
 | 13 | Business layer | Platform admin, loyalty, purchase orders, low-stock alerts, gift cards, analytics. |
 

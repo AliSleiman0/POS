@@ -121,6 +121,8 @@ Run via `dotnet ef database update` from a one-off job, or a generated idempoten
 
 A repeatable path to create a tenant + its first Owner: a CLI command or a protected endpoint requiring a platform-level secret (not a tenant token).
 
+**Start from `tools/Pos.Seed`, which already does the mechanical half** (added 2026-07-31 for dev). It creates the tenant, roles, users and registers through `AddPosData` and `UserManager`, so the rows it writes are stamped, scoped and loggable-into. What it is *not*, and what this milestone has to add: it takes a connection string rather than talking to a deployed API, it prints a fixed dev password to stdout, and it does not set `TaxMode` or the business-day offset — the two values that are immutable after trading starts. Hardening it beats writing a second tool that drifts from this one.
+
 Sets: tenant name, slug, currency, timezone, **`TaxMode`** (immutable afterwards — Phase 3.2), business day offset, first Owner user.
 
 Per `DECISIONS.md`, **no platform admin UI yet** — direct DB inspection is the accepted stopgap for a handful of tenants, and the real tool gets built after the first paying client, once the operational needs are actually known rather than guessed.

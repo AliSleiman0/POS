@@ -71,7 +71,9 @@ Two distinct "admin" concepts — do not conflate them:
 3. **V3 — business layer**: customer/loyalty, purchase orders, low-stock alerts, multi-register on one tenant. (Employee accounts/roles have moved *into* the MVP — see the Admin section: a shop with more than one employee cannot use a POS where everyone can change prices and issue refunds.)
 4. **V4 — nice-to-haves**: gift cards, analytics dashboard, platform admin (see above), license/activation considerations if the one-time-sale model is kept.
 
-**Payments (resolved 2026-07-30): the MVP takes cash only.** This narrows the "cash + card" line above — a deliberate scope cut, not an oversight. Card processing brings processor onboarding, PCI questions and hardware into the phase that most needs to stay small. Shops that already have a standalone card terminal are served by an `External` tender type where staff key in the amount, which reconciles correctly in the Z-report. The tender model is a *collection* of rows with a `Method` discriminator, so adding real card processing later (Phase 11: `IPaymentProvider` port, Stripe first, Stripe Terminal for physical readers) is additive — no `Sale` schema migration.
+**Payments (resolved 2026-07-30, narrowed 2026-07-31): the product takes cash only, and card processing is out of scope — not deferred.** The original decision cut card processing from the *MVP* and parked it in Phase 11. That is now a decision about the product, not the phase: the shop this is being built for takes cash from customers across a counter, so there is no processor to integrate, no PCI surface, and no payment hardware. **Phase 11 is dropped from the plan** and the payment-processor question is closed rather than deferred.
+
+What this does *not* change: `Tender` stays a **collection of rows with a `Method` discriminator**, not an amount column on `Sale`. That shape is load-bearing for cash alone — split tender and change due need it — and it is what keeps a future card terminal from being a `Sale` schema migration. `External` (a standalone terminal where staff key in the amount, reconciled in the Z-report) stays a documented `Method` value for that reason, but **the MVP implements `Cash` only** and nothing is built against `External` until a shop actually has a terminal. Reopening this means writing an `IPaymentProvider` port from scratch, which is the correct cost — building the port now for a processor that may never exist is speculative work with a real maintenance surface.
 
 The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/ROADMAP.md): MVP = Phases 0–8, offline = Phase 9, restaurant mode = Phase 10.
 
@@ -85,7 +87,7 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 ### Deferred to the phase that decides them
 
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
-- **Payment processor** — Stripe leads (best API, and Stripe Terminal covers physical readers for the desktop app), but the MVP is cash-only so the choice is deferred to [Phase 11](docs/ROADMAP.md#beyond-mvp) behind an `IPaymentProvider` port.
+- ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
 ### Resolved 2026-07-31 (during Phase 1)
 
@@ -129,7 +131,7 @@ Four gaps the planning docs left open. All four are load-bearing for tenant isol
 
 - ~~Postgres vs. SQL Server~~ → **Postgres** (see Tech Stack).
 - ~~Multi-tenant isolation strategy~~ → **shared DB + `TenantId`**, three enforcement layers (see Hosting & Multi-tenancy).
-- ~~Payment processor for MVP~~ → **cash only in the MVP**, card deferred to Phase 11 (see Feature Roadmap).
+- ~~Payment processor for MVP~~ → **cash only**; narrowed further on 2026-07-31 from "deferred to Phase 11" to "out of scope" (see Feature Roadmap).
 - Auth approach → **ASP.NET Core Identity + JWT** with two-tier credential/PIN login (see Tech Stack).
 
 ## Two decisions that are not retrofittable
