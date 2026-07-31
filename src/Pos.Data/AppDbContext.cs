@@ -74,6 +74,8 @@ public class AppDbContext : IdentityDbContext<
     /// <summary>The tenant list itself. Not tenant-owned: see <see cref="Tenant"/>.</summary>
     public DbSet<Tenant> Tenants => Set<Tenant>();
 
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);

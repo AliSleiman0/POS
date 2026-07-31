@@ -169,6 +169,7 @@ A phase is done when:
 
 **Testing is not allowed to accumulate.** Each phase is tested and green before the next phase begins — no "we'll write the tests later", no batched testing pass three phases downstream.
 
+- **UI testing is the one that must never accumulate.** In Phases 4–7 a milestone is not done until its Vitest/Playwright coverage exists *and* somebody has looked at the screen in a browser. jsdom does not paint, so a green component suite is not evidence the UI works — "we'll add Playwright later" is how a frontend ends up with none.
 - A trailing `N.x Tests` milestone in a phase doc is the **floor, not the plan**. Tests land with each milestone as it is built (invariant 9 in [`CLAUDE.md`](../CLAUDE.md) — tests ship with the behaviour).
 - Green means green **in CI**, not just on this machine. Phase 0 shipped two bugs that were invisible locally and only failed on the runner; `$env:CI="true"` before building reproduces that environment.
 - A phase with missing or failing tests is ⏸️ blocked, not ✅ done. If the next phase starts anyway, say so out loud and record it here — don't let it pass silently.

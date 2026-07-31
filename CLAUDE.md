@@ -137,7 +137,7 @@ No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. 
 4. Tick the checkboxes in `docs/ROADMAP.md` **and** the phase doc
 5. If a decision changed along the way, update `DECISIONS.md` — the next session reads it as truth
 
-**A phase is tested before the next phase starts.** Testing does not accumulate across phases and is never deferred to a later cleanup pass — a phase with missing or failing tests is blocked, not done. Full rule in [`docs/ROADMAP.md`](docs/ROADMAP.md#test-the-phase-before-starting-the-next-one).
+**A phase is tested before the next phase starts, and UI testing especially never accumulates** — it happens in the phase that builds the UI, not in a later catch-up pass. Full rule in [`docs/ROADMAP.md`](docs/ROADMAP.md#test-the-phase-before-starting-the-next-one).
 
 ## Things that have already been decided — don't relitigate silently
 

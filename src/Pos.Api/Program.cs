@@ -1,5 +1,15 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
+using Pos.Api.Auth;
+using Pos.Api.Endpoints;
+using Pos.Api.Errors;
+using Pos.Api.Tenancy;
+using Pos.Core.Auditing;
 using Pos.Data;
+using Pos.Data.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,7 +22,69 @@ var connectionString = builder.Configuration.GetConnectionString("Postgres")
         "Connection string 'Postgres' is not configured. For local development run: " +
         "dotnet user-secrets set \"ConnectionStrings:Postgres\" \"<value>\" --project src/Pos.Api");
 
+// Registered before AddPosData, which uses TryAdd so a host can supply its own.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentActor, HttpCurrentActor>();
+
 builder.Services.AddPosData(connectionString);
+builder.Services.AddPosIdentity();
+
+builder.Services
+    .AddOptions<JwtOptions>()
+    .Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(
+        options => options.HasUsableSigningKey(),
+        $"Jwt:SigningKey must be at least {JwtOptions.MinimumSigningKeyBytes} bytes. " +
+        "Set it in user-secrets locally or the environment in production; it is never a literal in source.")
+    // A deploy with no signing key must not start. Starting would mean signing tokens with
+    // an empty key, which every instance would then happily accept from anybody.
+    .ValidateOnStart();
+
+var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        // Keep claim names exactly as issued. The default mapping rewrites "sub" and "role"
+        // into long WS-Federation URIs, and then a policy asking for "role" finds nothing.
+        options.MapInboundClaims = false;
+
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwt.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwt.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SigningKey)),
+            ValidateLifetime = true,
+
+            // Default is five minutes of grace, which quietly extends every access token's
+            // life well past the fifteen it was issued for.
+            ClockSkew = TimeSpan.Zero,
+
+            NameClaimType = JwtRegisteredClaimNames.Sub,
+            RoleClaimType = PosClaims.Role,
+        };
+    });
+
+// Every endpoint states its own authorization, and a test fails the build on any that does
+// not. Deliberately no FallbackPolicy: a fallback would turn "forgot to authorize this"
+// into "any authenticated user", which is a Cashier reaching an Owner endpoint — a quiet
+// wrong answer instead of a loud missing one.
+var authorization = builder.Services.AddAuthorizationBuilder();
+
+foreach (var (policy, roles) in PolicyCatalog.RolesByPolicy)
+{
+    authorization.AddPolicy(policy, p => p.RequireAuthenticatedUser().RequireRole(roles));
+}
+
+builder.Services.AddScoped<TokenService>();
+
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DomainExceptionHandler>();
 
 builder.Services.AddHealthChecks()
     // "ready" means the process can actually serve traffic, which requires the
@@ -25,12 +97,26 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
+app.UseExceptionHandler();
+
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    // Anonymous, and stated rather than assumed — the endpoint-authorization test treats
+    // any endpoint with no authorization metadata as a bug, including this one.
+    app.MapOpenApi().AllowAnonymous();
 }
 
 app.UseHttpsRedirection();
+
+app.UseAuthentication();
+
+// After authentication, so the tenant is read from a signature-checked token. Before
+// authorization, so anything that inspects tenant-scoped data already has a tenant.
+app.UseMiddleware<TenantResolutionMiddleware>();
+
+app.UseAuthorization();
+
+app.MapAuthEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.
@@ -45,3 +131,6 @@ app.MapHealthChecks("/health/ready", new()
 }).AllowAnonymous();
 
 app.Run();
+
+/// <summary>Exposed so the integration tests can host this application.</summary>
+public partial class Program;
