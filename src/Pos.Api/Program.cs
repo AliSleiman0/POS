@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -45,6 +46,10 @@ var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOption
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddScheme<AuthenticationSchemeOptions, DeviceTokenAuthenticationHandler>(
+        DeviceTokenAuthenticationHandler.SchemeName,
+        displayName: null,
+        configureOptions: null)
     .AddJwtBearer(options =>
     {
         // Keep claim names exactly as issued. The default mapping rewrites "sub" and "role"
@@ -81,7 +86,19 @@ foreach (var (policy, roles) in PolicyCatalog.RolesByPolicy)
     authorization.AddPolicy(policy, p => p.RequireAuthenticatedUser().RequireRole(roles));
 }
 
+// Registered here and not in PolicyCatalog: that catalog maps policies to *roles* and a
+// test asserts its keys match the table in ARCHITECTURE.md. This one authorizes a device,
+// which has no role at all.
+authorization.AddPolicy(DeviceTokenAuthenticationHandler.PolicyName, policy => policy
+    // Naming the scheme is what makes this work. Without it the policy evaluates whatever
+    // the default (JWT) scheme produced, so a cashier's ordinary access token would satisfy
+    // "enrolled device" and the device token would never be read.
+    .AddAuthenticationSchemes(DeviceTokenAuthenticationHandler.SchemeName)
+    .RequireAuthenticatedUser());
+
 builder.Services.AddScoped<TokenService>();
+
+builder.Services.AddPosRateLimiting();
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
@@ -108,6 +125,12 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// Before authentication on purpose: a flood of PIN guesses is turned away without a
+// database lookup and without a deliberately slow hash comparison, which is otherwise a
+// free way to consume the API's threads. Routing has already run — WebApplication inserts
+// it ahead of anything registered here — so the endpoint's policy is known.
+app.UseRateLimiter();
+
 app.UseAuthentication();
 
 // After authentication, so the tenant is read from a signature-checked token. Before
@@ -117,6 +140,8 @@ app.UseMiddleware<TenantResolutionMiddleware>();
 app.UseAuthorization();
 
 app.MapAuthEndpoints();
+app.MapRegisterEndpoints();
+app.MapEmployeeEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.

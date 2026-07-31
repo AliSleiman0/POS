@@ -5,12 +5,16 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Pos.Api.Auth;
 using Pos.Core.Entities;
+using Pos.Core.Security;
 using Pos.Core.Tenancy;
 using Pos.Data;
 using Pos.Data.Identity;
 using Testcontainers.PostgreSql;
 
 namespace Pos.Api.Tests.Infrastructure;
+
+/// <summary>A till and the device token it was enrolled with.</summary>
+public sealed record EnrolledRegister(Guid Id, string DeviceToken);
 
 /// <summary>
 /// The real application, hosted in-process against a real Postgres.
@@ -138,6 +142,73 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
         }
 
         return user;
+    }
+
+    /// <summary>
+    /// Creates a till and enrolls it, returning the device token the real endpoint would
+    /// have shown once.
+    /// </summary>
+    /// <remarks>
+    /// Enrollment is exercised through HTTP by its own test. This shortcut exists so that
+    /// every *other* device test starts from an enrolled till without first logging in as
+    /// an Owner, which would make a PIN test fail for reasons that have nothing to do with
+    /// PINs.
+    /// </remarks>
+    public async Task<EnrolledRegister> CreateEnrolledRegisterAsync(Guid tenantId, string name = "Till 1")
+    {
+        await using var scope = Services.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<AmbientTenantContext>().Resolve(tenantId);
+
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var register = new Register { Name = name };
+        db.Registers.Add(register);
+        await db.SaveChangesAsync();
+
+        var token = OpaqueToken.Issue(tenantId);
+        register.DeviceTokenHash = OpaqueToken.Hash(token);
+        await db.SaveChangesAsync();
+
+        return new EnrolledRegister(register.Id, token);
+    }
+
+    /// <summary>Clears a till's device token, as <c>POST /registers/{id}/revoke</c> does.</summary>
+    public Task RevokeRegisterAsync(Guid tenantId, Guid registerId) =>
+        AsTenantAsync(tenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var register = await db.Registers.FirstAsync(r => r.Id == registerId);
+
+            register.DeviceTokenHash = null;
+            await db.SaveChangesAsync();
+        });
+
+    /// <summary>Sets a cashier's PIN using the same hasher the endpoint uses.</summary>
+    public Task SetPinAsync(Guid tenantId, Guid userId, string pin) =>
+        AsTenantAsync(tenantId, async services =>
+        {
+            var users = services.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = await users.Users.FirstAsync(u => u.Id == userId);
+
+            user.PinHash = users.PasswordHasher.HashPassword(user, pin);
+            await users.UpdateAsync(user);
+        });
+
+    /// <summary>
+    /// A user's failed-attempt counter — the evidence for whether a request reached the PIN
+    /// check or was turned away before it.
+    /// </summary>
+    public async Task<int> AccessFailedCountAsync(Guid tenantId, Guid userId)
+    {
+        var count = 0;
+
+        await AsTenantAsync(tenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            count = (await db.Users.FirstAsync(u => u.Id == userId)).AccessFailedCount;
+        });
+
+        return count;
     }
 
     /// <summary>Runs <paramref name="action"/> in a scope with the tenant resolved.</summary>

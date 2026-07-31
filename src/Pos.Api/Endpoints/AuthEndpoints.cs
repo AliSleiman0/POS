@@ -13,6 +13,8 @@ namespace Pos.Api.Endpoints;
 
 public sealed record LoginRequest(string TenantSlug, string Email, string Password);
 
+public sealed record PinLoginRequest(Guid UserId, string Pin);
+
 public sealed record RefreshRequest(string RefreshToken);
 
 public sealed record LogoutRequest(string RefreshToken);
@@ -45,6 +47,11 @@ public static class AuthEndpoints
         auth.MapPost("/login", LoginAsync)
             .AllowAnonymous()
             .WithSummary("Exchange tenant slug, email and password for a token pair");
+
+        auth.MapPost("/pin", PinLoginAsync)
+            .RequireAuthorization(DeviceTokenAuthenticationHandler.PolicyName)
+            .RequireRateLimiting(RateLimitPolicies.PinAttempts)
+            .WithSummary("Start a cashier session from an enrolled till");
 
         auth.MapPost("/refresh", RefreshAsync)
             .AllowAnonymous()
@@ -113,6 +120,71 @@ public static class AuthEndpoints
         await users.UpdateAsync(user);
 
         return TypedResults.Ok(await BuildAuthResponseAsync(tokens, user, registerId: null, cancellationToken));
+    }
+
+    private static async Task<IResult> PinLoginAsync(
+        PinLoginRequest request,
+        HttpContext http,
+        AppDbContext db,
+        UserManager<ApplicationUser> users,
+        TokenService tokens,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(http);
+
+        // The device token was validated by the authentication scheme before this method
+        // was reached, so an unenrolled till never gets as far as presenting a PIN.
+        var registerClaim = http.User.FindFirst(PosClaims.RegisterId)?.Value;
+
+        if (!Guid.TryParse(registerClaim, CultureInfo.InvariantCulture, out var registerId))
+        {
+            return InvalidCredentials();
+        }
+
+        var user = await users.Users.FirstOrDefaultAsync(u => u.Id == request.UserId, cancellationToken);
+
+        if (user is null || !user.IsActive || user.PinHash is null)
+        {
+            return InvalidCredentials();
+        }
+
+        if (await users.IsLockedOutAsync(user))
+        {
+            return LockedOut(user.LockoutEnd);
+        }
+
+        var verification = users.PasswordHasher.VerifyHashedPassword(user, user.PinHash, request.Pin);
+
+        if (verification == PasswordVerificationResult.Failed)
+        {
+            await users.AccessFailedAsync(user);
+
+            // Told plainly once the lockout has actually engaged: the staff member needs to
+            // know to wait rather than keep trying, and by then the attempt budget is spent
+            // anyway so it reveals nothing an attacker could not measure.
+            return await users.IsLockedOutAsync(user)
+                ? LockedOut((await users.GetLockoutEndDateAsync(user)))
+                : InvalidCredentials();
+        }
+
+        await users.ResetAccessFailedCountAsync(user);
+
+        var now = timeProvider.GetUtcNow();
+        user.LastLoginAt = now;
+        await users.UpdateAsync(user);
+
+        var register = await db.Registers.FirstOrDefaultAsync(r => r.Id == registerId, cancellationToken);
+
+        if (register is not null)
+        {
+            // Answers "is that lost tablet still being used?" without a write on every request.
+            register.LastSeenAt = now;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        return TypedResults.Ok(await BuildAuthResponseAsync(tokens, user, registerId, cancellationToken));
     }
 
     private static async Task<IResult> RefreshAsync(
@@ -251,4 +323,16 @@ public static class AuthEndpoints
             detail: "The tenant, email address or password is incorrect.",
             statusCode: StatusCodes.Status401Unauthorized,
             type: "https://pos.example/errors/invalid-credentials");
+
+    /// <summary>Carries the expiry, so the till can say "try again at 14:05" rather than "no".</summary>
+    private static ProblemHttpResult LockedOut(DateTimeOffset? until)
+        => TypedResults.Problem(
+            title: "Account locked",
+            detail: "Too many failed attempts. Try again later or ask a manager to reset the PIN.",
+            statusCode: StatusCodes.Status401Unauthorized,
+            type: "https://pos.example/errors/account-locked",
+            extensions: new Dictionary<string, object?>
+            {
+                ["lockoutEndsAt"] = until,
+            });
 }

@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 1 in progress — 1.1–1.4 done, 1.5 part-written |
-| **Next up** | Finish 1.5 (PIN login), then 1.6 RLS and 1.7 the isolation suite. Branch `phase-1/tenancy-auth`. |
+| **Current phase** | Phase 1 in progress — 1.1–1.5 done, 1.6 next |
+| **Next up** | 1.6 RLS hardening, then 1.7 the isolation suite. Branch `phase-1/tenancy-auth`. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-07-31 |
 
@@ -21,7 +21,7 @@
 | Phase | Name | Scope | Status |
 |---|---|---|---|
 | 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | ✅ Done |
-| 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | 🔨 In progress (1.1–1.4 done) |
+| 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | 🔨 In progress (1.1–1.5 done) |
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ⬜ Not started |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ⬜ Not started |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ⬜ Not started |
@@ -57,8 +57,8 @@ The load-bearing phase. Everything after it assumes tenant scoping is automatic 
 - [x] **1.2 Automatic scoping** — query filters applied by reflection to every `ITenantOwned` (an interface, not the base class — `ApplicationUser` must inherit `IdentityUser<Guid>`); `SaveChangesInterceptor` stamps on insert and **rejects** an insert carrying another tenant's id rather than correcting it. Proved against a throwaway entity that nothing registers.
 - [x] **1.3 Tenant-scoped Identity** — `ApplicationUser : ITenantOwned`; Identity's platform-wide unique indexes replaced with composites leading on `TenantId`; Identity's satellite tables carry `TenantId`; the .NET 10 passkey table is ignored outright.
 - [x] **1.4 JWT + RBAC** — access + rotating refresh tokens with `FamilyId` revoke-on-reuse; named policies registered from one catalog that a test compares against the table in `ARCHITECTURE.md`. No `FallbackPolicy`: a missing authorization decision fails the build instead of defaulting.
-- [ ] **1.5 PIN login** — device-registered register + hashed 4–6 digit cashier PIN, rate-limited with lockout. PIN alone is never sufficient from an unregistered device. 🔨 *in progress — see `docs/HANDOFF.md`*
-- [ ] **1.6 RLS hardening** — Postgres row-level security on `current_setting('app.tenant_id')`, set via `SET LOCAL` per connection. Covers the raw-SQL paths EF filters miss.
+- [x] **1.5 PIN login** — enrolled register + hashed 4–6 digit cashier PIN. The device check is an authentication *scheme*, so an unenrolled till is turned away before the PIN is read. Two independent caps: per-user lockout, and a rate limit partitioned on the device token so one till cannot walk the staff list to get around it.
+- [ ] **1.6 RLS hardening** — Postgres row-level security on `current_setting('app.tenant_id')`, set session-level via `set_config` from a connection interceptor. **Not `SET LOCAL`** — see the correction in the phase doc. Covers the raw-SQL paths EF filters miss.
 - [ ] **1.7 Isolation test suite** — two seeded tenants; every read path (endpoint, `DbContext`, raw SQL) proven blind to the other tenant; a cross-tenant `TenantId` in a request body is rejected, not honoured.
 
 ## Phase 2 — Catalog & inventory

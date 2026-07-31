@@ -19,9 +19,9 @@
 Accessing `TenantId` when no tenant is resolved **throws**. It does not return `Guid.Empty`, because `TenantId == Guid.Empty` silently matches nothing (or, worse, matches a row someone inserted with an empty tenant) instead of failing loudly.
 
 **Exit criteria**
-- [ ] `ITenantContext` in Core with no HTTP dependency
-- [ ] Unresolved tenant access throws, with a test proving it
-- [ ] System context is opt-in, never a fallback
+- [x] `ITenantContext` in Core with no HTTP dependency
+- [x] Unresolved tenant access throws, with a test proving it
+- [x] System context is opt-in, never a fallback
 
 ## 1.2 Automatic scoping
 
@@ -50,10 +50,10 @@ Reflection rather than one hand-written `HasQueryFilter` per entity: the hand-wr
 Also set the naming convention (`snake_case`) and a global `decimal` → `numeric(19,4)` convention here, once, so no property can be mapped with the wrong precision.
 
 **Exit criteria**
-- [ ] Filter applied to every `TenantEntity` by reflection; a test adds a throwaway entity and confirms it is filtered without any per-entity registration
-- [ ] Interceptor stamps on insert
-- [ ] Cross-tenant modify throws, with a test
-- [ ] Money columns land as `numeric(19,4)` in the generated migration
+- [x] Filter applied to every `TenantEntity` by reflection; a test adds a throwaway entity and confirms it is filtered without any per-entity registration
+- [x] Interceptor stamps on insert
+- [x] Cross-tenant modify throws, with a test
+- [x] Money columns land as `numeric(19,4)` in the generated migration
 
 ## 1.3 Tenant-scoped Identity
 
@@ -70,12 +70,14 @@ builder.Entity<ApplicationUser>(b => {
 
 Left as-is, the same person cannot hold accounts at two tenants (a franchise owner, a consultant, or you as support), and onboarding fails with an opaque duplicate-key error that looks like a bug in the onboarding code.
 
-`ApplicationUser` is *not* covered by the global query filter for Identity's own login lookups — those must resolve a user before a tenant is known. Login therefore resolves tenant **from the user record**, and every other user query goes through a tenant-scoped repository. This is the one deliberate exception, and it is documented here so nobody "fixes" it.
+> **Amended 2026-07-31 during implementation.** This section originally said `ApplicationUser` sits outside the global query filter, because login had to find a user before a tenant was known. **It is not built that way, and the reasoning no longer applies.** `POST /auth/login` takes a tenant slug, resolves the tenant first, and only then looks for a user — so `ApplicationUser` is tenant-owned like everything else and **no table is an exception**. That is what makes "every tenant table is scoped" a statement a test can check rather than a claim with a footnote. Reasoning in [`DECISIONS.md`](../../DECISIONS.md#resolved-2026-07-31-during-phase-1).
+>
+> The scoping keys on an `ITenantOwned` interface rather than the `TenantEntity` base class: `ApplicationUser` must inherit `IdentityUser<Guid>`, and C# has single inheritance, so a base-class-only rule would have left the user table outside the mechanism after all.
 
 **Exit criteria**
-- [ ] Composite unique index in the migration
-- [ ] A test creates the same email under two tenants successfully
-- [ ] A test confirms duplicate email *within* one tenant is rejected
+- [x] Composite unique index in the migration
+- [x] A test creates the same email under two tenants successfully
+- [x] A test confirms duplicate email *within* one tenant is rejected
 
 ## 1.4 JWT + RBAC
 
@@ -89,27 +91,33 @@ Left as-is, the same person cannot hold accounts at two tenants (a franchise own
 Login failures return an identical response and take comparable time for unknown-email and wrong-password. A distinguishable response is a user-enumeration oracle.
 
 **Exit criteria**
-- [ ] Login → access + refresh; refresh rotates
-- [ ] Reusing a rotated refresh token revokes the family, with a test
-- [ ] All policies registered; a test asserts each role's granted set matches the table
-- [ ] `grep` finds no role literals in endpoint attributes
+- [x] Login → access + refresh; refresh rotates
+- [x] Reusing a rotated refresh token revokes the family, with a test
+- [x] All policies registered; a test asserts each role's granted set matches the table
+- [x] `grep` finds no role literals in endpoint attributes
 
 ## 1.5 PIN login
 
 - `Register` entity + enrollment endpoint returning the device token **once**
 - `POST /auth/pin` requires `X-Device-Token` matching an active, non-revoked register
 - PIN hashed with the same password hasher (never a plain hash, never plaintext comparison)
-- Rate limit per (register, user): N attempts per window, then lockout with an expiry returned to the client
+- Rate limit per register **and** per-user lockout with an expiry returned to the client
 - `GET /employees/pin-eligible` returns id + display name only
 
 **A PIN is authentication to a trusted device, not authentication on its own.** Four digits is 10,000 possibilities — trivially brute-forced without the device token and the lockout. Both are required, and a PIN request from an unenrolled device is rejected before the PIN is even checked.
 
+Three implementation notes worth keeping:
+
+- The device check is a **real authentication scheme**, not a check inside the endpoint, because authentication runs before the endpoint does. An unenrolled caller is turned away before the PIN is read — so the endpoint cannot be used as a PIN oracle, and cannot be used to lock every cashier out by burning their attempt budgets.
+- The `EnrolledDevice` policy must **name the scheme** (`.AddAuthenticationSchemes(...)`). Left to the default, a cashier's ordinary access token satisfies "enrolled device" and the second factor evaporates with no test going red. Register it *outside* `PolicyCatalog` — that catalog is role-to-policy and a test asserts its keys match the table in `ARCHITECTURE.md`.
+- The rate limit partitions on the **device token**, not the user. Per-user lockout alone caps the wrong thing: an attacker holding one till spends five attempts per cashier and moves on, and `pin-eligible` supplies the names to move on to.
+
 **Exit criteria**
-- [ ] Enrollment returns the token once; it is unretrievable afterwards
-- [ ] PIN login works from an enrolled device
-- [ ] PIN login from an unenrolled/revoked device is rejected, with a test
-- [ ] Lockout triggers and expires, with a test
-- [ ] `pin-eligible` leaks no roles, emails or contact details
+- [x] Enrollment returns the token once; it is unretrievable afterwards
+- [x] PIN login works from an enrolled device
+- [x] PIN login from an unenrolled/revoked device is rejected, with a test
+- [x] Lockout triggers and reports its expiry, with a test
+- [x] `pin-eligible` leaks no roles, emails or contact details — asserted on the serialised JSON, not the DTO
 
 ## 1.6 RLS hardening
 
@@ -122,16 +130,22 @@ CREATE POLICY tenant_isolation ON product
   USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 ```
 
-Two roles: a migration owner that bypasses RLS, and the application role that does not. On connection checkout, the app issues `SET LOCAL app.tenant_id = '<guid>'` inside the transaction.
+Two roles: a migration owner that bypasses RLS, and the application role that does not.
+
+> **Corrected 2026-07-31 — this section originally said `SET LOCAL app.tenant_id` per transaction. Do not build that.** Outside an explicit transaction `SET LOCAL` scopes to the implicit single-statement transaction, and EF reads do not open transactions — so the setting would evaporate before the next statement. RLS would have looked configured and enforced nothing, silently, which is the worst available outcome for a security layer.
+>
+> Use **session-level** `SELECT set_config('app.tenant_id', $1, false)` issued from a `DbConnectionInterceptor` on connection open, parameterised and never interpolated. This is safe with connection pooling because Npgsql sends `DISCARD ALL` on reset — which means the connection string must **not** set `No Reset On Close=true`, and multiplexing must stay off. Write the test that proves a pooled connection does not inherit the previous request's tenant; that is the one that catches a regression here.
 
 **Why this exists even though 1.2 already filters:** EF's global query filters do not apply to `FromSqlRaw`, `ExecuteSqlRaw`, Dapper, or a hand-written report query — and reporting is exactly where someone reaches for raw SQL. RLS is the layer that holds when application code is wrong.
 
 `FORCE ROW LEVEL SECURITY` matters: without it, the table owner silently bypasses its own policy, and if the app connects as owner the policies do nothing while appearing to be in place.
 
 **Exit criteria**
-- [ ] RLS enabled and forced on every tenant table
+- [ ] RLS enabled and forced on every tenant table — by a `DO` block looping every table with a `tenant_id` column, not a hand-written list, so later phases inherit it
+- [ ] A test asserts every such table has RLS enabled, forced, and a policy
 - [ ] The app connects as a non-owner role
-- [ ] `SET LOCAL` issued per transaction
+- [ ] `set_config('app.tenant_id', $1, false)` issued from a connection interceptor
+- [ ] A test proves a pooled connection does not inherit the previous request's tenant
 - [ ] A raw-SQL query for another tenant's rows returns nothing, with a test
 
 ## 1.7 Isolation test suite
