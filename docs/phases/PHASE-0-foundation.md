@@ -163,10 +163,36 @@ pnpm dlx shadcn@latest init
 Add TanStack Query, React Router, Vitest, Playwright. Configure the Vite dev-server proxy to the API to avoid CORS in development.
 
 **Exit criteria**
-- [ ] `pnpm build` clean, `pnpm dev` serves
-- [ ] Tailwind classes apply; one shadcn component renders
-- [ ] `pnpm lint` and `pnpm test` run
-- [ ] `strict: true` in `tsconfig.json`
+- [x] `pnpm build` clean, `pnpm dev` serves (HTTP 200 on `/`)
+- [x] Tailwind utilities present in the built CSS (`.flex`, `.rounded-xl`, `.bg-slate-50`, …); the shadcn `Button` renders — asserted by `findByRole('button', { name: 'Re-check' })`
+- [x] `pnpm lint` clean, `pnpm test` green (11 tests), `pnpm format:check` clean
+- [x] `strict: true` — **and it was missing**, see below
+- [x] **Dev proxy verified end to end**: `curl localhost:5173/health/ready` → `Healthy`, proving browser → Vite → API → Postgres
+
+> **Not verified: visual rendering.** The Chrome extension was not connected, so no screenshot was taken. Tailwind is confirmed only by the utilities being emitted into the built CSS and the Button being in the component tree — jsdom does not paint. Worth an eyeball before Phase 4 builds real UI on top.
+
+### What the template gave us, and what had to be corrected
+
+The .NET 10 / Vite 8 / TS 6 templates have moved on from the plan's assumptions:
+
+- **`strict` is NOT enabled** by the current Vite + TS 6 template — it is absent from both `tsconfig.app.json` and `tsconfig.node.json`, and `strict` defaults to `false`. `CLAUDE.md` requires it. Added, along with `noUncheckedIndexedAccess`, which matters specifically here: `cart[i]` and `lines[i]` are undefined-able and an unchecked index in checkout code is a blank total on a receipt.
+- **`baseUrl` is deprecated in TypeScript 6** and errors the build. `paths` now resolves relative to the config file, so `baseUrl` was simply dropped.
+- **The template ships `oxlint`, not ESLint.** Kept — it is the template default and far faster. The plan said ESLint; this is a deviation, not an omission.
+- **shadcn/ui's `init` failed twice before working.** It resolves the import alias from the **root** `tsconfig.json`, which in a project-references setup contains only `references` and no `compilerOptions` — so `@/*` was unresolvable and it aborted after writing `components.json`. Fixed by adding a `paths` entry to the root config purely for tooling (it compiles nothing).
+- **shadcn installed itself as a runtime `dependency`.** Moved to `devDependencies` — but it cannot simply be removed, because `init` adds `@import "shadcn/tailwind.css"` to `index.css`, which needs the package present at build time.
+- **shadcn's current style is `base-nova`**, built on `@base-ui/react` rather than Radix.
+
+### Gotcha — two React copies under pnpm
+
+Component tests failed with `TypeError: Cannot read properties of null (reading 'useRef')`. Cause: `@base-ui/react` resolved React's **CJS** build while the app used ESM, giving two React instances with separate hook dispatchers. `resolve.dedupe` alone did not fix it; `test.server.deps.inline: [/@base-ui/]` did. Expect this again when adding further shadcn components that pull new Base UI packages.
+
+### Gotcha — a wait-loop that hung for five minutes
+
+Starting the API with `until grep -qE "Now listening|Unhandled"` hung, because the build had actually failed with `MSB3027` (a stale `Pos.Api` process from the 0.4 verification held a file lock on `Pos.Data.dll`) and the pattern matched no failure text. **Any wait-loop must match the failure signatures too, or silence looks identical to "still starting".** Kill stray `Pos.Api` processes before rebuilding — `Stop-Process` on the actual process, since `pkill -f` did not catch it.
+
+### Deferred deliberately
+
+`pnpm exec playwright install --with-deps` has **not** been run — a ~500 MB browser download that nothing needs until Phase 4 writes the first E2E spec. `playwright.config.ts` is in place and `pnpm test:e2e` is wired.
 
 ## 0.6 Docs — ✅ done
 

@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }],
+  "compilerOptions": {
+    /* Not used for compilation — `files: []` means this config builds nothing.
+       It exists so tooling that reads the ROOT tsconfig (shadcn/ui's alias
+       resolver, some editors) can resolve "@/..." imports. The build's real
+       aliases live in tsconfig.app.json and vite.config.ts. */
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}

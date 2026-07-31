@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["vite/client", "vitest/globals"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Path alias, mirrored in vite.config.ts. No baseUrl: TypeScript 6
+       deprecates it, and paths now resolve relative to this file. */
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    /* Type safety. The Vite/TS 6 template does NOT enable strict; CLAUDE.md
+       requires it. noUncheckedIndexedAccess earns its place here specifically:
+       cart[i] and lines[i] are undefined-able, and an unchecked index in
+       checkout code shows up as a blank total on a customer's receipt. */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src", "e2e"]
+}
