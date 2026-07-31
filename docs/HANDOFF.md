@@ -1,18 +1,18 @@
 # Session Handoff
 
-**Written:** 2026-07-31 · **Branch:** `phase-0/foundation` (4 commits, **not pushed**) · **Working tree:** clean
+**Written:** 2026-07-31 · **Branch:** `main` · Phase 0 work merged via [PR #1](https://github.com/AliSleiman0/POS/pull/1)
 
 > This file is session state, not durable truth. It goes stale — overwrite it at the end of each session. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
 ## Read first
 
 1. [`docs/ROADMAP.md`](ROADMAP.md) — what's done, what's next
-2. [`docs/phases/PHASE-0-foundation.md`](phases/PHASE-0-foundation.md) — the current phase, including a "gotchas on this machine" section that will save you an hour
+2. [`docs/phases/PHASE-0-foundation.md`](phases/PHASE-0-foundation.md) — has a "gotchas on this machine" section that will save you an hour
 3. [`CLAUDE.md`](../CLAUDE.md) — the 10 invariants. Do not violate these without a design discussion.
 
 ## Where things stand
 
-**Phase 0 is 6/7 done.** Only **0.7 (CI)** is outstanding.
+**Phase 0 is 6/7 done and merged to `main`.** Only **0.7 (CI)** is outstanding.
 
 | Milestone | State |
 |---|---|
@@ -27,30 +27,32 @@
 ## Start here
 
 ```powershell
+git checkout main && git pull
 docker compose up -d
-dotnet build          # must be 0 warnings — warnings are errors
-dotnet test           # 3 tests
-pnpm --dir src/Pos.Web test    # 11 tests
+dotnet build                    # must be 0 warnings — warnings are errors
+dotnet test                     # 3 tests
+pnpm --dir src/Pos.Web install
+pnpm --dir src/Pos.Web test     # 11 tests
 ```
 
 If any of that is not green, fix it before writing anything new.
 
 ## Next task: 0.7 CI
 
-`.github/workflows/ci.yml`, two jobs on push and PR:
+Branch first — `phase-0/ci`. Then `.github/workflows/ci.yml`, two jobs on push and PR:
 
-- **backend** — setup .NET 10 → restore → build → test. Integration tests will use Testcontainers from Phase 1, so no service container is needed; Docker on the runner is enough.
+- **backend** — setup .NET 10 → restore → build → test. Integration tests use Testcontainers from Phase 1, so no service container is needed; Docker on the runner is enough.
 - **frontend** — setup Node 24 + pnpm → install → lint → build → test.
 
-Remote **does** exist: `origin` → `https://github.com/AliSleiman0/POS.git`, currently only `main`. The branch has never been pushed, so CI has never run.
+`origin` is `https://github.com/AliSleiman0/POS.git`. The `gh` CLI is installed (2.96.0) and authenticated as `AliSleiman0` with `repo` + `workflow` scopes, so pushing a workflow file will work.
 
-Exit criteria include *"a deliberately broken build fails CI"* — actually verify that. This session found a real bug in the 0.3 architecture test precisely because that kind of negative check was performed, and found a crash-looping container precisely because one wasn't.
+Exit criteria include *"a deliberately broken build fails CI"* — **actually do that check**. This session found two real problems only because that kind of negative verification was performed, and missed a third (a crash-looping container) precisely where it wasn't.
 
-Note `.editorconfig` and `.gitattributes`/`.gitignore` already landed early (they were 0.7 items), so 0.7 is now only the workflow file.
+`.editorconfig`, `.gitattributes` and `.gitignore` already landed early, so 0.7 is now only the workflow file.
 
-## Decisions taken this session that are NOT in the original plan
+## Decisions taken that are NOT in the original plan
 
-All are recorded in `DECISIONS.md` or the phase doc, but flagged here because a reader of the plan alone would be surprised:
+Recorded in `DECISIONS.md` and the phase doc; listed here because a reader of the plan alone would be surprised:
 
 | Change | Why |
 |---|---|
@@ -66,8 +68,8 @@ All are recorded in `DECISIONS.md` or the phase doc, but flagged here because a 
 - **`dotnet dev-certs https --trust`** has not been run. Opens a Windows dialog that cannot be scripted. Needed before first running the API over HTTPS.
 - **Playwright browsers not installed.** Run `pnpm exec playwright install --with-deps` in Phase 4 — a ~500 MB download nothing needs before then.
 - **No visual verification of the web UI.** The Chrome extension was not connected. Tailwind is confirmed only via utilities in the built CSS and the Button being in the component tree — jsdom does not paint. **Eyeball it before Phase 4 builds real UI on top.**
-- **Branch unpushed** — 4 commits exist only on this machine.
 - `Pos.Data.Tests` and `Pos.Api.Tests` contain no tests yet. `dotnet test` still exits 0.
+- The `Initial` migration is intentionally empty — entities arrive in Phase 1.
 
 ## Things that will bite you
 
@@ -87,10 +89,12 @@ Full detail in the phase doc; the short version:
 
 **Do not start Phase 2 until 1.7's isolation tests pass.** Every entity added after Phase 1 inherits tenant scoping automatically; every entity added before it must be audited by hand. A cross-tenant leak means one shop reads another shop's takings.
 
-The two decisions in Phase 1/3 that are **not retrofittable** — worth re-reading `DECISIONS.md` on both:
+Two decisions in Phase 1/3 are **not retrofittable** — re-read `DECISIONS.md` on both before implementing:
 
-- **`TaxMode` per tenant** (inclusive vs exclusive). Reinterprets every stored price; must be set at onboarding and refused thereafter.
+- **`TaxMode` per tenant** (inclusive vs exclusive). Reinterprets every stored price; set at onboarding and refused thereafter.
 - **Idempotency keys from Phase 3**, not alongside the offline work. They stop a double-tap double-charging a customer today, and they are the entire mechanism Phase 9's outbox rests on.
+
+Also note for Phase 3.6: `EnableRetryOnFailure` is configured, and an execution strategy cannot wrap a user-initiated transaction without going through `CreateExecutionStrategy()`.
 
 ## Still genuinely open
 
