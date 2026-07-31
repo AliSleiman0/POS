@@ -93,6 +93,8 @@ Frontend gating is convenience. The server always re-checks. Fields a role may n
 
 Not a later cleanup pass. Every new endpoint gets a tenant-isolation test and a negative authorization test. Concurrency tests must actually run concurrently.
 
+This scales up to the phase: **each phase is fully tested and green — locally and in CI — before the next one starts.** No accumulated testing debt, no batched testing pass later. See [`docs/ROADMAP.md`](docs/ROADMAP.md#test-the-phase-before-starting-the-next-one).
+
 ### 10. No blocking browser dialogs in the register
 
 No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. Use in-page confirmations.
@@ -131,9 +133,11 @@ No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. 
 
 1. Exit criteria in the phase doc all met
 2. `dotnet build` and `pnpm build` warning-free
-3. All tests pass
+3. All tests pass — the milestone's own tests included, locally **and** in CI
 4. Tick the checkboxes in `docs/ROADMAP.md` **and** the phase doc
 5. If a decision changed along the way, update `DECISIONS.md` — the next session reads it as truth
+
+**A phase is tested before the next phase starts.** Testing does not accumulate across phases and is never deferred to a later cleanup pass — a phase with missing or failing tests is blocked, not done. Full rule in [`docs/ROADMAP.md`](docs/ROADMAP.md#test-the-phase-before-starting-the-next-one).
 
 ## Things that have already been decided — don't relitigate silently
 

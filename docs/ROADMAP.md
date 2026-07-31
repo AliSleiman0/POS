@@ -161,6 +161,16 @@ A phase is done when:
 
 1. Every milestone's exit criteria is met.
 2. `dotnet build` and `pnpm build` are warning-free (warnings are errors).
-3. All tests pass.
+3. **The phase's own tests are written and green** — locally *and* in CI. See below.
 4. The checkboxes here and the phase doc are updated.
 5. Work is committed on a branch with a phase-scoped message.
+
+### Test the phase before starting the next one
+
+**Testing is not allowed to accumulate.** Each phase is tested and green before the next phase begins — no "we'll write the tests later", no batched testing pass three phases downstream.
+
+- A trailing `N.x Tests` milestone in a phase doc is the **floor, not the plan**. Tests land with each milestone as it is built (invariant 9 in [`CLAUDE.md`](../CLAUDE.md) — tests ship with the behaviour).
+- Green means green **in CI**, not just on this machine. Phase 0 shipped two bugs that were invisible locally and only failed on the runner; `$env:CI="true"` before building reproduces that environment.
+- A phase with missing or failing tests is ⏸️ blocked, not ✅ done. If the next phase starts anyway, say so out loud and record it here — don't let it pass silently.
+
+The reason is that the phases are load-bearing on each other. Phase 1's tenant isolation and Phase 3's money and idempotency rules are inherited by everything built after them; a gap found late means auditing all of it by hand instead of reading one failing test.

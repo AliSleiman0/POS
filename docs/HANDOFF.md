@@ -61,7 +61,7 @@ If it is still `1` after the toggle, a reboot is needed.
 
 [`PHASE-1-tenancy-auth.md`](phases/PHASE-1-tenancy-auth.md). Read it before writing any entity. Start at **1.1 tenant primitives**; branch `phase-1/tenancy-auth`.
 
-**Do not start Phase 2 until 1.7's isolation tests pass.** Every entity added after Phase 1 inherits tenant scoping automatically; every entity added before it must be audited by hand. A cross-tenant leak means one shop reads another shop's takings.
+**Standing rule (2026-07-31): a phase is tested and green before the next one starts** — locally and in CI, no accumulated testing debt. `docs/ROADMAP.md` → "Test the phase before starting the next one". So: **do not start Phase 2 until 1.7's isolation tests pass.** Every entity added after Phase 1 inherits tenant scoping automatically; every entity added before it must be audited by hand. A cross-tenant leak means one shop reads another shop's takings.
 
 Two decisions are **not retrofittable** — re-read `DECISIONS.md` on both before implementing:
 
