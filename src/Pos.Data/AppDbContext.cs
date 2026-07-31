@@ -78,6 +78,16 @@ public class AppDbContext : IdentityDbContext<
 
     public DbSet<Register> Registers => Set<Register>();
 
+    public DbSet<Category> Categories => Set<Category>();
+
+    public DbSet<TaxClass> TaxClasses => Set<TaxClass>();
+
+    public DbSet<Product> Products => Set<Product>();
+
+    public DbSet<Barcode> Barcodes => Set<Barcode>();
+
+    public DbSet<StockItem> StockItems => Set<StockItem>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);

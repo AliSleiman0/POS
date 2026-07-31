@@ -18,6 +18,15 @@ namespace Pos.Data.Migrations;
 /// <c>RowLevelSecurityTests.Every_tenant_owned_table_is_covered</c> is what fails when
 /// somebody forgets — deliberately loud, and deliberately not a code review's job.
 /// </para>
+/// <para>
+/// <b>In <c>Down</c>, call <see cref="ApplyTenantRowLevelSecurity"/> too — not
+/// <see cref="RemoveTenantRowLevelSecurity"/>.</b> Remove is catalog-driven in the same way
+/// Apply is, so it strips <i>every</i> tenant table, not the ones the migration being rolled
+/// back created. In the first RLS migration that is correct, because it created them all.
+/// In any later migration it would leave <c>register</c>, <c>application_user</c> and the
+/// Identity tables unprotected, with no migration left to restore them. Re-applying after
+/// the drops is what produces the right end state.
+/// </para>
 /// </remarks>
 public static class TenantSecurityMigrationExtensions
 {

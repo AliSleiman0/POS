@@ -62,6 +62,13 @@ public sealed record SeedOptions
     /// </remarks>
     public required bool RotateDeviceToken { get; init; }
 
+    /// <summary>
+    /// Seed the tenant and its staff but no catalog, for testing what an empty shop looks
+    /// like — the state a real tenant is in on its first day, and the one an empty-list
+    /// screen is easiest to get wrong in.
+    /// </summary>
+    public required bool SkipCatalog { get; init; }
+
     public static string Usage => """
         Seeds the local development database with a tenant, three users and two registers.
 
@@ -81,6 +88,7 @@ public sealed record SeedOptions
           --rotate-device-token    Reissue the front register's device token and print it.
                                    A token is only shown at enrollment, so a re-run cannot
                                    reprint the previous one.
+          --no-catalog             Seed the tenant and its staff but no products.
           -h, --help               This text.
 
         Re-running is safe: anything that already exists is left alone.
@@ -98,6 +106,7 @@ public sealed record SeedOptions
 
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         var rotate = false;
+        var skipCatalog = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -106,6 +115,12 @@ public sealed record SeedOptions
             if (string.Equals(argument, "--rotate-device-token", StringComparison.Ordinal))
             {
                 rotate = true;
+                continue;
+            }
+
+            if (string.Equals(argument, "--no-catalog", StringComparison.Ordinal))
+            {
+                skipCatalog = true;
                 continue;
             }
 
@@ -148,6 +163,7 @@ public sealed record SeedOptions
             CashierPin = Pin(Value(values, "cashier-pin", DefaultCashierPin), "--cashier-pin"),
             ManagerPin = Pin(Value(values, "manager-pin", DefaultManagerPin), "--manager-pin"),
             RotateDeviceToken = rotate,
+            SkipCatalog = skipCatalog,
         };
     }
 

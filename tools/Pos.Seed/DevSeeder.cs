@@ -58,7 +58,13 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
         var front = await EnsureRegisterAsync(tenant.Id, "Front Counter", enroll: true);
         var back = await EnsureRegisterAsync(tenant.Id, "Back Counter", enroll: false);
 
-        Report(tenant, tenantCreated, [owner, manager, cashier], [front, back]);
+        // Last, because it is the only part that depends on a schema newer than Phase 1 —
+        // if the catalog tables are missing, everything above has already been written.
+        var catalog = options.SkipCatalog
+            ? CatalogSummary.Skipped
+            : await new CatalogSeeder(services).RunAsync(tenant.Id);
+
+        Report(tenant, tenantCreated, [owner, manager, cashier], [front, back], catalog);
     }
 
     /// <summary>
@@ -248,7 +254,8 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
         Tenant tenant,
         bool tenantCreated,
         IReadOnlyList<SeededUser> users,
-        IReadOnlyList<SeededRegister> registers)
+        IReadOnlyList<SeededRegister> registers,
+        CatalogSummary catalog)
     {
         var writer = Console.Out;
 
@@ -277,6 +284,17 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
             }
         }
 
+        if (catalog != CatalogSummary.Skipped)
+        {
+            writer.WriteLine();
+            writer.WriteLine(
+                $"  Catalog        {catalog.Products} products, {catalog.Barcodes} barcodes, " +
+                $"{catalog.StockItems} stock rows, {catalog.Categories} categories, " +
+                $"{catalog.TaxClasses} tax classes");
+            writer.WriteLine("                  SKU-1001 has two barcodes; SKU-1003 is sold by the kilogram;");
+            writer.WriteLine("                  SKU-1005 costs 0.1650; SKU-1006 has no category and no stock.");
+        }
+
         writer.WriteLine();
         writer.WriteLine($"Password for users created by this run: {options.Password}");
         writer.WriteLine("Existing users keep whatever password they already had.");
@@ -292,6 +310,24 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
         writer.WriteLine();
         writer.WriteLine("  POST http://localhost:5013/api/v1/auth/pin");
         writer.WriteLine($"  {{ \"userId\": \"{Format(users[^1].Id)}\", \"pin\": \"{options.CashierPin}\" }}");
+
+        if (catalog != CatalogSummary.Skipped)
+        {
+            writer.WriteLine();
+            writer.WriteLine("There are no catalog endpoints yet (Phase 2.2), so to look at what was written:");
+            writer.WriteLine();
+            writer.WriteLine("  docker exec -e PGPASSWORD=dev_only_not_a_secret pos-db psql -U pos -d pos_dev -c \"");
+            writer.WriteLine("    SELECT p.sku, p.name, p.unit, p.unit_price, t.rate, s.on_hand");
+            writer.WriteLine("    FROM product p");
+            writer.WriteLine("    JOIN tax_class t ON (t.tenant_id, t.id) = (p.tenant_id, p.tax_class_id)");
+            writer.WriteLine("    LEFT JOIN stock_item s ON (s.tenant_id, s.product_id) = (p.tenant_id, p.id)");
+            writer.WriteLine($"    WHERE p.tenant_id = '{Format(tenant.Id)}' ORDER BY p.sku;\"");
+            writer.WriteLine();
+            writer.WriteLine("That connects as the schema owner, which bypasses row-level security and sees");
+            writer.WriteLine("every tenant — the honest way to read rows before there is an API, and not how");
+            writer.WriteLine("the application ever connects.");
+        }
+
         writer.WriteLine();
     }
 

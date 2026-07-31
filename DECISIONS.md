@@ -89,6 +89,39 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-01 (during Phase 2)
+
+- **Foreign keys carry the tenant.** Every relationship between tenant-owned rows is a
+  *composite* key — `barcode(tenant_id, product_id) → product(tenant_id, id)` — pointing at
+  an alternate key `ak_<table>_tenant_id_id` rather than at the primary key. Phase 2.1 is
+  the first place the schema has foreign keys at all; `RefreshToken.UserId` is a bare `Guid`
+  because nothing pointed at it.
+
+  **The reason is specific and not obvious: Postgres exempts referential integrity checks
+  from row-level security.** RI triggers run as the referenced table's owner with row
+  security off, so a single-column key on `product_id` would let tenant B insert a barcode
+  referencing tenant A's product and the check would *accept* it — the policy that hides the
+  row does not apply to the check. RLS is not a backstop here; it is bypassed by design.
+  Carrying `tenant_id` inside the key makes a cross-tenant reference a `23503` violation.
+  Pinned by `CatalogForeignKeyTests`, which runs as `pos_app` for exactly that reason, and by
+  `TenantModelTests.Every_tenant_scoped_relationship_carries_the_tenant_in_its_foreign_key`.
+
+  Cost: one extra unique constraint per parent table. It is not waste — `(tenant_id, id)` is
+  the index every by-id read wants once the query filter adds `tenant_id = @p`, which a
+  primary key on `id` alone cannot serve.
+
+- **`OnDelete` is `Restrict` everywhere in the catalog**, never `Cascade`. Products are
+  withdrawn with `IsActive` and never deleted; a cascade would quietly take the barcodes,
+  and later the sale lines, with the row.
+
+- **`StockItem.RowVersion` maps to Postgres' `xmin`** rather than being a column we maintain.
+  Note for whoever reads the Npgsql docs: `UseXminAsConcurrencyToken()` **no longer exists**
+  in Npgsql 10 — the string `Xmin` is absent from the assembly. It was replaced by a
+  convention that matches a property that is `uint`, generated on add *and* update, and a
+  concurrency token. Changing any of those three silently turns it back into an ordinary
+  column, which is why `StockItemConcurrencyTests` asserts both the mapping and that no
+  `row_version` column exists.
+
 ### Resolved 2026-07-31 (during Phase 1)
 
 Four gaps the planning docs left open. All four are load-bearing for tenant isolation; none should be revisited without reading the reasoning here first.

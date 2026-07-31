@@ -159,10 +159,23 @@ Tenant ─┬─ ApplicationUser ── RefreshToken
         └─ IdempotencyRecord
 ```
 
+## Foreign keys carry the tenant
+
+Every relationship between tenant-owned rows is a **composite** foreign key —
+`(tenant_id, product_id) → product(tenant_id, id)` — pointing at an alternate key
+`ak_<table>_tenant_id_id`, not at the primary key.
+
+**Postgres exempts referential integrity checks from row-level security.** A single-column
+key on `product_id` would let one tenant reference another tenant's row and the check would
+accept it, RLS notwithstanding. The tenant has to be *inside* the key. Deletes are
+`RESTRICT`, never `CASCADE`. Rationale in [`DECISIONS.md`](../DECISIONS.md#resolved-2026-08-01-during-phase-2).
+
 ## Key indexes
 
 | Table | Index | Reason |
 |---|---|---|
+| `category`, `tax_class`, `product` | unique `(tenant_id, id)` — `ak_*_tenant_id_id` | The principal key tenant-scoped foreign keys point at; also the index every by-id read wants, which a PK on `id` alone cannot serve |
+| `tax_class` | unique `(tenant_id)` where `is_default` | At most one default per tenant — two would price new products nondeterministically |
 | `barcode` | unique `(tenant_id, code)` | Hottest read in the app; every scan |
 | `product` | unique `(tenant_id, sku)` | Business identity |
 | `product` | `(tenant_id, name)` | Catalog search |
