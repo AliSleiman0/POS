@@ -180,6 +180,16 @@ public static class IsolationManifest
 
         new()
         {
+            Key = "GET api/v1/products",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.ProductIds,
+            Forbidden = w => w.A.ProductIds,
+        },
+        new()
+        {
             Key = "GET api/v1/categories",
             Kind = IsolationKind.Collection,
             Paginated = true,
@@ -190,6 +200,57 @@ public static class IsolationManifest
         },
 
         // ---- By id ------------------------------------------------------------------
+        new()
+        {
+            Key = "GET api/v1/products/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+
+            // A read, so there is nothing to have changed. The 404 is the whole assertion.
+        },
+        new()
+        {
+            Key = "PUT api/v1/products/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+
+            // Valid *in tenant B*: the handler validates the body — including that the tax
+            // class exists in the caller's tenant — before it looks the product up. A body
+            // naming tenant A's tax class would be answered 400 and the cross-tenant lookup
+            // this row exists to test would never run.
+            Body = w => new
+            {
+                sku = "CROSS-TENANT-PUT",
+                name = "Attempt",
+                unitPrice = 1.0000m,
+                taxClassId = w.B.Catalog.StandardTaxClassId,
+            },
+            AssertUntouched = AssertTenantAsWaterProductIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/products/{id:guid}/deactivate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsWaterProductIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/products/{id:guid}/activate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.CoffeeProductId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsCoffeeProductIsUnchanged,
+        },
         new()
         {
             Key = "PUT api/v1/categories/{id:guid}",
@@ -281,6 +342,16 @@ public static class IsolationManifest
         },
 
         // ---- Exempt, each saying where the coverage is --------------------------------
+        new()
+        {
+            Key = "POST api/v1/products",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A write with no id, so neither shape fits. Covered for tenancy by "
+                      + "ProductCrudTests.The_same_sku_is_accepted_in_two_tenants and "
+                      + "ProductCrudTests.Another_tenants_tax_class_cannot_be_named, and by "
+                      + "ForgedTenancyTests.A_tenant_id_in_the_request_body_is_never_honoured.",
+        },
         new()
         {
             Key = "POST api/v1/categories",
@@ -421,6 +492,42 @@ public static class IsolationManifest
             var till = await db.Registers.FirstAsync(r => r.Id == world.A.FrontCounter.Id);
 
             Assert.Equal(OpaqueToken.Hash(world.A.FrontCounter.DeviceToken), till.DeviceTokenHash);
+        });
+
+    /// <summary>
+    /// Tenant A's Still Water still has its own SKU, name, price, cost and active flag.
+    /// </summary>
+    /// <remarks>
+    /// The cost is asserted too, because a cross-tenant PUT that reached the row would blank
+    /// it — the attacker holds <c>CanViewMargins</c> in their own tenant and sends no cost.
+    /// </remarks>
+    private static Task AssertTenantAsWaterProductIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var product = await db.Products.FirstAsync(p => p.Id == world.A.Catalog.WaterProductId);
+
+            Assert.Equal(CatalogFixture.WaterSku, product.Sku);
+            Assert.Equal(CatalogFixture.WaterName, product.Name);
+            Assert.Equal(1.2000m, product.UnitPrice);
+            Assert.Equal(CatalogFixture.WaterCostPrice, product.CostPrice);
+            Assert.True(product.IsActive);
+        });
+
+    /// <summary>Tenant A's Coffee still has its own name, cost and active flag.</summary>
+    private static Task AssertTenantAsCoffeeProductIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var product = await db.Products.FirstAsync(p => p.Id == world.A.Catalog.CoffeeProductId);
+
+            Assert.Equal(CatalogFixture.CoffeeSku, product.Sku);
+            Assert.Equal(CatalogFixture.CoffeeCostPrice, product.CostPrice);
+            Assert.True(product.IsActive);
         });
 
     /// <summary>

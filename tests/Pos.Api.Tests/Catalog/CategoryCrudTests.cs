@@ -28,7 +28,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     public async Task A_created_category_belongs_to_the_calling_tenant()
     {
         // Named by the POST row's Exemption in IsolationManifest.
-        var (client, sandbox) = await SignedInAsync(RoleNames.Owner);
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Owner);
 
         var id = await CreateAsync(client, Unique("Bakery"));
 
@@ -43,7 +43,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_created_category_is_active_and_top_level()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Manager);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Manager);
 
         var name = Unique("Frozen");
         var created = await client.PostAsJsonAsync(Route, new { name, sortOrder = 30 });
@@ -62,7 +62,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_category_can_be_created_beneath_another()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var parent = await CreateAsync(client, Unique("Drinks"));
         var child = await CreateAsync(client, Unique("Juice"), parent);
@@ -75,7 +75,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_category_cannot_be_its_own_parent()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var id = await CreateAsync(client, Unique("Loop"));
 
@@ -92,7 +92,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
         // A → B → C, then move A under C. This is the case a one-level "is the proposed
         // parent my direct child?" check waves straight through, which is why the check
         // walks the whole ancestor chain.
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var a = await CreateAsync(client, Unique("A"));
         var b = await CreateAsync(client, Unique("B"), a);
@@ -117,7 +117,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     {
         // The positive control. Without it, a check that refused every reparent would pass
         // both cycle tests above and be entirely broken.
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var first = await CreateAsync(client, Unique("First"));
         var second = await CreateAsync(client, Unique("Second"));
@@ -140,7 +140,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
         // PUT replaces; there is no PATCH. Worth a test because it is the behaviour a client
         // that forgets to send the parent will hit, and "my tree flattened" is a confusing
         // report to receive.
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var parent = await CreateAsync(client, Unique("Parent"));
         var child = await CreateAsync(client, Unique("Child"), parent);
@@ -160,7 +160,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
         // Named by the POST row's Exemption. A 400 on the field rather than a 404: the
         // request is what is wrong, and the answer is identical for "no such id" and "that
         // one belongs to another shop", so it is not an existence oracle.
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
         var world = await factory.IsolationWorldAsync();
 
         var response = await client.PostAsJsonAsync(
@@ -173,7 +173,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task An_unknown_parent_is_refused()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(
             Route,
@@ -187,7 +187,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [InlineData("   ")]
     public async Task A_blank_name_is_refused(string name)
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         await AssertValidationProblemAsync(await client.PostAsJsonAsync(Route, new { name }), "name");
     }
@@ -195,7 +195,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_name_past_the_column_length_is_refused()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(Route, new { name = new string('x', 101) });
 
@@ -205,7 +205,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_negative_sort_order_is_refused()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(Route, new { name = Unique("Neg"), sortOrder = -1 });
 
@@ -215,7 +215,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_bad_name_and_a_bad_sort_order_are_both_reported()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(Route, new { name = "", sortOrder = -5 });
 
@@ -230,7 +230,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
         // No cascade, deliberately. Hiding a category from a picker is a presentation
         // decision; unselling every product on that shelf is not, and a cascade would do the
         // second while the screen said it was doing the first.
-        var (client, sandbox) = await SignedInAsync(RoleNames.Owner);
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Owner);
 
         var category = sandbox.Catalog.CheeseCategoryId;
 
@@ -261,7 +261,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task Deactivating_and_activating_round_trip()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var id = await CreateAsync(client, Unique("Seasonal"));
 
@@ -277,7 +277,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task Deactivating_twice_is_still_a_204()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var id = await CreateAsync(client, Unique("Twice"));
 
@@ -291,7 +291,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task The_list_hides_deactivated_categories_unless_asked()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var id = await CreateAsync(client, Unique("Hidden"));
         await client.PostAsJsonAsync($"{Route}/{id}/deactivate", new { });
@@ -305,7 +305,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task An_unknown_id_is_a_404_on_every_by_id_route()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
         var missing = Guid.CreateVersion7();
 
         Assert.Equal(
@@ -324,7 +324,7 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
     [Fact]
     public async Task The_list_pages_by_cursor()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var first = await client.GetAsync(new Uri($"{Route}?limit=1", UriKind.Relative));
         var body = await first.Content.ReadFromJsonAsync<JsonElement>();
@@ -381,22 +381,6 @@ public sealed class CategoryCrudTests(PosApiFactory factory)
         return [.. body.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid())];
     }
 
-    private async Task<(HttpClient Client, CatalogSandbox Sandbox)> SignedInAsync(string role)
-    {
-        var sandbox = await factory.CatalogSandboxAsync();
-
-        var email = role switch
-        {
-            RoleNames.Owner => CatalogSandbox.OwnerEmail,
-            RoleNames.Manager => CatalogSandbox.ManagerEmail,
-            _ => CatalogSandbox.CashierEmail,
-        };
-
-        var client = factory.CreateClient();
-        client.WithBearer((await client.LoginAsync(CatalogSandbox.Slug, email, CatalogSandbox.Password)).AccessToken);
-
-        return (client, sandbox);
-    }
 
     private static async Task AssertCycleProblemAsync(HttpResponseMessage response)
     {

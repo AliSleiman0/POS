@@ -30,7 +30,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
         // Named by the POST row's Exemption in IsolationManifest: a write with no id has no
         // cross-tenant shape to attack, so the tenancy question for it is where the row
         // lands. Answered by reading it back inside the tenant that created it.
-        var (client, sandbox) = await SignedInAsync(RoleNames.Owner);
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Owner);
 
         var created = await client.PostAsJsonAsync(Route, new { name = Unique("Reduced"), rate = 0.1350m });
 
@@ -50,7 +50,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_created_tax_class_comes_back_with_its_location()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Manager);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Manager);
 
         var name = Unique("Standard");
         var created = await client.PostAsJsonAsync(Route, new { name, rate = 0.2300m });
@@ -90,7 +90,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
         // Inclusive at both ends, mirroring ck_tax_class_rate_range. Zero-rated goods are a
         // real category, and if the API were exclusive it would refuse a row the database
         // would happily hold — the two layers disagreeing about one rule.
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var created = await client.PostAsJsonAsync(
             Route,
@@ -106,7 +106,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [InlineData("0.20005", "rate")]   // scale 5 against numeric(6,4): Postgres would round it
     public async Task A_rate_the_column_would_reject_or_round_is_refused(string rate, string field)
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(
             Route,
@@ -122,7 +122,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
         // an omitted rate to 0, which is a *valid* rate — so "you forgot the rate" would
         // silently create a zero-rated class and every product priced against it would
         // undercharge tax until somebody reconciled a return.
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(Route, new { name = Unique("No rate") });
 
@@ -134,7 +134,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [InlineData("   ")]
     public async Task A_blank_name_is_refused(string name)
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(Route, new { name, rate = 0.2000m });
 
@@ -144,7 +144,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_name_past_the_column_length_is_refused()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(
             Route,
@@ -159,7 +159,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
         // Validation accumulates. Hand-rolled checks default to returning on the first
         // failure, and being told about one field at a time is how a form gets filled in
         // four times.
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PostAsJsonAsync(Route, new { name = "", rate = 9m });
 
@@ -244,7 +244,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_put_replaces_the_name_and_rate()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Manager);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Manager);
 
         var id = await CreateAsync(client, Unique("Before"), 0.2300m, isDefault: false);
 
@@ -292,7 +292,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_put_against_an_unknown_id_is_a_404()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Owner);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Owner);
 
         var response = await client.PutAsJsonAsync(
             $"{Route}/{Guid.CreateVersion7()}",
@@ -344,7 +344,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [Fact]
     public async Task The_list_is_a_cursor_page_rather_than_a_bare_array()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Cashier);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Cashier);
 
         var response = await client.GetAsync(new Uri(Route, UriKind.Relative));
 
@@ -362,7 +362,7 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
     [Fact]
     public async Task A_malformed_cursor_is_a_400_rather_than_a_500()
     {
-        var (client, _) = await SignedInAsync(RoleNames.Cashier);
+        var (client, _) = await factory.SignedInAsync(RoleNames.Cashier);
 
         var response = await client.GetAsync(new Uri($"{Route}?cursor=!!not-a-cursor!!", UriKind.Relative));
 
@@ -406,23 +406,6 @@ public sealed class TaxClassCrudTests(PosApiFactory factory)
         return names;
     }
 
-    /// <summary>A client signed into the shared sandbox as one of its three roles.</summary>
-    private async Task<(HttpClient Client, CatalogSandbox Sandbox)> SignedInAsync(string role)
-    {
-        var sandbox = await factory.CatalogSandboxAsync();
-
-        var email = role switch
-        {
-            RoleNames.Owner => CatalogSandbox.OwnerEmail,
-            RoleNames.Manager => CatalogSandbox.ManagerEmail,
-            _ => CatalogSandbox.CashierEmail,
-        };
-
-        var client = factory.CreateClient();
-        client.WithBearer((await client.LoginAsync(CatalogSandbox.Slug, email, CatalogSandbox.Password)).AccessToken);
-
-        return (client, sandbox);
-    }
 
     /// <summary>
     /// A throwaway tenant with one Owner, for the tests that change which tax class is the
