@@ -84,6 +84,10 @@ public sealed partial class DomainExceptionHandler(
         // input and branches on `type`.
         DuplicateSkuException => (StatusCodes.Status409Conflict, "SKU already in use"),
 
+        // The same shape one level down: a code already on some product in this tenant. The
+        // title deliberately does not name which product — see the remarks on the exception.
+        DuplicateBarcodeException => (StatusCodes.Status409Conflict, "Barcode already in use"),
+
         // Also 409, and for the same reason: two writers raced and one lost. Retrying after
         // a re-read is a meaningful thing to do, which is what separates this from a 400.
         DefaultTaxClassConflictException => (StatusCodes.Status409Conflict, "Default tax class changed concurrently"),

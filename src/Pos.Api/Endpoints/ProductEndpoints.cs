@@ -85,11 +85,57 @@ public sealed record ProductResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset? UpdatedAt);
 
+/// <summary>A code to add to a product. <c>isPrimary</c> is advisory — see <see cref="Barcode.IsPrimary"/>.</summary>
+public sealed record AddBarcodeRequest(string? Code, bool? IsPrimary);
+
+/// <summary>One of a product's codes.</summary>
+public sealed record BarcodeResponse(
+    Guid Id,
+    Guid ProductId,
+    string Code,
+    bool IsPrimary,
+    DateTimeOffset CreatedAt);
+
+/// <summary>
+/// Everything the register needs to put a scanned item on a line, in one response.
+/// </summary>
+/// <remarks>
+/// The tax class is included <b>as a rate</b>, not as an id to go and fetch. This is the
+/// hottest read in the application — every scan of every sale — and a till that had to make
+/// a second call to price the line would pay a round trip per item on a connection that is
+/// frequently a shop's broadband.
+/// <para>
+/// <c>isActive</c> is carried rather than filtered on. A deactivated product that is scanned
+/// still resolves, so the register can say "this is not for sale" instead of "unknown item,
+/// add it?" — which is how a withdrawn product gets recreated as a duplicate by a cashier
+/// trying to be helpful.
+/// </para>
+/// </remarks>
+public sealed record BarcodeLookupResponse(
+    Guid BarcodeId,
+    string Code,
+    bool IsPrimary,
+    Guid ProductId,
+    string Sku,
+    string Name,
+    string? Description,
+    Guid? CategoryId,
+    decimal UnitPrice,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? CostPrice,
+    Unit Unit,
+    bool IsActive,
+    bool TrackStock,
+    Guid TaxClassId,
+    string TaxClassName,
+    decimal TaxRate);
+
 public static class ProductEndpoints
 {
     private const string Sort = "product:name";
 
     private const string SkuConstraint = "ux_product_tenant_sku";
+
+    private const string BarcodeConstraint = "ux_barcode_tenant_code";
 
     /// <summary>Longest <c>?q=</c> accepted, so a pathological pattern cannot be handed to the index.</summary>
     private const int MaxSearchTermLength = 200;
@@ -109,6 +155,16 @@ public static class ProductEndpoints
             .RequireAuthorization(Policies.CanSell)
             .WithSummary("One product");
 
+        // The hot path. A literal segment, so it cannot be shadowed by /{id:guid} — and the
+        // guid constraint would refuse a barcode anyway.
+        products.MapGet("/by-barcode/{code}", ByBarcodeAsync)
+            .RequireAuthorization(Policies.CanSell)
+            .WithSummary("Scan a barcode");
+
+        products.MapGet("/{id:guid}/barcodes", ListBarcodesAsync)
+            .RequireAuthorization(Policies.CanSell)
+            .WithSummary("A product's codes");
+
         products.MapPost("/", CreateAsync)
             .RequireAuthorization(Policies.CanManageCatalog)
             .WithSummary("Create a product");
@@ -126,6 +182,16 @@ public static class ProductEndpoints
         products.MapPost("/{id:guid}/activate", ActivateAsync)
             .RequireAuthorization(Policies.CanManageCatalog)
             .WithSummary("Sell a product again");
+
+        products.MapPost("/{id:guid}/barcodes", AddBarcodeAsync)
+            .RequireAuthorization(Policies.CanManageCatalog)
+            .WithSummary("Add a code to a product");
+
+        // Barcodes may be deleted, unlike products: a mis-scanned label is data entry, not
+        // history. Nothing financial points at a barcode — a sale line points at the product.
+        products.MapDelete("/{id:guid}/barcodes/{barcodeId:guid}", RemoveBarcodeAsync)
+            .RequireAuthorization(Policies.CanManageCatalog)
+            .WithSummary("Remove a code from a product");
 
         return builder;
     }
@@ -217,6 +283,125 @@ public static class ProductEndpoints
             .FirstOrDefaultAsync(cancellationToken);
 
         return product is null ? TypedResults.NotFound() : TypedResults.Ok(product);
+    }
+
+    private static async Task<Results<Ok<BarcodeLookupResponse>, NotFound>> ByBarcodeAsync(
+        string code,
+        AppDbContext db,
+        ClaimsPrincipal caller,
+        IAuthorizationService authorization,
+        CancellationToken cancellationToken)
+    {
+        var normalised = Barcode.NormalizeCode(code);
+
+        // A blank or whitespace-only scan is 404, not 400. The caller is a scanner, and every
+        // answer this endpoint gives has to be one of the two the register knows how to show:
+        // an item, or "unknown item". A validation problem is a third thing it would have to
+        // learn to render for a case a human never types.
+        if (normalised is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var canViewMargins = await CanViewMarginsAsync(caller, authorization);
+
+        var scanned = await LookupQuery(db, normalised, canViewMargins)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return scanned is null ? TypedResults.NotFound() : TypedResults.Ok(scanned);
+    }
+
+    private static async Task<Results<Ok<IReadOnlyList<BarcodeResponse>>, NotFound>> ListBarcodesAsync(
+        Guid id,
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var barcodes = await db.Barcodes
+            .AsNoTracking()
+            .Where(b => b.ProductId == id)
+            .OrderBy(b => b.Code)
+            .Select(b => new BarcodeResponse(b.Id, b.ProductId, b.Code, b.IsPrimary, b.CreatedAt))
+            .ToListAsync(cancellationToken);
+
+        // A product with no codes and a product that does not exist both come back empty
+        // above, and only the second is a 404. Asked in this order so the extra round trip is
+        // paid only in the rare case rather than on every read.
+        if (barcodes.Count == 0 && !await db.Products.AnyAsync(p => p.Id == id, cancellationToken))
+        {
+            return TypedResults.NotFound();
+        }
+
+        return TypedResults.Ok<IReadOnlyList<BarcodeResponse>>(barcodes);
+    }
+
+    private static async Task<Results<Created<BarcodeResponse>, NotFound, ValidationProblem>> AddBarcodeAsync(
+        Guid id,
+        AddBarcodeRequest request,
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Length is checked before normalising, because NormalizeCode truncates. Normalising
+        // first would store a shortened code and report success — and a shortened barcode
+        // scans as nothing at all.
+        var trimmed = request.Code?.Trim() ?? string.Empty;
+
+        if (trimmed.Length is 0 or > Barcode.CodeMaxLength)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["code"] = [$"A barcode of 1 to {Barcode.CodeMaxLength} characters is required."],
+            });
+        }
+
+        if (!await db.Products.AnyAsync(p => p.Id == id, cancellationToken))
+        {
+            return TypedResults.NotFound();
+        }
+
+        var barcode = new Barcode
+        {
+            ProductId = id,
+            Code = Barcode.NormalizeCode(trimmed)!,
+
+            // Stored as sent. Nothing enforces one primary per product — see Barcode.IsPrimary.
+            IsPrimary = request.IsPrimary ?? false,
+        };
+
+        db.Barcodes.Add(barcode);
+
+        await SaveOrReportDuplicateBarcodeAsync(db, barcode.Code, cancellationToken);
+
+        // The collection, because there is no single-barcode GET to point at and inventing
+        // one to satisfy a header is not worth an endpoint.
+        return TypedResults.Created(
+            $"/api/v1/products/{id}/barcodes",
+            new BarcodeResponse(barcode.Id, barcode.ProductId, barcode.Code, barcode.IsPrimary, barcode.CreatedAt));
+    }
+
+    private static async Task<Results<NoContent, NotFound>> RemoveBarcodeAsync(
+        Guid id,
+        Guid barcodeId,
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        // Matched on both ids. A code addressed under the wrong product is a 404 rather than
+        // a delete of somebody else's barcode that happened to be named correctly.
+        var barcode = await db.Barcodes
+            .FirstOrDefaultAsync(b => b.Id == barcodeId && b.ProductId == id, cancellationToken);
+
+        // 404 on a second delete rather than 204-always. Deleting a code that is not there
+        // means the client is working from a stale list, which is worth it seeing.
+        if (barcode is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        db.Barcodes.Remove(barcode);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return TypedResults.NoContent();
     }
 
     private static async Task<Results<Created<ProductResponse>, ValidationProblem>> CreateAsync(
@@ -388,6 +573,98 @@ public static class ProductEndpoints
             throw DuplicateSkuException.ForSku(sku, exception);
         }
     }
+
+    /// <summary>
+    /// Saves, turning the barcode unique violation into a domain error.
+    /// </summary>
+    /// <remarks>
+    /// The constraint is named, not inferred from the <c>23505</c> alone: <c>product</c> and
+    /// <c>barcode</c> both carry unique indexes, and matching on the code alone would report
+    /// whichever one fired as whatever the nearest catch block happened to be about.
+    /// </remarks>
+    private static async Task SaveOrReportDuplicateBarcodeAsync(
+        AppDbContext db,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception)
+            when (PostgresErrors.IsUniqueViolation(exception, BarcodeConstraint))
+        {
+            throw DuplicateBarcodeException.ForCode(code, exception);
+        }
+    }
+
+    /// <summary>
+    /// The scan, as one query: barcode joined to its product joined to that product's tax
+    /// class.
+    /// </summary>
+    /// <remarks>
+    /// <b>Internal so a test can call the real thing.</b> The property this has to hold is
+    /// about the generated SQL — one round trip, no correlated subquery per row — and a test
+    /// that rebuilt an equivalent query would assert that the shape is expressible rather
+    /// than that the endpoint uses it.
+    /// <para>
+    /// The join is explicit because there are no navigation properties to walk (see
+    /// DECISIONS.md): with them, <c>Include</c> would be the obvious thing to write and would
+    /// produce either a second query or a wider one.
+    /// </para>
+    /// </remarks>
+    internal static IQueryable<BarcodeLookupResponse> LookupQuery(
+        AppDbContext db,
+        string code,
+        bool canViewMargins) =>
+        canViewMargins ? LookupWithCost(db, code) : LookupWithoutCost(db, code);
+
+    private static IQueryable<BarcodeLookupResponse> LookupWithCost(AppDbContext db, string code) =>
+        from barcode in db.Barcodes.AsNoTracking()
+        join product in db.Products on barcode.ProductId equals product.Id
+        join taxClass in db.TaxClasses on product.TaxClassId equals taxClass.Id
+        where barcode.Code == code
+        select new BarcodeLookupResponse(
+            barcode.Id,
+            barcode.Code,
+            barcode.IsPrimary,
+            product.Id,
+            product.Sku,
+            product.Name,
+            product.Description,
+            product.CategoryId,
+            product.UnitPrice,
+            product.CostPrice,
+            product.Unit,
+            product.IsActive,
+            product.TrackStock,
+            taxClass.Id,
+            taxClass.Name,
+            taxClass.Rate);
+
+    /// <summary>The same query with the cost column not named. See <see cref="ProjectWithoutCost"/>.</summary>
+    private static IQueryable<BarcodeLookupResponse> LookupWithoutCost(AppDbContext db, string code) =>
+        from barcode in db.Barcodes.AsNoTracking()
+        join product in db.Products on barcode.ProductId equals product.Id
+        join taxClass in db.TaxClasses on product.TaxClassId equals taxClass.Id
+        where barcode.Code == code
+        select new BarcodeLookupResponse(
+            barcode.Id,
+            barcode.Code,
+            barcode.IsPrimary,
+            product.Id,
+            product.Sku,
+            product.Name,
+            product.Description,
+            product.CategoryId,
+            product.UnitPrice,
+            null,
+            product.Unit,
+            product.IsActive,
+            product.TrackStock,
+            taxClass.Id,
+            taxClass.Name,
+            taxClass.Rate);
 
     private sealed record ValidatedFields(
         string Sku,

@@ -128,6 +128,56 @@ public sealed class CatalogEntityTests
         Assert.Equal(Product.SkuMaxLength, normalised.Length);
     }
 
+    [Theory]
+    [InlineData("5010000000011", "5010000000011")]
+    [InlineData("  5010000000011  ", "5010000000011")]
+    [InlineData("\t5010000000011\n", "5010000000011")]
+    public void Normalize_code_trims_a_scan(string input, string expected)
+    {
+        // A scanner that appends a carriage return, and a paste that brings whitespace with
+        // it, both produce a code the unique index would treat as different from the typed
+        // one — so the same label would scan as two products.
+        Assert.Equal(expected, Barcode.NormalizeCode(input));
+    }
+
+    [Fact]
+    public void Normalize_code_leaves_the_case_alone()
+    {
+        // The asymmetry with NormalizeSku is the point, and this is the test that fails if
+        // somebody "makes them consistent". GS1-128 application identifiers carry
+        // case-significant data; upper-casing a scan changes what the label says.
+        Assert.Equal("abc123X", Barcode.NormalizeCode("abc123X"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Normalize_code_returns_null_when_nothing_usable_remains(string? input)
+    {
+        // Null rather than empty, for the same reason as a SKU: an empty code is storable,
+        // collides with the next empty one, and surfaces as a duplicate-barcode conflict
+        // over a field the user left blank.
+        Assert.Null(Barcode.NormalizeCode(input));
+    }
+
+    [Fact]
+    public void Normalize_code_truncates_to_the_stored_length()
+    {
+        var normalised = Barcode.NormalizeCode(new string('9', Barcode.CodeMaxLength + 20));
+
+        Assert.NotNull(normalised);
+        Assert.Equal(Barcode.CodeMaxLength, normalised.Length);
+    }
+
+    [Fact]
+    public void A_new_barcode_is_not_the_primary_one()
+    {
+        // Nothing enforces one primary per product (Phase 2.3, deliberately), so the default
+        // is the only thing keeping a bulk import from marking every code as the label code.
+        Assert.False(new Barcode { ProductId = Guid.CreateVersion7(), Code = "5010000000011" }.IsPrimary);
+    }
+
     private static Product NewProduct() => new()
     {
         Sku = "SKU-1001",

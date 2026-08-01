@@ -18,13 +18,29 @@ public sealed record SeededCatalog(
     Guid CheeseCategoryId,
     Guid WaterProductId,
     Guid CoffeeProductId,
-    Guid BagProductId)
+    Guid BagProductId,
+    Guid WaterBarcodeId,
+    Guid WaterMultipackBarcodeId,
+    Guid CoffeeBarcodeId)
 {
     public IReadOnlyList<Guid> ProductIds => [WaterProductId, CoffeeProductId, BagProductId];
 
     public IReadOnlyList<Guid> CategoryIds => [GroceryCategoryId, CheeseCategoryId];
 
     public IReadOnlyList<Guid> TaxClassIds => [StandardTaxClassId, ZeroTaxClassId];
+
+    /// <summary>Everything <c>GET /products/{waterId}/barcodes</c> must return.</summary>
+    public IReadOnlyList<Guid> WaterBarcodeIds => [WaterBarcodeId, WaterMultipackBarcodeId];
+
+    /// <summary>
+    /// Everything <c>GET /stock</c> must return: the products that track stock.
+    /// </summary>
+    /// <remarks>
+    /// Not the same list as <see cref="ProductIds"/> — the carrier bag has
+    /// <c>TrackStock = false</c> and must not appear, which is the assertion that would fail
+    /// if the endpoint ever stopped filtering.
+    /// </remarks>
+    public IReadOnlyList<Guid> StockedProductIds => [WaterProductId, CoffeeProductId];
 }
 
 /// <summary>
@@ -35,7 +51,7 @@ public sealed record SeededCatalog(
 /// shared because the two test projects do not reference each other — and should not, since
 /// one asserts about the database and the other about the API.
 /// <para>
-/// <b>Three saves, principals before dependents.</b> None of the catalog entities has a
+/// <b>Four saves, principals before dependents.</b> None of the catalog entities has a
 /// navigation property, so EF does no foreign-key fixup: a category's <c>Id</c> stays
 /// <see cref="Guid.Empty"/> until <c>TenantSaveChangesInterceptor</c> stamps it during
 /// <c>SaveChanges</c>. Adding a child in the same call writes <c>Guid.Empty</c> into the
@@ -66,6 +82,32 @@ public static class CatalogFixture
     public const decimal WaterCostPrice = 0.5500m;
 
     public const decimal CoffeeCostPrice = 2.4000m;
+
+    /// <summary>
+    /// The water's own code and the code on a shrink-wrapped six-pack of it.
+    /// </summary>
+    /// <remarks>
+    /// Two codes on one product because that is the case one-barcode-per-product modelling
+    /// gets wrong, and a fixture with only one of them cannot notice.
+    /// </remarks>
+    public const string WaterBarcode = "5010000000011";
+
+    public const string WaterMultipackBarcode = "5010000000028";
+
+    public const string CoffeeBarcode = "5010000000103";
+
+    /// <summary>The bag has no barcode, so the empty collection is a real case too.</summary>
+    public const decimal WaterOnHand = 12.0000m;
+
+    public const decimal WaterReorderPoint = 4.0000m;
+
+    /// <summary>
+    /// Below its reorder point on purpose, so <c>?belowReorderPoint=true</c> has one row to
+    /// return and one to leave out rather than answering the same either way.
+    /// </summary>
+    public const decimal CoffeeOnHand = 3.0000m;
+
+    public const decimal CoffeeReorderPoint = 5.0000m;
 
     public static async Task<SeededCatalog> WriteAsync(PosApiFactory factory, Guid tenantId)
     {
@@ -132,6 +174,30 @@ public static class CatalogFixture
             db.Products.AddRange(water, coffee, bag);
             await db.SaveChangesAsync();
 
+            // Pass four: the dependents. Same reason as the pass above — a barcode or a stock
+            // row added alongside its product would carry Guid.Empty in the foreign key.
+            var waterCode = new Barcode { ProductId = water.Id, Code = WaterBarcode, IsPrimary = true };
+            var waterMultipack = new Barcode { ProductId = water.Id, Code = WaterMultipackBarcode };
+            var coffeeCode = new Barcode { ProductId = coffee.Id, Code = CoffeeBarcode, IsPrimary = true };
+
+            db.Barcodes.AddRange(waterCode, waterMultipack, coffeeCode);
+
+            db.StockItems.AddRange(
+                new StockItem
+                {
+                    ProductId = water.Id,
+                    OnHand = WaterOnHand,
+                    ReorderPoint = WaterReorderPoint,
+                },
+                new StockItem
+                {
+                    ProductId = coffee.Id,
+                    OnHand = CoffeeOnHand,
+                    ReorderPoint = CoffeeReorderPoint,
+                });
+
+            await db.SaveChangesAsync();
+
             catalog = new SeededCatalog(
                 standard.Id,
                 zero.Id,
@@ -139,7 +205,10 @@ public static class CatalogFixture
                 cheese.Id,
                 water.Id,
                 coffee.Id,
-                bag.Id);
+                bag.Id,
+                waterCode.Id,
+                waterMultipack.Id,
+                coffeeCode.Id);
         });
 
         return catalog!;

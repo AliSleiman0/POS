@@ -32,6 +32,9 @@ public sealed record IsolatedTenant(
     /// <summary>Everything <c>GET /categories</c> must return.</summary>
     public IReadOnlyList<Guid> CategoryIds => Catalog.CategoryIds;
 
+    /// <summary>Everything <c>GET /stock</c> must return: the products that track stock.</summary>
+    public IReadOnlyList<Guid> StockedProductIds => Catalog.StockedProductIds;
+
     /// <summary>Everything <c>GET /tax-classes</c> must return.</summary>
     public IReadOnlyList<Guid> TaxClassIds => Catalog.TaxClassIds;
 }
