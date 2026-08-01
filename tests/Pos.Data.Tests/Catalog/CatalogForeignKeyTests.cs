@@ -78,6 +78,84 @@ public sealed class CatalogForeignKeyTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task A_stock_movement_for_a_product_in_the_same_tenant_is_accepted()
+    {
+        var tenant = Guid.NewGuid();
+
+        await using var scoped = ScopedDbContext.ForTenant(postgres.AppConnectionString, tenant);
+        var catalog = await CatalogGraph.WriteAsync(scoped.Db, "SKU-LEDGER", "5099999010011");
+
+        scoped.Db.StockMovements.Add(new StockMovement
+        {
+            ProductId = catalog.ProductId,
+            Type = StockMovementType.Waste,
+            Quantity = -2.0000m,
+            Reason = "Damaged in transit",
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+
+        await scoped.Db.SaveChangesAsync();
+
+        // The positive control for the negative below, and also the only place a negative
+        // quantity is written straight to the column — the ledger is signed and the check
+        // constraints deliberately do not police the sign.
+        Assert.Equal(2, await scoped.Db.StockMovements.CountAsync(m => m.ProductId == catalog.ProductId));
+    }
+
+    [Fact]
+    public async Task A_stock_movement_cannot_reference_another_tenants_product()
+    {
+        var victim = Guid.NewGuid();
+        var attacker = Guid.NewGuid();
+
+        await using var victimScope = ScopedDbContext.ForTenant(postgres.AppConnectionString, victim);
+        var catalog = await CatalogGraph.WriteAsync(victimScope.Db, "SKU-VICTIM-4", "5099999020011");
+
+        await using var attackerScope = ScopedDbContext.ForTenant(postgres.AppConnectionString, attacker);
+
+        attackerScope.Db.StockMovements.Add(new StockMovement
+        {
+            ProductId = catalog.ProductId,
+            Type = StockMovementType.Receive,
+            Quantity = 500m,
+            Reason = "Not my product",
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+
+        // Worth its own test for the same reason the stock-item one is: the ledger is what a
+        // report reads, so a movement written into someone else's shop would show up as
+        // stock they never received and cannot explain.
+        await AssertViolatesAsync(attackerScope, PostgresErrorCodes.ForeignKeyViolation);
+    }
+
+    [Fact]
+    public async Task A_movement_type_the_enum_does_not_have_is_rejected()
+    {
+        var tenant = Guid.NewGuid();
+
+        await using var scoped = ScopedDbContext.ForTenant(postgres.AppConnectionString, tenant);
+        var catalog = await CatalogGraph.WriteAsync(scoped.Db, "SKU-BADTYPE", "5099999030011");
+
+        // Raw SQL, because C# cannot produce this value — which is the point.
+        // ck_stock_movement_type_allowed is what stops an import or a hand-written script
+        // writing a type the application has no case for, and the enum's exhaustiveness is
+        // only a compile-time guarantee.
+        var sql = """
+            INSERT INTO stock_movement
+                (id, tenant_id, product_id, type, quantity, occurred_at, created_at)
+            VALUES ({0}, {1}, {2}, 'Shrinkage', -1, now(), now())
+            """;
+
+        var ex = await Assert.ThrowsAsync<PostgresException>(() =>
+            scoped.Db.Database.ExecuteSqlRawAsync(
+                sql.Replace("{0}", $"'{Guid.CreateVersion7()}'", StringComparison.Ordinal)
+                   .Replace("{1}", $"'{tenant}'", StringComparison.Ordinal)
+                   .Replace("{2}", $"'{catalog.ProductId}'", StringComparison.Ordinal)));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
+    }
+
+    [Fact]
     public async Task A_product_cannot_reference_another_tenants_tax_class()
     {
         var victim = Guid.NewGuid();

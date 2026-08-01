@@ -88,6 +88,9 @@ public class AppDbContext : IdentityDbContext<
 
     public DbSet<StockItem> StockItems => Set<StockItem>();
 
+    /// <summary>The append-only ledger. <see cref="StockItem.OnHand"/> is a cache of it.</summary>
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);

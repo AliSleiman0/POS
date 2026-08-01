@@ -4,15 +4,15 @@ using Pos.Data.Tests.Infrastructure;
 namespace Pos.Data.Tests.Catalog;
 
 /// <summary>
-/// The five new entities are invisible across tenants — demonstrated per entity, on the
-/// application's own connection.
+/// The catalog and inventory entities are invisible across tenants — demonstrated per
+/// entity, on the application's own connection.
 /// </summary>
 /// <remarks>
 /// The query filter is applied by reflection to everything implementing <c>ITenantOwned</c>,
 /// so in principle this cannot fail for a new entity. In principle is the problem: the
 /// filter is skipped for an entity type EF maps as owned or derived, and a configuration
 /// that hand-wrote <c>HasQueryFilter</c> would silently replace it. This is the behavioural
-/// check that the reflection in <c>TenantModelTests</c> reached these five types.
+/// check that the reflection in <c>TenantModelTests</c> reached every one of these types.
 /// <para>
 /// Run as <c>pos_app</c>, so a failure here means the query filter <i>and</i> row-level
 /// security both let the row through.
@@ -41,6 +41,7 @@ public sealed class CatalogTenantIsolationTests(PostgresFixture postgres)
         Assert.Null(await strangerDb.Products.FirstOrDefaultAsync(p => p.Id == catalog.ProductId));
         Assert.Null(await strangerDb.Barcodes.FirstOrDefaultAsync(b => b.Id == catalog.BarcodeId));
         Assert.Null(await strangerDb.StockItems.FirstOrDefaultAsync(s => s.Id == catalog.StockItemId));
+        Assert.Null(await strangerDb.StockMovements.FirstOrDefaultAsync(m => m.Id == catalog.StockMovementId));
 
         // And the same five reads succeed for the tenant that wrote them, which is what
         // rules out "the rows were never written" as the reason the reads above came back
@@ -50,6 +51,7 @@ public sealed class CatalogTenantIsolationTests(PostgresFixture postgres)
         Assert.NotNull(await ownerScope.Db.Products.FirstOrDefaultAsync(p => p.Id == catalog.ProductId));
         Assert.NotNull(await ownerScope.Db.Barcodes.FirstOrDefaultAsync(b => b.Id == catalog.BarcodeId));
         Assert.NotNull(await ownerScope.Db.StockItems.FirstOrDefaultAsync(s => s.Id == catalog.StockItemId));
+        Assert.NotNull(await ownerScope.Db.StockMovements.FirstOrDefaultAsync(m => m.Id == catalog.StockMovementId));
     }
 
     [Fact]

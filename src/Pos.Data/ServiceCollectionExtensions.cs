@@ -2,8 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Pos.Core.Auditing;
+using Pos.Core.Inventory;
 using Pos.Core.Tenancy;
 using Pos.Data.Interceptors;
+using Pos.Data.Inventory;
 
 namespace Pos.Data;
 
@@ -65,6 +67,11 @@ public static class ServiceCollectionExtensions
                 // snake_case tables and columns, applied model-wide rather than
                 // per-property. See docs/DATA-MODEL.md#conventions.
                 .UseSnakeCaseNamingConvention());
+
+        // The port Core declares for the stock ledger. Registered here rather than in the API
+        // so that a host with no HTTP in it — the seeder, a future maintenance job — gets a
+        // working ledger from AddPosData alone.
+        services.AddScoped<IStockLedger, StockLedger>();
 
         return services;
     }

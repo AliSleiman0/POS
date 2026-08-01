@@ -38,6 +38,17 @@ public sealed class DatabaseSchemaTests(PostgresFixture postgres)
         { "product", "ix_product_tenant_name_trgm", false, ["tenant_id", "name"] },
         { "category", "ix_category_tenant_name", false, ["tenant_id", "name"] },
         { "tax_class", "ix_tax_class_tenant_name", false, ["tenant_id", "name"] },
+
+        // Phase 2.4. Not unique — a product legitimately has many movements, and two of them
+        // can share an instant. The column order is the whole value: it serves "this
+        // product's ledger" and "oldest first" with one index, which is exactly what the
+        // paged endpoint and the on-hand rebuild both ask for.
+        {
+            "stock_movement",
+            "ix_stock_movement_tenant_product_occurred",
+            false,
+            ["tenant_id", "product_id", "occurred_at"]
+        },
     };
 
     [Theory]
@@ -150,7 +161,8 @@ public sealed class DatabaseSchemaTests(PostgresFixture postgres)
         command.CommandText = """
             SELECT conname FROM pg_constraint
             WHERE contype = 'c'
-              AND conrelid IN ('product'::regclass, 'barcode'::regclass, 'tax_class'::regclass, 'category'::regclass)
+              AND conrelid IN ('product'::regclass, 'barcode'::regclass, 'tax_class'::regclass,
+                               'category'::regclass, 'stock_movement'::regclass)
             ORDER BY conname;
             """;
 
@@ -170,6 +182,12 @@ public sealed class DatabaseSchemaTests(PostgresFixture postgres)
         Assert.Contains("ck_tax_class_name_length", names, StringComparer.Ordinal);
         Assert.Contains("ck_tax_class_rate_range", names, StringComparer.Ordinal);
         Assert.Contains("ck_category_name_length", names, StringComparer.Ordinal);
+
+        // The ledger's type column is text, so this constraint is the only thing standing
+        // between an import and a movement type the application has no case for — in a table
+        // that is append-only and therefore keeps whatever it is given forever.
+        Assert.Contains("ck_stock_movement_type_allowed", names, StringComparer.Ordinal);
+        Assert.Contains("ck_stock_movement_reason_length", names, StringComparer.Ordinal);
     }
 
     [Fact]

@@ -92,6 +92,10 @@ public sealed partial class DomainExceptionHandler(
         // a re-read is a meaningful thing to do, which is what separates this from a 400.
         DefaultTaxClassConflictException => (StatusCodes.Status409Conflict, "Default tax class changed concurrently"),
 
+        // The same race one table over, detected by StockItem's xmin token. Deliberately not
+        // retried for the caller — see the remarks on the exception.
+        ConcurrentStockUpdateException => (StatusCodes.Status409Conflict, "Stock changed concurrently"),
+
         // 400, and stated rather than left to the fallback below, because the fallback's
         // title ("Request could not be completed") tells a client nothing about which field
         // to blame. No race is involved: that parent can never be that category's parent.

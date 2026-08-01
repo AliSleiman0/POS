@@ -32,7 +32,18 @@ public static class CatalogRules
     /// Whether a price or quantity is non-negative and survives the column exactly.
     /// </summary>
     public static bool IsStorableAmount(decimal value) =>
-        value >= 0m && value <= MaxAmount && HasScaleAtMost(value, AmountScale);
+        value >= 0m && IsStorableSignedAmount(value);
+
+    /// <summary>
+    /// Whether a value survives <c>numeric(19,4)</c> exactly, in either direction.
+    /// </summary>
+    /// <remarks>
+    /// Split out for the stock ledger, where a movement quantity is signed — waste and sales
+    /// are negative. Sharing the range and scale check with <see cref="IsStorableAmount"/>
+    /// rather than restating it is what stops the two drifting the day the column changes.
+    /// </remarks>
+    public static bool IsStorableSignedAmount(decimal value) =>
+        value >= -MaxAmount && value <= MaxAmount && HasScaleAtMost(value, AmountScale);
 
     /// <summary>
     /// Whether a tax rate is a fraction the <c>ck_tax_class_rate_range</c> check will accept

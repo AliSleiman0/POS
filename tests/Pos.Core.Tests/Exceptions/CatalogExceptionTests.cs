@@ -22,6 +22,7 @@ public sealed class CatalogExceptionTests
         Assert.Equal("duplicate-barcode", new DuplicateBarcodeException().ErrorType);
         Assert.Equal("category-cycle", new CategoryCycleException().ErrorType);
         Assert.Equal("default-tax-class-conflict", new DefaultTaxClassConflictException().ErrorType);
+        Assert.Equal("concurrent-stock-update", new ConcurrentStockUpdateException().ErrorType);
     }
 
     [Fact]
@@ -35,6 +36,7 @@ public sealed class CatalogExceptionTests
         Assert.IsAssignableFrom<PosDomainException>(new DuplicateBarcodeException());
         Assert.IsAssignableFrom<PosDomainException>(new CategoryCycleException());
         Assert.IsAssignableFrom<PosDomainException>(new DefaultTaxClassConflictException());
+        Assert.IsAssignableFrom<PosDomainException>(new ConcurrentStockUpdateException());
     }
 
     [Fact]
