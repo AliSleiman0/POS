@@ -22,10 +22,16 @@ Design points worth restating because they are the ones usually got wrong:
 - **`StockItem.RowVersion`** maps to Postgres `xmin` for optimistic concurrency — the mechanism Phase 3.6 relies on to detect two registers selling the last unit.
 
 **Exit criteria**
-- [ ] Entities + configurations, migration generated and applied
-- [ ] All money columns `numeric(19,4)`, quantities `numeric(19,4)`
-- [ ] Indexes from [DATA-MODEL.md](../DATA-MODEL.md#key-indexes) present, each leading with `tenant_id`
-- [ ] Global query filter demonstrably applies to each new entity (no per-entity registration needed)
+- [x] Entities + configurations, migration generated and applied — `CatalogAndInventory`, RLS re-applied in both `Up` and `Down`
+- [x] All money columns `numeric(19,4)`, quantities `numeric(19,4)` — `DatabaseSchemaTests` scans every numeric column in the schema, with `tax_class.rate` at `(6,4)` as the one stated exception
+- [x] Indexes from [DATA-MODEL.md](../DATA-MODEL.md#key-indexes) present, each leading with `tenant_id` — asserted by name, column order and uniqueness in the catalog, and model-wide in `TenantModelTests`
+- [x] Global query filter demonstrably applies to each new entity (no per-entity registration needed) — model-wide by reflection, plus `CatalogTenantIsolationTests` per entity
+
+**Also landed here, decided during the milestone** (see [`DECISIONS.md`](../../DECISIONS.md#resolved-2026-08-01-during-phase-2)):
+
+- **Foreign keys carry `tenant_id`**, pointing at `ak_*_tenant_id_id` alternate keys, because RI checks bypass RLS. `RESTRICT`, never `CASCADE`.
+- **`StockItem.RowVersion` maps to `xmin`** — `UseXminAsConcurrencyToken()` no longer exists in Npgsql 10; the convention now matches on `uint` + generated-on-add-or-update + concurrency token.
+- **`Product.NormalizeSku`** (trim + invariant uppercase), because the unique index lands here and decides whether `abc` and `ABC` are one product or two.
 
 ## 2.2 CRUD API
 

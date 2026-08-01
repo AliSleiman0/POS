@@ -26,6 +26,7 @@ src/Pos.Data   — EF Core: DbContext, configs, interceptors, migrations.
 src/Pos.Api    — ASP.NET Core Web API.
 src/Pos.Web    — Vite + React + TS PWA.
 tests/         — Pos.Core.Tests, Pos.Data.Tests, Pos.Api.Tests
+tools/Pos.Seed — dev-only seeding: a tenant, three users, two registers. Not shipped.
 ```
 
 ## Commands
@@ -34,7 +35,9 @@ tests/         — Pos.Core.Tests, Pos.Data.Tests, Pos.Api.Tests
 docker compose up -d                                   # Postgres + pgAdmin
 dotnet build                                           # warnings are errors
 dotnet test                                            # all .NET tests
-dotnet run --project src/Pos.Api                       # API + /swagger
+dotnet run --project src/Pos.Api                       # API on :5013 (launchSettings, not ASPNETCORE_URLS)
+# No API docs UI yet — Development serves the raw OpenAPI document at /openapi/v1.json and
+# nothing renders it. Several phase docs say "via Swagger"; that UI has to be added first.
 dotnet ef migrations add <Name> --project src/Pos.Data --startup-project src/Pos.Api
 
 # Migrations connect as the schema OWNER. The app's connection string is pos_app, which
@@ -42,6 +45,11 @@ dotnet ef migrations add <Name> --project src/Pos.Data --startup-project src/Pos
 # owner explicitly or it fails with "permission denied for schema public".
 dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
   --connection "Host=localhost;Port=5432;Database=pos_dev;Username=pos;Password=dev_only_not_a_secret"
+
+# Dev data. There is no onboarding endpoint by decision, so a migrated database has no
+# tenant and nothing can be exercised by hand. Safe to re-run: existing rows are left alone.
+# Prints the credentials and the register's device token — the token is shown ONCE.
+dotnet run --project tools/Pos.Seed              # --help for slug/password/PIN options
 
 pnpm --dir src/Pos.Web dev
 pnpm --dir src/Pos.Web build
@@ -148,7 +156,7 @@ No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. 
 
 - Postgres, not SQL Server
 - Shared DB + `TenantId`, not database- or schema-per-tenant
-- Cash-only checkout for the MVP; card is Phase 11
+- Cash-only checkout — card processing is out of scope for the product, not deferred (Phase 11 dropped 2026-07-31)
 - ASP.NET Core Identity + JWT, not an external IdP
 - Online-only first; offline is Phase 9
 - No platform admin UI until after the first paying client
@@ -160,4 +168,3 @@ Rationale for each is in `DECISIONS.md`. If evidence emerges that one is wrong, 
 
 - Pricing/business model: one-time purchase vs. recurring, given that we host. No billing code exists yet, so this blocks nothing until Phase 10 — but it needs deciding before pricing is quoted to a customer.
 - Hosting provider (decided in Phase 8.2).
-- Payment processor (decided in Phase 11).

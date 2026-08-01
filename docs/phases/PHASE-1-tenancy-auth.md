@@ -201,12 +201,26 @@ Three things worth keeping:
 
 ```powershell
 docker compose up -d
-dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api
 dotnet test                                    # isolation suite must be green
-dotnet run --project src/Pos.Api               # /swagger, exercise /auth/login
+
+# Migrations connect as the schema owner; the app's connection string is pos_app, which has
+# no CREATE on the schema. The full command is in CLAUDE.md.
+dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
+  --connection "Host=localhost;Port=5432;Database=pos_dev;Username=pos;Password=dev_only_not_a_secret"
+
+dotnet run --project src/Pos.Api               # :5013
 ```
 
-Manual: create two tenants via the onboarding path, log in as each, confirm neither can see the other's data through Swagger.
+**The manual check is deferred to Phase 4, and this is why.** It reads "create two tenants via the
+onboarding path, log in as each, confirm neither can see the other's data through Swagger" — and none
+of those three things exists. There is no onboarding path (no platform admin UI until after the first
+paying client, by decision), no API docs UI (Development serves the raw OpenAPI document at
+`/openapi/v1.json` and nothing renders it), and no login screen until Phase 4. Doing it now means
+building a dev seeding script and adding a docs UI first.
+
+It is confirmation rather than coverage: `tests/Pos.Api.Tests/Isolation/` asserts the same thing on
+every endpoint, on every run, against real Postgres with row-level security enforcing. The gate below
+rests on that, not on this.
 
 ## Gate
 

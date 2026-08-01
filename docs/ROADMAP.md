@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 1 complete — 1.1–1.7 done, 133 tests green |
-| **Next up** | Phase 2, catalog & inventory. Phase 1's gate is passed and merged to `main`. |
+| **Current phase** | Phase 2 in progress — 2.1 done, 178 tests green |
+| **Next up** | 2.2 CRUD API. Adding an endpoint now fails the build until it has an `IsolationManifest` row. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
-| **Last updated** | 2026-07-31 |
+| **Last updated** | 2026-08-01 |
 
 ## Phase overview
 
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | ✅ Done |
 | 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ✅ Done |
-| 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ⬜ Not started |
+| 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | 🔨 2.1 done |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ⬜ Not started |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ⬜ Not started |
 | 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ⬜ Not started |
@@ -31,7 +31,7 @@
 | 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ⬜ Not started |
 | — | **← MVP line.** Everything above ships as v1. | | |
 | 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ⬜ Not started |
-| 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, card payments, desktop, platform admin | ⬜ Not started |
+| 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, desktop, platform admin (card payments dropped) | ⬜ Not started |
 
 Legend: ⬜ not started · 🔨 in progress · ✅ done · ⏸️ blocked
 
@@ -65,7 +65,7 @@ The load-bearing phase. Everything after it assumes tenant scoping is automatic 
 
 Detail: [phases/PHASE-2-catalog-inventory.md](phases/PHASE-2-catalog-inventory.md)
 
-- [ ] **2.1 Entities** — `Product`, `Barcode` (many per product), `Category`, `StockItem`, `TaxClass`.
+- [x] **2.1 Entities** — `Product`, `Barcode` (many per product), `Category`, `StockItem`, `TaxClass`. Foreign keys carry `tenant_id` and point at `(tenant_id, id)` alternate keys, because **referential integrity checks bypass RLS** — a single-column key would accept a cross-tenant reference. `StockItem.RowVersion` maps to `xmin`. 178 tests green.
 - [ ] **2.2 CRUD API** — cursor pagination, search by name/SKU, soft-delete via `IsActive` only (historical sale lines reference products forever).
 - [ ] **2.3 Barcode lookup** — `GET /products/by-barcode/{code}`, unique index on `(TenantId, Code)`. Hottest path in the app.
 - [ ] **2.4 Stock movement ledger** — `Receive`/`Adjust`/`Sale`/`Refund`/`Waste` with reason + actor; on-hand is a cached projection of the ledger, never a bare mutable number.
@@ -151,7 +151,7 @@ Scoped, not yet planned in detail. Order is a guess; revisit after the first pay
 | Phase | Name | Notes |
 |---|---|---|
 | 10 | Restaurant mode | Tables/tabs, modifiers, split bills, kitchen routing. A genuinely different order model — **not** a bolt-on to `Sale`, per `DECISIONS.md`. |
-| 11 | Card payments | `IPaymentProvider` port + Stripe adapter; Stripe Terminal for physical readers. |
+| ~~11~~ | ~~Card payments~~ | **Dropped 2026-07-31 — the product takes cash only.** Not deferred: no processor is planned. `Tender.Method` remains a discriminator so a standalone terminal would be additive, but nothing is built for it. See [`DECISIONS.md`](../DECISIONS.md#feature-roadmap-phased). |
 | 12 | Avalonia desktop | Same API, durable local DB, real offline. |
 | 13 | Business layer | Platform admin, loyalty, purchase orders, low-stock alerts, gift cards, analytics. |
 

@@ -4,6 +4,9 @@
     <Project Path="src/Pos.Core/Pos.Core.csproj" />
     <Project Path="src/Pos.Data/Pos.Data.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Pos.Seed/Pos.Seed.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Pos.Api.Tests/Pos.Api.Tests.csproj" />
     <Project Path="tests/Pos.Core.Tests/Pos.Core.Tests.csproj" />

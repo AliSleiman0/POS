@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Pos.Seed</RootNamespace>
+    <!-- A development tool. It is built by CI so it cannot rot, but never shipped. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pos.Data, not Pos.Api: this seeds through the same AddPosData registration the
+      API uses, so the tenant interceptors, the query filters and RLS all apply to
+      what it writes. A hand-written SQL script would bypass every one of them and
+      would drift from the model the first time an entity changed.
+    -->
+    <ProjectReference Include="../../src/Pos.Data/Pos.Data.csproj" />
+  </ItemGroup>
+
+</Project>
