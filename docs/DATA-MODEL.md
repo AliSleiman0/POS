@@ -178,7 +178,9 @@ accept it, RLS notwithstanding. The tenant has to be *inside* the key. Deletes a
 | `tax_class` | unique `(tenant_id)` where `is_default` | At most one default per tenant — two would price new products nondeterministically |
 | `barcode` | unique `(tenant_id, code)` | Hottest read in the app; every scan |
 | `product` | unique `(tenant_id, sku)` | Business identity |
-| `product` | `(tenant_id, name)` | Catalog search |
+| `product` | `(tenant_id, name)` btree — `ix_product_tenant_name` | Ordering. `GET /products` sorts by `(name, id)` and pages by keyset, so this is what the cursor seeks into. GIN cannot serve `ORDER BY`, which is why it is not merged with the row below |
+| `product` | `(tenant_id, name gin_trgm_ops)` **GIN** — `ix_product_tenant_name_trgm` | Search. `?q=` is a case-insensitive *contains* match and `ILIKE '%q%'` cannot use a btree at any width. Needs `pg_trgm`, and `btree_gin` for the leading `tenant_id` — without the second extension the tenant cannot be in the index and it would fail the leads-with-tenant rule |
+| `category`, `tax_class` | `(tenant_id, name)` | Ordering, for the same keyset reason. `category.sort_order` is what a client arranges its picker by, but it is not unique so it cannot be a cursor's sort key |
 | `sale` | unique `(tenant_id, client_transaction_id)` | The idempotency guarantee, enforced by the DB rather than a race-prone check-then-insert |
 | `sale` | unique `(tenant_id, sale_number)` | Human reference |
 | `sale` | `(tenant_id, completed_at)` | Reporting date ranges |

@@ -37,5 +37,12 @@ internal sealed class TaxClassConfiguration : IEntityTypeConfiguration<TaxClass>
             .IsUnique()
             .HasFilter("is_default")
             .HasDatabaseName("ux_tax_class_tenant_default");
+
+        // GET /tax-classes orders by (name, id) and pages by keyset, same as the other two
+        // catalog lists. A tenant holds a handful of these and will never reach a second
+        // page — the index is here so every list endpoint has one shape and one plan, not
+        // because this one is large.
+        builder.HasIndex(t => new { t.TenantId, t.Name })
+            .HasDatabaseName("ix_tax_class_tenant_name");
     }
 }

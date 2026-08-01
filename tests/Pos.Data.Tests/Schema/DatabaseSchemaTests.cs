@@ -31,6 +31,13 @@ public sealed class DatabaseSchemaTests(PostgresFixture postgres)
         { "product", "ux_product_tenant_sku", true, ["tenant_id", "sku"] },
         { "product", "ix_product_tenant_name", false, ["tenant_id", "name"] },
         { "stock_item", "ux_stock_item_tenant_product", true, ["tenant_id", "product_id"] },
+
+        // Phase 2.2. The btree above and the GIN below share a column list and do entirely
+        // different jobs: one serves ORDER BY (name, id) for the cursor, the other serves
+        // ILIKE '%q%'. Neither can do the other's.
+        { "product", "ix_product_tenant_name_trgm", false, ["tenant_id", "name"] },
+        { "category", "ix_category_tenant_name", false, ["tenant_id", "name"] },
+        { "tax_class", "ix_tax_class_tenant_name", false, ["tenant_id", "name"] },
     };
 
     [Theory]

@@ -43,12 +43,32 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
             .IsUnique()
             .HasDatabaseName("ux_product_tenant_sku");
 
-        // Catalog listing and prefix search. NOTE for 2.2: this serves ordering and
-        // "starts with" only. The case-insensitive contains search that milestone promises
-        // will sequential-scan against it — that needs lower(name) or pg_trgm, decided
-        // there rather than guessed here.
+        // Ordering. GET /products sorts by (name, id) and pages by keyset, so this is what
+        // the cursor seeks into — a btree, because a GIN index cannot serve ORDER BY.
         builder.HasIndex(p => new { p.TenantId, p.Name })
             .HasDatabaseName("ix_product_tenant_name");
+
+        // Search. Resolved in 2.2: ?q= is a case-insensitive *contains* match, and
+        // ILIKE '%q%' cannot use the btree above at any width — it would sequential-scan
+        // the catalog on every keystroke of a type-ahead.
+        //
+        // tenant_id leads deliberately. Every query carries `tenant_id = @p` from the query
+        // filter, and DatabaseSchemaTests fails any index on a tenant table that does not
+        // lead with it; a GIN index on `name` alone would be caught there. btree_gin
+        // supplies the GIN operator class for the uuid column so the two can share one
+        // index.
+        //
+        // Trigrams need three non-wildcard characters to be selective, so a one- or
+        // two-letter q still scans. That is accepted: the alternative helps nothing else.
+        //
+        // The named overload, not HasIndex(properties) again: EF keys an index by its
+        // property list, so a second unnamed call on (TenantId, Name) would reconfigure the
+        // btree above into a GIN one rather than adding anything. Naming it makes it a
+        // distinct index in the model.
+        builder.HasIndex(p => new { p.TenantId, p.Name }, "ix_product_tenant_name_trgm")
+            .HasDatabaseName("ix_product_tenant_name_trgm")
+            .HasMethod("gin")
+            .HasOperators("", "gin_trgm_ops");
 
         // Both foreign keys get their own index: without one, deleting a category or a tax
         // class scans every product to evaluate the RESTRICT.
