@@ -1,112 +1,124 @@
 # Session Handoff
 
-**Written:** 2026-08-01 · **Branch:** merged to `main` · **2.1 done — start at 2.2**
+**Written:** 2026-08-01 · **Branch:** `phase-2/catalog-api` · **2.2 done — start at 2.3**
 
-> The catalog tables exist and are proven. **178 tests green locally and in CI** — run `30695851197`, 41/58/79, the same counts on the runner as on the machine. `phase-2/catalog-inventory` is merged; **start 2.2 from a fresh branch off `main`** (`phase-2/catalog-api`). 2.1 shipped on its own rather than waiting for the rest of the phase, so the milestone is on `main` while 2.2–2.5 are not.
+> The catalog is behind the API and browsable. **414 tests green locally** — 73 Core, 64 Data, 277 Api. Release build warning-free with `$env:CI="true"`, `pnpm build` clean. **Not yet pushed or confirmed in CI** — do that before ticking anything as finished.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
 ## Read first
 
-1. [`docs/phases/PHASE-2-catalog-inventory.md`](phases/PHASE-2-catalog-inventory.md) → **§2.2**, the next milestone. §2.1's exit criteria are ticked with what proves each.
-2. [`docs/API.md`](API.md#products--products) — the endpoint contracts for 2.2, already written. Routes and policies are decided; don't reinvent them.
-3. [`DECISIONS.md`](../DECISIONS.md) → **"Resolved 2026-08-01 (during Phase 2)"** — foreign keys carry the tenant, and why that is not optional.
+1. [`docs/phases/PHASE-2-catalog-inventory.md`](phases/PHASE-2-catalog-inventory.md) → **§2.3**, the next milestone. §2.2's exit criteria are ticked with what proves each.
+2. [`docs/API.md`](API.md#products--products) — the endpoint contracts, now updated with what 2.2 actually built.
+3. [`DECISIONS.md`](../DECISIONS.md) → **"Resolved 2026-08-01 (during Phase 2.2)"** — seven decisions, including two that constrain Phase 8.2's hosting.
 4. [`CLAUDE.md`](../CLAUDE.md) — the 10 invariants.
 
 ## State
 
-**178 tests green, locally and in CI** — 41 Core, 58 Data, 79 Api. Release build warning-free with `$env:CI="true"`; `pnpm build` clean; oxlint 0 warnings. CI runs the Data and Api suites against real Postgres via Testcontainers on the ubuntu runner, so the migration and its RLS hand-edit are exercised there too.
+**414 tests green** — 73 Core, 64 Data, 277 Api. Seven commits on `phase-2/catalog-api`:
 
-- `506d1e5` Phase 2 prep — `tools/Pos.Seed`, card payments dropped from the plan.
-- `8a785f2` **Phase 2.1** — five entities, five configurations, the `CatalogAndInventory` migration, 45 new tests, a seeded catalog.
+- `3973adc` Scalar + `JsonStringEnumConverter`
+- `22a0219` Core catalog rules and exceptions
+- `11eb232` the `pg_trgm` search index
+- `8182d41` cursor pagination
+- `8cf053b` test infrastructure (world catalog, sandbox tenant, manifest machinery)
+- `d753975` tax class endpoints
+- `f638987` category endpoints
+- `b809d3d` product endpoints
 
-The dev database is migrated and seeded: tenant `corner-shop`, Owner/Manager/Cashier (`Dev-Password-1`, PINs 7391/4821), two registers, and six products. Re-run `dotnet run --project tools/Pos.Seed` any time — it is idempotent.
+The dev database is migrated and seeded. `dotnet run --project src/Pos.Api`, then **`http://localhost:5013/scalar/`** — that is new, and it is how you exercise anything by hand now.
 
 ---
 
-## What 2.2 is
+## What 2.3 is
 
-Three endpoint files in `src/Pos.Api/Endpoints/`: `ProductEndpoints.cs`, `CategoryEndpoints.cs`, `TaxClassEndpoints.cs`. Routes, policies and semantics are already specified in [`API.md`](API.md#products--products) — `GET /products` (`CanSell`, `?q=`, `?categoryId=`, `?activeOnly=`, paginated), `POST`/`PUT` (`CanManageCatalog`), `POST /products/{id}/deactivate`, and the same shape for categories and tax classes.
+`GET /products/by-barcode/{code}` — the hottest read in the product — plus `POST /products/{id}/barcodes` and `DELETE /products/{id}/barcodes/{barcodeId}`. Contracts in [`API.md`](API.md#products--products).
 
-**Four things that milestone gets judged on:**
+### Three things that will stop you on the first afternoon
 
-1. **Cursor pagination via a shared helper**, written once. It is used by every list endpoint in Phases 2, 6 and 7, so it is worth getting right here rather than copying.
-2. **`costPrice` is omitted from the response** for callers without `CanViewMargins` — not sent-and-hidden. A Cashier's payload does not contain the field. Invariant 7.
-3. **No `DELETE` verb for products.** `POST /products/{id}/deactivate` sets `IsActive = false`.
-4. **Validation returns `problem+json` with per-field errors** — prices non-negative, SKU non-empty and unique per tenant.
+1. **`IsolationCase.UrlFor` substitutes only the first `{…}` segment.** `DELETE /products/{id}/barcodes/{barcodeId}` has two, so the by-id theory cannot address it as written. Extend `UrlFor`, or give the case a second id — decide which before writing the row, because the theory asserts a 404 and *a mistyped URL also returns 404*.
+2. **`ActorExtensions.SendAsync` has no `DELETE`.** It throws `NotSupportedException` by design so the gap is loud. One line.
+3. **Barcodes are the first dependent this milestone writes.** There are no navigation properties, so a product's `Id` is `Guid.Empty` until `TenantSaveChangesInterceptor` stamps it — save the product before the barcode, or pre-assign the id. `CatalogFixture` does this in three passes and is the pattern to copy.
 
-### Two mechanisms will fail your build, by design
+### The decision 2.2 deliberately left to you
 
-- **`tests/Pos.Api.Tests/Isolation/IsolationManifest.cs`** — map an endpoint without adding a row and `EndpointCoverageTests` fails, naming the route. Adding the row gives you the cross-tenant test *and* the negative-authorization test at once. An `Exempt` row must name the test where its coverage actually lives.
-- **`RowLevelSecurityTests.Every_tenant_owned_table_is_covered`** — 2.4 adds `StockMovement`, so that migration must call `ApplyTenantRowLevelSecurity()`. In `Down`, call **`Apply`, not `Remove`** (see bite 6).
+**"One primary barcode per product" is still not enforced.** A filtered unique index would make EF think the FK index is covered, and would force "make this primary" into a clear-then-set across two `SaveChanges`. The tax-class default is exactly that shape and now has a worked implementation to copy — `TaxClassEndpoints.SaveWithDefaultAsync`, including the execution-strategy wrapper that a retrying connection requires. Decide knowingly; do not inherit it by accident.
 
-### What 2.1 already gives you
+### What 2.2 gives you to build on
 
-- Entities and configurations for all five catalog types, with `Product.NormalizeSku` (trim + invariant uppercase) — **use it on every write path**, or `abc` and `ABC` become two products and the unique index will not stop it.
-- `CatalogGraph` in `tests/Pos.Data.Tests/Catalog/` writes a complete five-entity graph for a tenant. The Api suite will want something similar against `TwoTenantWorld`.
-- `TenantModelTests` and `DatabaseSchemaTests` are model-wide: new Phase 2 entities are checked for query filters, tenant-leading indexes, tenant-carrying foreign keys and `numeric(19,4)` without anyone editing them.
-- A seeded catalog with the awkward cases already in it: two barcodes on one product, a `Kilogram` item with fractional stock, a price of `0.1650`, and a product with no category that does not track stock.
-
-### Decide these at the start of 2.2, not in the middle
-
-- **Scalar (the API docs UI).** Still not added. `MapOpenApi()` serves the raw document at `/openapi/v1.json` and nothing renders it. One package, ~3 dev-gated lines. **2.5's verification is a click-through of the catalog and cannot be done without it** — and now that the catalog is seeded, it is the only thing missing. Also on the critical path for Phase 4.1's generated client.
-- **Case-insensitive search.** `ix_product_tenant_name` is a plain btree: it serves ordering and `LIKE 'x%'` only. The `?q=` that 2.2 promises is a *contains* search, and `ILIKE '%x%'` will sequential-scan straight past that index. Decide `lower(name)` + an expression index, or `pg_trgm`, before writing the query — retrofitting means another migration.
-- **"One primary barcode per product" is not enforced** in the schema, deliberately. A filtered unique index would make EF think the FK index is covered, and would force "make this primary" into a clear-then-set across two `SaveChanges`. 2.3 builds those endpoints and should decide knowingly.
-- **Category cycles.** `fk_category_parent` guarantees the parent is in the same tenant and nothing more; no SQL constraint can prevent a cycle. The endpoint that sets `ParentCategoryId` has to check.
+- **`CursorPaging.ToPageAsync`** — used by all three list endpoints. Give it a key selector, a projection expression and a `PageRequest`; it handles the keyset, the extra row for `hasMore`, and minting the next cursor. `PageQuery.TryRead` is the single place `?limit=` and `?cursor=` are validated.
+- **`PostgresErrors.IsUniqueViolation(exception, constraintName)`** — 2.3 needs it for `ux_barcode_tenant_code`. The constraint name is not optional.
+- **`CatalogFixture`** writes an identical catalog into any tenant; `TwoTenantWorld` has one in both, and `PosApiFactory.CatalogSandboxAsync()` gives you a mutable tenant with Owner, Manager and Cashier already created.
+- **`factory.SignedInAsync(RoleNames.X)`** — a client signed into the sandbox, one line.
 
 ---
 
 ## Things that will bite you
 
-New in 2.1 (1–5); the rest carried forward and still true.
+New in 2.2 (1–7); the rest carried forward and still true.
 
-1. **`HasPrincipalKey` must be called before `HasForeignKey`.** The other way round, EF matches the two FK properties against the principal's single-column primary key and throws about the number of properties not matching.
-2. **There are no navigation properties, so there is no FK fixup.** A product's `Id` is `Guid.Empty` until `TenantSaveChangesInterceptor` stamps it during `SaveChanges`, so `db.Products.Add(p); db.Barcodes.Add(new Barcode { ProductId = p.Id })` in one call writes `Guid.Empty` and fails the foreign key. **Save principals before dependents** — `POST /products` with inline barcodes has to, or pre-assign the id.
-3. **A model/migration mismatch fails the entire Data and Api suites at fixture init** with `PendingModelChangesWarning`, not with the assertion you were looking at. Add the migration in the same commit as the configuration change.
-4. **EF blocks a delete client-side when the dependent is loaded in the same context**, before any SQL is issued. A test that means to prove the *database* restricts must use a second scope — this was found by falsification, having passed for the wrong reason.
-5. **`HasDefaultValue(true)` on a bool that is legitimately inserted as `false` needs `HasSentinel`.** EF omits a property equal to the sentinel from the INSERT, so `TrackStock = false` would be written as `true` by the column default. Stated explicitly on `Product.TrackStock`; the failure is otherwise silent.
-6. **An applied migration does not re-run.** Any migration adding a tenant table calls `ApplyTenantRowLevelSecurity()`. In `Down` call **`Apply`, not `Remove`** — `Remove` is catalog-driven and would strip RLS from every *other* tenant table, with no migration left to restore it.
-7. **`UseXminAsConcurrencyToken()` does not exist in Npgsql 10.** The replacement convention matches `uint` + generated-on-add-or-update + concurrency token. Phase 3.6 depends on this; `StockItemConcurrencyTests` pins it.
-8. **The scaffolded migration lists an `xmin` column the generated SQL does not contain.** Correct — Npgsql suppresses system columns. Read the DDL with `dotnet ef migrations script`, not the C#.
-9. **Health-check endpoints have no HTTP method metadata**, so they appear as `ANY health/live`. Anything enumerating `EndpointDataSource` must handle it.
-10. **A test that asserts 404 passes when it reaches nothing.** Any "not found" assertion needs independent evidence the route was real.
-11. **A shared `WebApplicationFactory` has no reset between tests.** Create your own tenant with a unique slug, or treat `TwoTenantWorld` as read-only — the exact-count assertions depend on it.
-12. **A superuser bypasses RLS unconditionally, `FORCE` or not.** Isolation assertions must run on `pos_app` (`postgres.AppConnectionString`), never the owner.
-13. **A reset Postgres session variable reads as `''`, not NULL.** The policies use `nullif(...)`, so both collapse to NULL. Fails closed.
-14. **`dotnet run` uses `launchSettings.json` and ignores `ASPNETCORE_URLS`.** Port 5013.
-15. **An authorization policy that does not name its scheme evaluates the default one.**
-16. **A request can carry both a JWT and a device token.** `AmbientTenantContext.Resolve` refuses to switch tenants.
-17. **`WebApplicationFactory.ConfigureAppConfiguration` is applied at `Build()`**, but `Program.cs` reads `builder.Configuration` before it. Use `builder.UseSetting(...)`.
-18. **Never run the test host in `Development`** — it loads user secrets pointing at local Docker.
-19. **`problem+json` carries a per-request `traceId`.** Compare `type`/`title`/`status`/`detail`, never raw strings.
-20. **EF names tables from the `DbSet` property name**, so every configuration calls `ToTable()` explicitly.
-21. **`[CallerFilePath]` is a lie under CI.** Anchor on `AppContext.BaseDirectory`; `$env:CI="true"` reproduces CI-only behaviour locally.
-22. **`dotnet ef database update` needs the owner connection string passed explicitly.** Full command in [`CLAUDE.md`](../CLAUDE.md#commands).
-23. **Kill stray `Pos.Api` processes before rebuilding** — they lock `Pos.Data.dll` (`MSB3027`). `Stop-Process`, not `pkill`.
-24. **Adding shadcn components may reintroduce the two-React-copies error.** Fix is `test.server.deps.inline` in `vite.config.ts`.
-25. **Test fixtures must not contain the strings a test proves absent.** The seeder's display names avoid the words Owner/Manager/Cashier for this reason.
+1. **A stale build can make a correct migration emit wrong SQL.** After restoring files by copy (rather than by editor), `dotnet ef migrations script` kept emitting a plain btree while the source clearly said `gin`. Neither `dotnet build --no-incremental` nor `dotnet test` noticed. `Remove-Item -Recurse src/Pos.Data/obj, src/Pos.Data/bin` fixed it. If generated SQL disagrees with source you have read with your own eyes, clean before debugging.
+2. **A model change touches four files, and a partial edit fails the *whole* suite with `PendingModelChangesWarning`.** The configuration, the migration, its `.Designer.cs` and `AppDbContextModelSnapshot.cs` must all agree. Editing only the first two makes every Data and Api test fail at fixture init with an error unrelated to what you were doing. `dotnet ef migrations remove` refuses once the migration is applied to the dev database, so it is not the escape hatch it looks like.
+3. **A retrying execution strategy refuses a user-initiated transaction.** `EnableRetryOnFailure` is configured, so `BeginTransactionAsync` throws unless the whole unit is wrapped in `db.Database.CreateExecutionStrategy().ExecuteAsync(...)`. See `TaxClassEndpoints.SaveWithDefaultAsync`.
+4. **`EF.Functions.GreaterThan(ITuple, ITuple)` is the only way to express a keyset over a `Guid` tiebreaker.** `Guid` has no `>` in C# and there is no `Guid.CompareTo` translator, so the hand-expanded form does not compile. It is Npgsql-only, which is fine (Postgres is locked) but worth knowing.
+5. **`Assert.DoesNotContain('x', someString, StringComparison)` does not compile** — xUnit binds the char overload to `IAsyncEnumerable<char>`. Pass a string.
+6. **Two `HasIndex` calls on the same properties configure the *same* index.** EF keys an index by its property list, so the second call reconfigures the first. Use the named overload — `HasIndex(p => new { … }, "ix_name")` — when you want two indexes over the same columns, which the product name btree and its trigram twin both need.
+7. **`git checkout -- <tracked> <untracked>` reverts nothing.** Git errors on the unmatched pathspec and does not process the tracked file either. A newly scaffolded migration is untracked, so this silently leaves everything as it was.
+8. **`HasPrincipalKey` must be called before `HasForeignKey`.**
+9. **There are no navigation properties, so there is no FK fixup.** Save principals before dependents.
+10. **EF blocks a delete client-side when the dependent is loaded in the same context.** A test proving the *database* restricts must use a second scope.
+11. **`HasDefaultValue(true)` on a bool legitimately inserted as `false` needs `HasSentinel`.**
+12. **An applied migration does not re-run.** A migration adding a tenant table calls `ApplyTenantRowLevelSecurity()`; in `Down` call **`Apply`, not `Remove`**. One that adds no table should call neither — `CatalogSearchIndexes` explains why in its remarks.
+13. **`UseXminAsConcurrencyToken()` does not exist in Npgsql 10.**
+14. **The scaffolded migration lists an `xmin` column the generated SQL does not contain.** Read the DDL with `dotnet ef migrations script`.
+15. **Health-check endpoints have no HTTP method metadata**, so they appear as `ANY health/live`.
+16. **A test that asserts 404 passes when it reaches nothing.**
+17. **A shared `WebApplicationFactory` has no reset between tests.** `TwoTenantWorld` is read-only; `CatalogSandboxAsync()` is writable but its tests must assert *contains*, never counts.
+18. **A superuser bypasses RLS unconditionally.** Isolation assertions run on `pos_app`.
+19. **A reset Postgres session variable reads as `''`, not NULL.**
+20. **`dotnet run` uses `launchSettings.json` and ignores `ASPNETCORE_URLS`.** Port 5013.
+21. **An authorization policy that does not name its scheme evaluates the default one.**
+22. **A request can carry both a JWT and a device token.** `AmbientTenantContext.Resolve` refuses to switch tenants.
+23. **`WebApplicationFactory.ConfigureAppConfiguration` is applied at `Build()`.** Use `builder.UseSetting(...)`.
+24. **Never run the test host in `Development`** — it loads user secrets pointing at local Docker.
+25. **`problem+json` carries a per-request `traceId`.** Compare `type`/`title`/`status`, never raw strings.
+26. **EF names tables from the `DbSet` property name**, so every configuration calls `ToTable()`.
+27. **`[CallerFilePath]` is a lie under CI.** `$env:CI="true"` reproduces CI-only behaviour locally.
+28. **`dotnet ef database update` needs the owner connection string passed explicitly.**
+29. **Kill stray `Pos.Api` processes before rebuilding** — `Stop-Process`, not `pkill`.
+30. **Adding shadcn components may reintroduce the two-React-copies error.**
+31. **Test fixtures must not contain the strings a test proves absent.**
 
-## Working preferences noted
+## What the falsification pass found
 
-- **Don't run `dotnet build` and `dotnet test` back to back** — `dotnet test` builds.
-- **UI testing must not accumulate.** Phases 4–7: a milestone is not done until its Vitest/Playwright coverage exists *and* someone has looked at the screen. jsdom does not paint.
-- **Prove a security test can fail.** Three deliberate breaks in 2.1; one found a test passing without reaching the database at all. Do this for every isolation and authorization test in 2.2.
+Ten deliberate breaks. Seven went red as expected. **Three did not, and two of those changed what I believe about the tests.**
+
+- **`IgnoreQueryFilters()` on the product list left `CollectionIsolationTests` green.** Not a gap — RLS is underneath, the app connects as `pos_app` (`NOBYPASSRLS`), and the policy returns nothing. This is defence in depth working exactly as `RowLevelSecurityTests.IgnoreQueryFilters_reaches_nothing_once_RLS_is_the_layer_underneath` already says. **Consequence: a cross-tenant read cannot be made to leak through the handler**, so those theories cannot fail that way. They are not vacuous — dropping one row from the list, or answering 200 with a fabricated body, does fail them — but understand what they protect: the handler answering *wrongly*, not the data layer leaking.
+- **Writing before the 404 check left `ByIdIsolationTests` green**, for the same reason: the write targeted the victim's row, and two layers stop it. **The failure mode that is actually reachable is collateral damage in the caller's *own* tenant** — which is what `TaxClassCrudTests.A_cross_tenant_promotion_does_not_demote_the_callers_own_default` covers, and which `AssertUntouched` cannot see because it only ever reads tenant A. That test exists because the falsification pass found the manifest comment claiming coverage that did not exist.
+- **Dropping `.ThenBy(id)` left the pagination walk green**, because Postgres returned equal-named rows in physical order, which coincided with UUIDv7 id order. The test was passing for the wrong reason. The ordering is now asserted structurally in the `ToQueryString` test instead, and the walk test says in its own comments what it does and does not prove.
+- The predicted vacuous `costPrice` pass **did not happen**. Pointing the test at a costless product and removing `JsonIgnore` still fails it — removing the attribute makes the key present *with a null value*, and the assertion is on key presence rather than on the value. Better than designed for.
 
 ## Outstanding / deferred
 
-- **Scalar, case-insensitive search, primary-barcode uniqueness, category cycles** — see "Decide these at the start of 2.2" above.
-- **`dotnet dev-certs https --trust`** still not run (opens a Windows dialog that cannot be scripted).
-- **Playwright browsers not installed** — `pnpm exec playwright install --with-deps` in Phase 4, a ~500 MB download nothing needs before then.
-- **No visual verification of the web UI.** Eyeball it before Phase 4 builds on top.
-- **Production `pos_app` password** — Phase 8.2 supplies a real one; the compose file already reads it from the environment.
-- **A validly signed token is trusted for whatever tenant it names** — accepted and pinned by `ForgedTenancyTests`, reasoning in `DECISIONS.md`. The signing key is the tenancy boundary.
-- **CI actions emit a Node 20 deprecation warning.** Bump to `@v5` when available.
-- **`Microsoft.OpenApi` pinned to 2.11.0** for GHSA-v5pm-xwqc-g5wc. Remove when ASP.NET Core ships a patched dependency.
+- **Not pushed.** Branch is local; CI has not run. Green here is not green.
+- **No visual check of Scalar.** The Chrome extension was not connected. It serves 200s with the correct document URL and the real 3.7 MB bundle, but nobody has looked at the page. Do it before relying on it for 2.5.
+- **`TaxClass` has no deactivate and no `IsActive`.** A retired legislated rate stays in the picker forever. Recorded in `API.md`; revisit if it bites.
+- **`GET /registers` and `GET /employees/pin-eligible` are now the un-paginated outliers.** Every catalog list returns `{ items, nextCursor, hasMore }`. Phase 6 should decide whether those two follow, at which point paginated becomes the default rather than the exception.
+- **`limit=abc` returns a bare 400 with no `problem+json` body** — minimal-API `int?` binding fails before the handler. Pinned by a test. A global `UseStatusCodePages` would fix every bare body at once and belongs in its own commit.
+- **`dotnet dev-certs https --trust`** still not run.
+- **Playwright browsers not installed** — Phase 4.
+- **Production `pos_app` password** — Phase 8.2.
+- **A validly signed token is trusted for whatever tenant it names** — accepted and pinned by `ForgedTenancyTests`.
+- **CI actions emit a Node 20 deprecation warning.**
+- **`Microsoft.OpenApi` pinned to 2.11.0** for GHSA-v5pm-xwqc-g5wc.
 
 ## Decided recently
 
-**Card payments are out of scope for the product — not deferred.** The shop takes cash across a counter, so there is no processor to integrate and **Phase 11 is dropped**. `Tender` still stays a collection of rows with a `Method` discriminator: split tender and change due need that shape for cash alone, and it keeps a future terminal from being a `Sale` migration. Nothing in Phases 2–8 changes.
+See `DECISIONS.md` → "Resolved 2026-08-01 (during Phase 2.2)" for all seven. The two that reach beyond this milestone:
+
+- **Phase 8.2's managed Postgres must allow `pg_trgm` and `btree_gin`.** Both are trusted extensions in PG 13+, so no superuser is needed — but a host that blocks extensions outright would need the search rewritten.
+- **A cursor is a position, not a capability, and is deliberately unsigned.** The reasoning is in `PageCursor`'s XML doc and pinned by a test, so signing it later is a deliberate act.
 
 ## Still genuinely open
 
-**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing until Phase 10, but must be settled before quoting a price: "lifetime hosting for a one-time fee" is a liability that grows with every tenant.
+**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing until Phase 10, but must be settled before quoting a price.

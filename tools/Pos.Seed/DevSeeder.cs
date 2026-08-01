@@ -314,7 +314,16 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
         if (catalog != CatalogSummary.Skipped)
         {
             writer.WriteLine();
-            writer.WriteLine("There are no catalog endpoints yet (Phase 2.2), so to look at what was written:");
+            writer.WriteLine("To look at what was written, browse the API:");
+            writer.WriteLine();
+            writer.WriteLine("  dotnet run --project src/Pos.Api      then open http://localhost:5013/scalar/");
+            writer.WriteLine();
+            writer.WriteLine("Sign in through POST /api/v1/auth/login with the slug and credentials above, then");
+            writer.WriteLine("GET /api/v1/products. As the owner you will see costPrice; as the cashier you");
+            writer.WriteLine("will not, because the field is omitted from the payload rather than hidden.");
+            writer.WriteLine();
+            writer.WriteLine("Or read the rows directly, which is still the only way to see stock levels until");
+            writer.WriteLine("Phase 2.4 adds the ledger endpoints:");
             writer.WriteLine();
             writer.WriteLine("  docker exec -e PGPASSWORD=dev_only_not_a_secret pos-db psql -U pos -d pos_dev -c \"");
             writer.WriteLine("    SELECT p.sku, p.name, p.unit, p.unit_price, t.rate, s.on_hand");
@@ -324,8 +333,7 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
             writer.WriteLine($"    WHERE p.tenant_id = '{Format(tenant.Id)}' ORDER BY p.sku;\"");
             writer.WriteLine();
             writer.WriteLine("That connects as the schema owner, which bypasses row-level security and sees");
-            writer.WriteLine("every tenant — the honest way to read rows before there is an API, and not how");
-            writer.WriteLine("the application ever connects.");
+            writer.WriteLine("every tenant — not how the application ever connects.");
         }
 
         writer.WriteLine();

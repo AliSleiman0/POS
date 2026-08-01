@@ -44,11 +44,19 @@ Design points worth restating because they are the ones usually got wrong:
 - Request validation: prices non-negative, SKU non-empty and unique per tenant, quantity precision respected
 
 **Exit criteria**
-- [ ] Full CRUD (minus delete) for products, categories, tax classes
-- [ ] Cursor pagination works and is stable across concurrent inserts
-- [ ] `costPrice` absent from a Cashier's response payload, with a test
-- [ ] Validation failures return `problem+json` with per-field errors
-- [ ] Duplicate SKU within a tenant rejected; the same SKU across two tenants accepted
+- [x] Full CRUD (minus delete) for products, categories, tax classes — plus `activate`, added because `deactivate` alone made a mis-click permanent (PUT deliberately does not carry `isActive`)
+- [x] Cursor pagination works and is stable across concurrent inserts — `ProductListTests.A_product_inserted_behind_the_cursor_does_not_disturb_the_next_page`, and the row-value keyset asserted structurally in `CursorPaginationTests`
+- [x] `costPrice` absent from a Cashier's response payload — `ProductMarginTests`, whose first test asserts an *Owner* sees 0.5500 so the absence assertions are not vacuous
+- [x] Validation failures return `problem+json` with per-field errors — `ProductValidationTests`, including three bad fields producing three keys
+- [x] Duplicate SKU within a tenant rejected; the same SKU across two tenants accepted — `ProductCrudTests`, including the case- and whitespace-only difference
+
+**Also landed here, decided at the start of the milestone:**
+
+- **Scalar** at `/scalar/` in Development, which is what makes 2.5's click-through possible at all.
+- **`pg_trgm` + `btree_gin`** for the `?q=` contains search. `btree_gin` is not optional: it supplies GIN an operator class for `uuid`, without which `tenant_id` cannot lead the index and `DatabaseSchemaTests` fails.
+- **SKU is matched exactly**, not by trigram — short codes, and trigrams need three non-wildcard characters.
+- **Barcodes stay in 2.3**, so `POST /products` takes none and the primary-barcode rule is still 2.3's to decide.
+- **Category cycles** are checked in the write path against the whole hierarchy read in one query.
 
 ## 2.3 Barcode lookup
 
@@ -98,9 +106,13 @@ Design points worth restating because they are the ones usually got wrong:
 ## Verification
 
 ```powershell
-dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api
+dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
+  --connection "Host=localhost;Port=5432;Database=pos_dev;Username=pos;Password=dev_only_not_a_secret"
+dotnet run --project tools/Pos.Seed
 dotnet test
 dotnet run --project src/Pos.Api
 ```
 
-Via Swagger: create a tax class → category → product → two barcodes → look up by each barcode → receive stock → adjust with a reason → read the ledger → confirm `OnHand` matches the sum.
+Via **Scalar** at `http://localhost:5013/scalar/` (added in 2.2 — the phase originally said Swagger, and no such UI ever existed): create a tax class → category → product → two barcodes → look up by each barcode → receive stock → adjust with a reason → read the ledger → confirm `OnHand` matches the sum.
+
+Scalar is mapped only in `Development`, and the test host runs in `Testing`, which is why it needs no isolation-manifest row.

@@ -80,18 +80,29 @@ A device token is returned once by `POST /registers/{id}/enroll` and is stored o
 
 | Method | Route | Auth | Notes |
 |---|---|---|---|
-| GET | `/products` | `CanSell` | `?q=` (name/SKU), `?categoryId=`, `?activeOnly=true`, paginated |
+| GET | `/products` | `CanSell` | `?q=` (name/SKU), `?categoryId=`, `?activeOnly=`, paginated |
 | GET | `/products/{id}` | `CanSell` | `costPrice` and margin fields omitted unless `CanViewMargins` |
 | GET | `/products/by-barcode/{code}` | `CanSell` | **The hot path.** Single row, no pagination |
 | POST | `/products` | `CanManageCatalog` | |
-| PUT | `/products/{id}` | `CanManageCatalog` | |
+| PUT | `/products/{id}` | `CanManageCatalog` | Full replacement; `isActive` is not a field |
 | POST | `/products/{id}/deactivate` | `CanManageCatalog` | Soft-delete. **No `DELETE` verb exists** |
+| POST | `/products/{id}/activate` | `CanManageCatalog` | The way back. A mis-clicked deactivate is otherwise permanent |
 | POST | `/products/{id}/barcodes` | `CanManageCatalog` | Many barcodes per product |
 | DELETE | `/products/{id}/barcodes/{barcodeId}` | `CanManageCatalog` | Barcodes *may* be deleted; products may not |
 
 `GET /products/by-barcode/{code}` returns `404` for an unknown barcode — the register turns that into "unknown item, add it?" rather than an error dialog.
 
-Response fields are filtered by policy on the server. `costPrice` is not sent-and-hidden; a Cashier's response does not contain it.
+**`?activeOnly` defaults to `true`.** Omitting it hides deactivated products, because the register grid is the dominant caller and must never offer something unsellable — forgetting the parameter has to fail safe. The catalog admin screen passes `activeOnly=false` deliberately, in one place.
+
+**`?q=` is a case-insensitive *contains* match on the name and an *exact* match on the SKU.** The term is escaped, so `%` and `_` are literal characters rather than wildcards. A partial SKU does not match: SKUs are short, and staff type or scan the whole code.
+
+**`PUT` replaces.** There is no `PATCH`, so an omitted `description` or `categoryId` is cleared. Two exceptions, because their absent values are indistinguishable from meaningful ones: an omitted `unit` or `trackStock` leaves the stored value alone.
+
+**A PUT cannot reactivate.** `isActive` is not on the request body at all, so bringing a product back is an explicit act rather than a side effect of saving a price change.
+
+Response fields are filtered by policy on the server. `costPrice` is not sent-and-hidden; a Cashier's response does not contain the key. A caller who cannot *read* it cannot *write* it either — a `costPrice` in the body from someone without `CanViewMargins` is ignored rather than rejected, so that a read-modify-write round trip does not wipe it.
+
+Creating a product whose SKU is already taken in that tenant returns `409` with `type: .../duplicate-sku`. The same SKU in a different tenant is accepted. An unknown or cross-tenant `taxClassId`/`categoryId` is `400` on that field, not `404` — the response is identical either way, so it is not an existence oracle.
 
 ## Categories & tax classes
 
@@ -100,10 +111,21 @@ Response fields are filtered by policy on the server. `costPrice` is not sent-an
 | GET | `/categories` | `CanSell` |
 | POST/PUT | `/categories`, `/categories/{id}` | `CanManageCatalog` |
 | POST | `/categories/{id}/deactivate` | `CanManageCatalog` |
+| POST | `/categories/{id}/activate` | `CanManageCatalog` |
 | GET | `/tax-classes` | `CanSell` |
 | POST/PUT | `/tax-classes`, `/tax-classes/{id}` | `CanManageCatalog` |
 
+Both lists use the same cursor envelope as `/products`, and both take `?activeOnly=` with the same default. One shape across every list endpoint, so a generated client gets one `Page<T>`.
+
 Editing a `TaxClass.Rate` affects **future** sales only. Historical sale lines hold their snapshotted rate.
+
+**Deactivating a category does not cascade.** Its products keep their `categoryId` and stay sellable; the category simply stops appearing in pickers. A cascade would make a shelf-worth of stock unsellable while the screen said it was hiding a label.
+
+**Setting `parentCategoryId` is refused if it would make the category its own ancestor** — `400`, `type: .../category-cycle`. No SQL constraint can express this: `fk_category_parent` proves the parent exists in the same tenant and nothing more.
+
+**`TaxClass` has no deactivate route and no `IsActive`.** A rate that is legislated out of existence stays in the picker; the intended fix is to edit it or stop referencing it. Revisit if a tenant accumulates enough dead rates to matter.
+
+**At most one tax class per tenant is the default**, enforced by a filtered unique index. `isDefault: true` demotes whichever row held it rather than being refused — "make this the default" is what the caller meant. Two callers racing to do so leaves one with `409` and `type: .../default-tax-class-conflict`. Zero defaults is a legal state, and nothing in Phase 2 reads the flag.
 
 ## Stock — `/stock`
 

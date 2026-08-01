@@ -89,7 +89,46 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
-### Resolved 2026-08-01 (during Phase 2)
+### Resolved 2026-08-01 (during Phase 2.2)
+
+- **Case-insensitive search is `pg_trgm` + `btree_gin`, not a `lower()` expression index.**
+  `?q=` is a *contains* match and `ILIKE '%q%'` cannot use a btree at any width, so the
+  alternative was to quietly downgrade the contract to "starts with". `btree_gin` is not
+  incidental: it supplies GIN an operator class for `uuid`, and without it `tenant_id` cannot
+  be a column of the index at all — which would fail the rule that every index on a tenant
+  table leads with the tenant. Both are *trusted* extensions in PG 13+, so `CREATE` on the
+  database suffices and no superuser is involved; **Phase 8.2's host must allow both.**
+  Verified by hand at 50,000 rows: the planner takes the index with both predicates as
+  `Index Cond`. It does not at 3,000, which is correct — that is cost, not capability.
+
+- **SKU is matched exactly, not by trigram.** Trigrams need three non-wildcard characters to
+  be selective and SKUs are short, so a trigram index on `sku` would scan anyway while
+  costing write amplification on every product write. `ux_product_tenant_sku` already serves
+  the equality, and what staff do with a SKU is type or scan the whole code.
+
+- **A cursor is a position, not a capability, and is not signed.** It carries no tenant and
+  grants nothing: tenancy comes from the validated token, and the query filter plus RLS scope
+  the query before the keyset predicate is reached — so replaying tenant A's cursor inside
+  tenant B returns a legal page of B's own rows. An HMAC would buy key management in exchange
+  for tamper-proofing a value whose worst tampered outcome is an empty page. Pinned by a
+  test, so "hardening" it later is a deliberate act rather than a tidy-up.
+
+- **A field a role may not read is a field it may not write, and the write is *ignored*, not
+  rejected.** A Manager holds `CanManageCatalog` but not `CanViewMargins`; their `GET` omits
+  `costPrice`, so the obvious read-modify-write sends it back absent — and `PUT` is a full
+  replacement. Rejecting would break every Manager edit; honouring the absence would destroy
+  the Owner's cost data on each one. Same shape as a `TenantId` in a request body.
+
+- **`TaxClass.IsDefault` is clear-then-set, not a refusal.** "Make this the default" is what
+  the caller means, and refusing a second default would force a two-call dance with a window
+  in which the shop has none. The remaining race — two creates that both arrive with
+  `isDefault` and find nothing to clear — is a `409`, because re-reading and retrying is a
+  meaningful thing for the caller to do.
+
+- **`POST /products/{id}/activate` and the category equivalent were added to the contract.**
+  `docs/API.md` defined `deactivate` and nothing else, and `PUT` deliberately does not carry
+  `isActive` (so that a price edit can never resurrect a row by accident) — which together
+  made a mis-clicked deactivate permanent short of hand-written SQL.
 
 - **Foreign keys carry the tenant.** Every relationship between tenant-owned rows is a
   *composite* key — `barcode(tenant_id, product_id) → product(tenant_id, id)` — pointing at
