@@ -253,6 +253,23 @@ public static class IsolationManifest
             Forbidden = w => w.A.CategoryIds,
         },
 
+        new()
+        {
+            Key = "GET api/v1/stock",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+
+            // A Cashier, because this is CanSell: "have we got any more out the back?" is
+            // the question the number exists to answer, and it gets asked at the till.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // Not ProductIds. The carrier bag does not track stock and must not appear, which
+            // is the assertion that fails if the endpoint stops filtering.
+            Expected = w => w.B.StockedProductIds,
+            Forbidden = w => w.A.StockedProductIds,
+        },
+
         // ---- By id ------------------------------------------------------------------
         new()
         {
@@ -403,6 +420,17 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "GET api/v1/stock/{productId:guid}/movements",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+
+            // A read, and one where the 404 has teeth: tenant B's own water has a ledger, so
+            // an unscoped handler would answer 200 with somebody else's stock history.
+        },
+        new()
+        {
             Key = "POST api/v1/registers/{id:guid}/enroll",
             Kind = IsolationKind.ById,
             Caller = Actor.OwnerOfB,
@@ -448,6 +476,18 @@ public static class IsolationManifest
                       + "theory asserts. That is a stronger claim than the theory makes, and it is "
                       + "what the identical-catalog fixture exists to enable. Covered by "
                       + "BarcodeLookupTests.A_code_that_exists_in_both_tenants_resolves_to_the_callers_own_product.",
+        },
+        new()
+        {
+            Key = "POST api/v1/stock/adjustments",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "The subject id travels in the body, so there is no URL to attack and "
+                      + "neither shape fits. Naming another tenant's product is answered 400 on "
+                      + "the field rather than 404 — the same answer an unknown id gets, so it is "
+                      + "not an existence oracle. Covered by "
+                      + "StockAdjustmentTests.A_cross_tenant_product_id_is_refused_and_moves_no_stock, "
+                      + "which also asserts the victim's on-hand is untouched.",
         },
         new()
         {

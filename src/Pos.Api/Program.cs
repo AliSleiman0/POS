@@ -162,6 +162,7 @@ app.MapEmployeeEndpoints();
 app.MapTaxClassEndpoints();
 app.MapCategoryEndpoints();
 app.MapProductEndpoints();
+app.MapStockEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.
