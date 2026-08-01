@@ -74,6 +74,18 @@ public sealed record IsolationCase
     /// </summary>
     public Func<PosApiFactory, TwoTenantWorld, Task>? AssertUntouched { get; init; }
 
+    /// <summary>
+    /// Whether a <see cref="IsolationKind.Collection"/> answers with a
+    /// <c>{ items, nextCursor, hasMore }</c> envelope rather than a bare JSON array.
+    /// </summary>
+    /// <remarks>
+    /// Stated per row rather than sniffed from the response. "Unwrap <c>items</c> if the
+    /// body happens to have it" would keep passing on the day a list endpoint stopped being
+    /// paginated, which is precisely the change that ought to be noticed — the manifest
+    /// exists to record decisions, not to infer them.
+    /// </remarks>
+    public bool Paginated { get; init; }
+
     /// <summary>Required when <see cref="Kind"/> is <see cref="IsolationKind.Exempt"/>.</summary>
     public string? Exemption { get; init; }
 
@@ -266,11 +278,19 @@ public static class IsolationManifest
     }
 
     /// <summary>Every (endpoint, caller-who-must-be-refused) pair, as theory rows.</summary>
+    /// <remarks>
+    /// Driven off <see cref="IsolationCase.Refused"/> alone, not off <see cref="Kind"/>. The
+    /// two are orthogonal questions — <c>Kind</c> says how tenancy is proven, <c>Refused</c>
+    /// says who must be turned away — and conflating them left the policy-gated creates
+    /// (<c>POST /products</c> and friends) with no negative-authorization coverage at all,
+    /// because a write with no id is <c>Exempt</c> on the tenancy question while still being
+    /// the endpoint a Cashier most needs to be refused from.
+    /// </remarks>
     public static TheoryData<string, Actor> RefusedCallers()
     {
         var data = new TheoryData<string, Actor>();
 
-        foreach (var testCase in Cases.Where(c => c.Kind != IsolationKind.Exempt))
+        foreach (var testCase in Cases.Where(c => c.Refused.Length > 0))
         {
             foreach (var actor in testCase.Refused)
             {

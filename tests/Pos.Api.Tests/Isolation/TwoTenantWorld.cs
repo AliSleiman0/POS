@@ -11,13 +11,29 @@ public sealed record IsolatedTenant(
     Guid CashierId,
     Guid SecondCashierId,
     EnrolledRegister FrontCounter,
-    Guid BackCounterId)
+    Guid BackCounterId,
+    SeededCatalog Catalog)
 {
     /// <summary>Everything <c>GET /registers</c> must return for this tenant, and nothing else.</summary>
     public IReadOnlyList<Guid> RegisterIds => [FrontCounter.Id, BackCounterId];
 
     /// <summary>Everything <c>GET /employees/pin-eligible</c> must return: staff with a PIN.</summary>
     public IReadOnlyList<Guid> PinEligibleIds => [CashierId, SecondCashierId];
+
+    /// <summary>Everything <c>GET /products</c> must return. All three are active.</summary>
+    /// <remarks>
+    /// Active on purpose. <c>?activeOnly=</c> defaults to <c>true</c>, so a deactivated
+    /// fixture would have to be excluded from this list — and a fixture with a carve-out is
+    /// one people get wrong. The filter's behaviour is tested against the sandbox tenant,
+    /// where rows can be deactivated freely.
+    /// </remarks>
+    public IReadOnlyList<Guid> ProductIds => Catalog.ProductIds;
+
+    /// <summary>Everything <c>GET /categories</c> must return.</summary>
+    public IReadOnlyList<Guid> CategoryIds => Catalog.CategoryIds;
+
+    /// <summary>Everything <c>GET /tax-classes</c> must return.</summary>
+    public IReadOnlyList<Guid> TaxClassIds => Catalog.TaxClassIds;
 }
 
 /// <summary>
@@ -89,6 +105,10 @@ public sealed class TwoTenantWorld
         var front = await factory.CreateEnrolledRegisterAsync(tenant.Id, FrontCounterName);
         var back = await factory.CreateRegisterAsync(tenant.Id, BackCounterName);
 
-        return new IsolatedTenant(tenant.Id, slug, owner.Id, cashier.Id, second.Id, front, back);
+        // Identical in both tenants, same as everything else here. No users are added with
+        // it, so PinEligibleIds is unaffected and the pin-eligible count assertions stand.
+        var catalog = await CatalogFixture.WriteAsync(factory, tenant.Id);
+
+        return new IsolatedTenant(tenant.Id, slug, owner.Id, cashier.Id, second.Id, front, back, catalog);
     }
 }

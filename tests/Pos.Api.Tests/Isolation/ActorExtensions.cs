@@ -68,6 +68,7 @@ public static class ActorExtensions
         {
             "GET" => client.GetAsync(new Uri(url, UriKind.Relative)),
             "POST" => client.PostAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
+            "PUT" => client.PutAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
             _ => throw new NotSupportedException(
                 $"The isolation theories do not know how to send '{testCase.Method}' yet. "
                 + "Add it here when an endpoint needs it."),

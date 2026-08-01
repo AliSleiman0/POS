@@ -35,7 +35,24 @@ public sealed class CollectionIsolationTests(PosApiFactory factory)
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
-        var returned = body.EnumerateArray()
+        var items = testCase.Paginated ? body.GetProperty("items") : body;
+
+        Assert.Equal(JsonValueKind.Array, items.ValueKind);
+
+        if (testCase.Paginated)
+        {
+            // The set equality below compares against the whole tenant's rows, so it is only
+            // a real assertion while the fixtures fit inside one page. If they ever grow past
+            // the default limit, this fails loudly here instead of the equality quietly
+            // starting to compare page one against everything.
+            Assert.False(
+                body.GetProperty("hasMore").GetBoolean(),
+                $"{key} returned more than one page, so the assertion below no longer covers the tenant.");
+
+            Assert.Equal(JsonValueKind.Null, body.GetProperty("nextCursor").ValueKind);
+        }
+
+        var returned = items.EnumerateArray()
             .Select(element => element.GetProperty("id").GetGuid())
             .Order()
             .ToArray();
