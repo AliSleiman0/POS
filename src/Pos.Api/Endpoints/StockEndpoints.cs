@@ -51,11 +51,30 @@ public sealed record StockMovementResponse(
 /// <summary>The movement that was written, and where it left the total.</summary>
 public sealed record StockAdjustmentResponse(StockMovementResponse Movement, decimal OnHand);
 
+/// <summary>
+/// A sale that took a product's on-hand below zero.
+/// </summary>
+/// <remarks>
+/// The sale is named rather than summarised, because the investigation starts by opening it —
+/// and because a summary here would be catalog data joined to a historical row, which is
+/// exactly what invariant 5 forbids.
+/// </remarks>
+public sealed record StockDiscrepancyResponse(
+    Guid Id,
+    Guid ProductId,
+    Guid SaleId,
+    Guid SaleLineId,
+    decimal QuantityRequested,
+    decimal OnHandAfter,
+    DateTimeOffset DetectedAt);
+
 public static class StockEndpoints
 {
     private const string LevelSort = "stock:name";
 
     private const string LedgerSort = "stock-movement:occurred";
+
+    private const string DiscrepancySort = "stock-discrepancy:detected";
 
     public static IEndpointRouteBuilder MapStockEndpoints(this IEndpointRouteBuilder builder)
     {
@@ -73,6 +92,13 @@ public static class StockEndpoints
         stock.MapGet("/{productId:guid}/movements", MovementsAsync)
             .RequireAuthorization(Policies.CanManageCatalog)
             .WithSummary("The ledger for one product");
+
+        // Built in 3.6 rather than 2.4, because nothing could flag an oversell until the sale
+        // path existed — an endpoint whose only possible answer was an empty list could not
+        // have been meaningfully tested.
+        stock.MapGet("/discrepancies", DiscrepanciesAsync)
+            .RequireAuthorization(Policies.CanManageCatalog)
+            .WithSummary("Oversells flagged for review");
 
         stock.MapPost("/adjustments", AdjustAsync)
             .RequireAuthorization(Policies.CanManageCatalog)
@@ -157,6 +183,44 @@ public static class StockEndpoints
                 m => m.OccurredAt,
                 m => new StockMovementResponse(
                     m.Id, m.ProductId, m.Type, m.Quantity, m.Reason, m.SaleId, m.PerformedBy, m.OccurredAt),
+                page,
+                cancellationToken);
+
+        return TypedResults.Ok(results);
+    }
+
+    /// <summary>
+    /// Oversells, oldest first — the order the ledger reads in and the order they happened.
+    /// </summary>
+    /// <remarks>
+    /// Append-only observations with no resolution columns. "Resolving" one means writing a
+    /// <c>Recount</c>, which is the count-sheet feature <c>StockRules</c> already defers, so a
+    /// <c>ResolvedAt</c> here would be a column nothing sets.
+    /// </remarks>
+    private static async Task<Results<Ok<CursorPage<StockDiscrepancyResponse>>, ValidationProblem>>
+        DiscrepanciesAsync(
+            AppDbContext db,
+            string? cursor,
+            int? limit,
+            CancellationToken cancellationToken)
+    {
+        if (!PageQuery.TryRead<DateTimeOffset>(cursor, limit, DiscrepancySort, out var page, out var errors))
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        var results = await db.StockDiscrepancies
+            .AsNoTracking()
+            .ToPageAsync(
+                d => d.DetectedAt,
+                d => new StockDiscrepancyResponse(
+                    d.Id,
+                    d.ProductId,
+                    d.SaleId,
+                    d.SaleLineId,
+                    d.QuantityRequested,
+                    d.OnHandAfter,
+                    d.DetectedAt),
                 page,
                 cancellationToken);
 

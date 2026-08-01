@@ -115,6 +115,15 @@ public sealed partial class DomainExceptionHandler(
         // till a sale that succeeded, for a basket the customer never had.
         IdempotencyKeyReusedException => (StatusCodes.Status409Conflict, "Idempotency key already used"),
 
+        // 409 rather than a field error, because the caller's next move is an action rather
+        // than a correction: open a shift. An *unknown* shift id is the field error, and the
+        // endpoint answers that one 400 before ever reaching the writer.
+        ShiftClosedException => (StatusCodes.Status409Conflict, "Shift is closed"),
+
+        // Also 409: two tills raced to open one drawer and this one lost the filtered unique
+        // index. Re-reading is meaningful — GET /shifts/current returns the winner.
+        ShiftAlreadyOpenException => (StatusCodes.Status409Conflict, "Register already has an open shift"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }

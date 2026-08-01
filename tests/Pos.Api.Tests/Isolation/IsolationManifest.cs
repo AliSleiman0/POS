@@ -288,6 +288,91 @@ public static class IsolationManifest
             Forbidden = w => w.A.StockedProductIds,
         },
 
+        // ---- Phase 3.6: sales and shifts ----
+
+        new()
+        {
+            Key = "GET api/v1/sales",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+
+            // A Cashier: CanSell, because looking up the sale you just rang through is
+            // something that happens at the till with a customer standing there.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // All four, voided and refunded included. A history that hid them would still
+            // pass a "returns only my tenant's rows" test while being wrong about what a
+            // history is for.
+            Expected = w => w.B.SaleIds,
+            Forbidden = w => w.A.SaleIds,
+        },
+        new()
+        {
+            Key = "GET api/v1/sales/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+        },
+        new()
+        {
+            Key = "GET api/v1/stock/discrepancies",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Expected = w => w.B.DiscrepancyIds,
+            Forbidden = w => w.A.DiscrepancyIds,
+        },
+        new()
+        {
+            Key = "POST api/v1/sales",
+            Kind = IsolationKind.Exempt,
+            Idempotent = true,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "A write with no id in the URL, so neither shape fits. Every id it "
+                      + "carries — products, register, shift — is a body field answered 400 "
+                      + "rather than 404, identically whether it is unknown or another "
+                      + "tenant's, so none of them is an existence oracle. Covered by "
+                      + "SaleCommitTests.A_cross_tenant_product_is_refused_and_commits_nothing "
+                      + "and A_cross_tenant_shift_is_refused, both of which also assert the "
+                      + "victim tenant gained no sale.",
+        },
+        new()
+        {
+            Key = "POST api/v1/sales/quote",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "Writes nothing and has no id in the URL. A cross-tenant productId is "
+                      + "answered 400 on the field, the same as POST /sales, because both "
+                      + "build their cart through one shared function. Covered by "
+                      + "SaleQuoteTests.A_cross_tenant_product_is_refused.",
+        },
+        new()
+        {
+            Key = "POST api/v1/shifts",
+            Kind = IsolationKind.Exempt,
+            Idempotent = true,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "A write with no id in the URL. The registerId travels in the body and "
+                      + "another tenant's is answered 400 on the field, identically to an "
+                      + "unknown one. Covered by "
+                      + "ShiftLifecycleTests.A_cross_tenant_register_cannot_have_a_shift_opened_on_it, "
+                      + "which also asserts the victim tenant gained no shift.",
+        },
+        new()
+        {
+            Key = "GET api/v1/shifts/current",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "The register is a query parameter rather than a route parameter, so "
+                      + "the by-id shape does not fit, and the response is a single object "
+                      + "rather than a list. Asking for another tenant's register answers 404 "
+                      + "— the same as a register with no open shift. Covered by "
+                      + "ShiftLifecycleTests.Another_tenants_register_has_no_current_shift.",
+        },
+
         // ---- By id ------------------------------------------------------------------
         new()
         {

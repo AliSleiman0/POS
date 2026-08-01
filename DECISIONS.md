@@ -89,6 +89,52 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-02 (during Phase 3.6)
+
+- **`ISaleWriter` is the second port Core declares, and the precedent stays narrow.** It earns
+  one on the same grounds `IStockLedger` did: committing a sale is a transaction containing a
+  row lock, a counter increment, a concurrency token and a batch append, not a save. The
+  reading endpoints still use `AppDbContext` directly.
+
+- **The sale number comes from a counter row upserted inside the sale's transaction**, not a
+  Postgres sequence and not `MAX()+1`. A sequence advances even when the transaction that drew
+  from it rolls back, so a failed sale would burn a number permanently — and gaps in a
+  financial series look like deleted records to an auditor with no way to prove otherwise.
+  `ON CONFLICT (tenant_id) DO UPDATE … RETURNING` takes a row-level exclusive lock, so a
+  concurrent sale blocks and then reads the committed value. Issued through ADO rather than
+  EF's `SqlQuery`, which composes its argument into a subquery where Postgres will not accept a
+  data-modifying statement. Cost, stated so it is not discovered under load: concurrent sales
+  *within one tenant* serialise on that row for the length of the sale transaction.
+
+- **The cashier is taken from the validated token, not the request.** `SaleCommitRequest` has
+  nowhere to put one. A caller able to supply it could attribute a sale — and a price
+  override — to a colleague, with nothing on the row to say otherwise. Same rule as the
+  ledger's `PerformedBy`.
+
+- **A shift is checked twice, and the second check is not redundant.** The endpoint reads it
+  unlocked to produce a good error message and to draw three distinctions: an unknown or
+  cross-tenant shift is `400` on the field, a shift belonging to another register is `400` on
+  `registerId`, and a genuinely closed one is `409`. The writer then re-checks it under
+  `FOR SHARE` inside the transaction, which is where a shift closing *concurrently* is decided.
+  **Deleting the writer's check left the entire API suite green** — the endpoint masks it under
+  sequential conditions — so `SaleWriterTests` in `Pos.Data.Tests` exists to test the writer's
+  guards with no endpoint in front of them.
+
+- **The idempotency record is enlisted through a callback the writer invokes inside its
+  transaction.** `Pos.Data` cannot reference the API's idempotency types, and a host with no
+  HTTP has no key to record, so the alternative — a Core port for an HTTP concern — would have
+  been worse. `A_failure_inside_the_callback_rolls_the_whole_sale_back` forces the atomicity
+  claim rather than assuming it.
+
+- **A discrepancy is written when the on-hand ends up below zero, not when stock "looked
+  insufficient".** Selling the last three of three lands on zero and is an ordinary sale;
+  flagging it would bury the real oversells in noise. Insufficient stock never blocks a sale —
+  the customer is standing at the counter holding the item.
+
+- **`SalesFixture` moved from 3.9 into 3.6.** `GET /sales` and `GET /stock/discrepancies` are
+  collection endpoints, and the isolation manifest requires `Expected`/`Forbidden` id lists in
+  both tenants the moment they exist. The alternative was a dishonest `Exempt` row.
+
 ### Resolved 2026-08-01 (during Phase 3.5)
 
 - **Both `IdempotencyRecord` and `sale.client_transaction_id` exist, because they guarantee

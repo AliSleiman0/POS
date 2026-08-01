@@ -167,7 +167,7 @@ Stock may go **negative**. There is no `CHECK` and no clamping: a negative figur
 
 > **`POST /stock/adjustments` became idempotent in Phase 3.5**, and the 🔒 is back. A resubmitted adjustment now replays the original response instead of writing a second movement, and `StockAdjustmentTests.A_resubmitted_adjustment_replays_the_original_movement` is the replacement for the test that pinned the gap.
 
-> **`GET /stock/discrepancies` is not implemented.** Nothing can flag an oversell until the sale path exists, so the endpoint could only ever return an empty list and there would be nothing to test it against. It arrives with **Phase 3.6**, which is what creates the flag.
+**`GET /stock/discrepancies`** arrived with Phase 3.6, which created the flag. It lists oversells oldest-first, like the ledger. A row is written when a sale line's product ends up with a **negative** on-hand — selling the last three of three lands on zero and is an ordinary sale, whereas 1 → −2 means the shop is holding less than nothing. Discrepancies are append-only observations with no resolution columns: "resolving" one means writing a `Recount`, which waits on the count-sheet feature.
 
 `RebuildOnHand` — recompute a product's on-hand from its movements — exists on `IStockLedger` and has **no route**. It is the proof that the ledger is the truth and the number is derived, and it is what you run when the invariant drifts; exposing "rewrite the stock figures" over HTTP needs a decision about who may run it that Phase 2 did not need to take.
 
