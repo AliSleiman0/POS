@@ -1,8 +1,8 @@
 # Session Handoff
 
-**Written:** 2026-08-01 · **Branch:** `phase-2/catalog-inventory`, pushed, not merged · **2.1 done — start at 2.2**
+**Written:** 2026-08-01 · **Branch:** merged to `main` · **2.1 done — start at 2.2**
 
-> The catalog tables exist and are proven. **178 tests green locally and in CI** — run `30695851197`, 41/58/79, the same counts on the runner as on the machine. Continue on this branch: 2.2–2.5 are the same phase and should land together before a PR.
+> The catalog tables exist and are proven. **178 tests green locally and in CI** — run `30695851197`, 41/58/79, the same counts on the runner as on the machine. `phase-2/catalog-inventory` is merged; **start 2.2 from a fresh branch off `main`** (`phase-2/catalog-api`). 2.1 shipped on its own rather than waiting for the rest of the phase, so the milestone is on `main` while 2.2–2.5 are not.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
