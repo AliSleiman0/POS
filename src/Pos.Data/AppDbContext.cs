@@ -93,6 +93,29 @@ public class AppDbContext : IdentityDbContext<
     /// <summary>The append-only ledger. <see cref="StockItem.OnHand"/> is a cache of it.</summary>
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 
+    /// <summary>Oversells, flagged for review rather than silently corrected.</summary>
+    public DbSet<StockDiscrepancy> StockDiscrepancies => Set<StockDiscrepancy>();
+
+    /// <summary>A register's trading period. A sale requires an open one.</summary>
+    public DbSet<Shift> Shifts => Set<Shift>();
+
+    /// <summary>Cash into or out of a drawer other than through a sale.</summary>
+    public DbSet<CashMovement> CashMovements => Set<CashMovement>();
+
+    /// <summary>The financial record. Append-only once completed.</summary>
+    public DbSet<Sale> Sales => Set<Sale>();
+
+    public DbSet<SaleLine> SaleLines => Set<SaleLine>();
+
+    /// <summary>A collection per sale, not a column on one. Split payments are ordinary.</summary>
+    public DbSet<Tender> Tenders => Set<Tender>();
+
+    /// <summary>
+    /// The per-tenant sale-number counter. Read and written by one raw upsert inside the
+    /// sale's transaction; nothing else should touch it.
+    /// </summary>
+    public DbSet<SaleSequence> SaleSequences => Set<SaleSequence>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
