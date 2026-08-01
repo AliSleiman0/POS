@@ -78,6 +78,21 @@ public sealed partial class DomainExceptionHandler(
         // No tenant on a request that needs one is a bug on our side, not the caller's.
         TenantNotResolvedException => (StatusCodes.Status500InternalServerError, "Tenant could not be resolved"),
 
+        // 409, not 400: the body is well-formed and would be accepted tomorrow if the other
+        // product were renamed. Nothing about the request itself is wrong, so there is no
+        // field to point an `errors` map at — the client shows `detail` against the SKU
+        // input and branches on `type`.
+        DuplicateSkuException => (StatusCodes.Status409Conflict, "SKU already in use"),
+
+        // Also 409, and for the same reason: two writers raced and one lost. Retrying after
+        // a re-read is a meaningful thing to do, which is what separates this from a 400.
+        DefaultTaxClassConflictException => (StatusCodes.Status409Conflict, "Default tax class changed concurrently"),
+
+        // 400, and stated rather than left to the fallback below, because the fallback's
+        // title ("Request could not be completed") tells a client nothing about which field
+        // to blame. No race is involved: that parent can never be that category's parent.
+        CategoryCycleException => (StatusCodes.Status400BadRequest, "Category hierarchy would form a cycle"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }
