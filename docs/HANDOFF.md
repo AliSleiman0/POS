@@ -1,8 +1,8 @@
 # Session Handoff
 
-**Written:** 2026-08-01 · **Branch:** `phase-2/catalog-api` · **2.2 done — start at 2.3**
+**Written:** 2026-08-01 · **Branch:** merged to `main` · **2.2 done — start at 2.3**
 
-> The catalog is behind the API and browsable. **414 tests green locally** — 73 Core, 64 Data, 277 Api. Release build warning-free with `$env:CI="true"`, `pnpm build` clean. **Not yet pushed or confirmed in CI** — do that before ticking anything as finished.
+> The catalog is behind the API and browsable. **414 tests green locally and in CI** — 73 Core, 64 Data, 277 Api, the same counts on the runner as on the machine (run `30706754845`). Release build warning-free with `$env:CI="true"`, `pnpm build` clean. `phase-2/catalog-api` is merged via PR #6; **start 2.3 from a fresh branch off `main`** (`phase-2/barcode-lookup`).
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
@@ -15,7 +15,7 @@
 
 ## State
 
-**414 tests green** — 73 Core, 64 Data, 277 Api. Seven commits on `phase-2/catalog-api`:
+**414 tests green, locally and in CI** — 73 Core, 64 Data, 277 Api. Eight commits, merged as PR #6:
 
 - `3973adc` Scalar + `JsonStringEnumConverter`
 - `22a0219` Core catalog rules and exceptions
@@ -100,7 +100,6 @@ Ten deliberate breaks. Seven went red as expected. **Three did not, and two of t
 
 ## Outstanding / deferred
 
-- **Not pushed.** Branch is local; CI has not run. Green here is not green.
 - **No visual check of Scalar.** The Chrome extension was not connected. It serves 200s with the correct document URL and the real 3.7 MB bundle, but nobody has looked at the page. Do it before relying on it for 2.5.
 - **`TaxClass` has no deactivate and no `IsActive`.** A retired legislated rate stays in the picker forever. Recorded in `API.md`; revisit if it bites.
 - **`GET /registers` and `GET /employees/pin-eligible` are now the un-paginated outliers.** Every catalog list returns `{ items, nextCursor, hasMore }`. Phase 6 should decide whether those two follow, at which point paginated becomes the default rather than the exception.
