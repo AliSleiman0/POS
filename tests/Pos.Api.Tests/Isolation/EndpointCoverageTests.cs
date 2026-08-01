@@ -82,14 +82,25 @@ public sealed class EndpointCoverageTests(PosApiFactory factory)
                 incomplete.Add($"{c.Key}: a collection needs both the ids it must return and the ids it must not");
             }
 
-            if (c.Kind == IsolationKind.ById && c.VictimId is null)
+            if (c.Kind == IsolationKind.ById && c.VictimId is null && c.VictimPath is null)
             {
                 incomplete.Add($"{c.Key}: a by-id route needs the tenant A row it reaches for");
             }
 
-            if (c.Kind == IsolationKind.ById && !c.Template.Contains('{', StringComparison.Ordinal))
+            if (c.Kind == IsolationKind.ById && c.RouteParameterCount == 0)
             {
                 incomplete.Add($"{c.Key}: a by-id route needs a route parameter to substitute into");
+            }
+
+            // VictimId supplies exactly one value, so on a two-parameter route it would leave
+            // the second placeholder in the URL literally — a request that reaches no endpoint
+            // and answers the very 404 the by-id theory asserts. UrlFor throws on the arity
+            // mismatch when the theory runs; this says so at the point the row is written.
+            if (c.Kind == IsolationKind.ById && c.RouteParameterCount > 1 && c.VictimPath is null)
+            {
+                incomplete.Add(
+                    $"{c.Key}: {c.RouteParameterCount} route parameters, so it needs a VictimPath — "
+                    + "VictimId can only fill one");
             }
 
             if (c.Refused.Length == 0)

@@ -68,10 +68,18 @@ Design points worth restating because they are the ones usually got wrong:
 - `POST /products/{id}/barcodes` and `DELETE /products/{id}/barcodes/{barcodeId}`. Barcodes may be deleted (a mis-scanned label is data entry, not history); products may not.
 
 **Exit criteria**
-- [ ] Lookup returns product + price + tax rate in one query (verify the generated SQL — an accidental N+1 here is a slow till)
-- [ ] Duplicate barcode within a tenant rejected; same code across tenants accepted
-- [ ] Unknown code → `404`
-- [ ] Multiple barcodes per product work end to end
+- [x] Lookup returns product + price + tax rate in one query — `BarcodeLookupTests.A_scan_reaches_all_three_tables_in_one_statement` asserts on the SQL `ProductEndpoints.LookupQuery` actually generates (it is `internal` for this reason): one `FROM barcode`, two `INNER JOIN`s, and the tenant predicate on all three tables
+- [x] Duplicate barcode within a tenant rejected; same code across tenants accepted — `BarcodeTests`, including the collision landing on a *different* product, which is the case that matters
+- [x] Unknown code → `404`, and so is a blank one — `BarcodeLookupTests`
+- [x] Multiple barcodes per product work end to end — the fixture gives Still Water two codes, and both scan to the same product
+
+**Also landed here, decided during the milestone:**
+
+- **`isPrimary` stays advisory** — no filtered unique index. See [`DECISIONS.md`](../../DECISIONS.md#resolved-2026-08-01-during-phase-23-and-24).
+- **`GET /products/{id}/barcodes`** was added, and is not in the original contract: without it a client cannot learn a barcode id, so `DELETE .../{barcodeId}` is unaddressable. A bare array, not a cursor envelope — it is a bounded sub-resource, not a tenant-wide list.
+- **A deactivated product still scans**, carrying `isActive: false`, so the register can say "not for sale" rather than inviting a duplicate.
+- **No migration.** 2.1 had already built `barcode`, `ux_barcode_tenant_code` and `ix_barcode_tenant_product`.
+- **`IsolationCase.UrlFor` now fills every route parameter and throws on an arity mismatch** — the `DELETE` route has two, and an unsubstituted one answers the same 404 the theory asserts.
 
 ## 2.4 Stock movement ledger
 
@@ -85,11 +93,19 @@ Design points worth restating because they are the ones usually got wrong:
 **Why a ledger:** the question is never "what is on hand", it is "why is on hand wrong?" A bare number cannot answer that, and shrinkage is a real problem staff need to investigate. It is also what makes Phase 9's offline reconciliation tractable — replaying queued movements against a ledger works; reconciling two disagreeing counters does not.
 
 **Exit criteria**
-- [ ] Adjustments write a movement and update `OnHand` atomically
-- [ ] `reason` required, enforced server-side
-- [ ] Ledger endpoint paginated
-- [ ] `RebuildOnHand` reproduces `OnHand` exactly, with a test over a mixed movement history
-- [ ] Invariant test: `OnHand == sum(movements)` after a randomised sequence
+- [x] Adjustments write a movement and update `OnHand` atomically — one transaction inside an execution strategy in `StockLedger`; `StockLedgerTests.A_movement_that_cannot_be_written_leaves_neither_the_row_nor_the_total` forces a foreign-key failure part-way through and asserts neither survives
+- [x] `reason` required, enforced server-side — `StockAdjustmentTests`, including the blank and whitespace cases
+- [x] Ledger endpoint paginated — oldest-first, and `StockMovementListTests.Walking_the_ledger_a_page_at_a_time_sees_every_row_exactly_once` is the real test: this is the only list keyed on a timestamp
+- [x] `RebuildOnHand` reproduces `OnHand` exactly, with a test over a mixed movement history — and one that corrects drift written behind the ledger's back, without which the rebuild is only reproducing a number that was already right
+- [x] Invariant test: `OnHand == sum(movements)` after a randomised sequence — seeded, so a failure is reproducible
+
+**Also landed here, decided during the milestone:**
+
+- **`IStockLedger` is the first persistence port Core declares**, because the operation is a transaction with a concurrency token rather than a save, and Phase 3's sale path must join it.
+- **Not idempotent.** `POST /stock/adjustments` was marked 🔒 in `API.md`; that is deferred to 3.5 and the mark removed until then, with a test pinning the current behaviour.
+- **`GET /stock/discrepancies` deferred to 3.6** — nothing flags an oversell until the sale path exists.
+- **`GET /stock` is driven off products, not stock rows**, so an uncounted product reads zero instead of vanishing, and the list can be ordered by something a human recognises.
+- **`RebuildOnHand` has no route.** It is a maintenance routine on the port.
 
 ## 2.5 Tests
 
@@ -98,8 +114,16 @@ Design points worth restating because they are the ones usually got wrong:
 - **`Pos.Api.Tests`** — CRUD happy paths, validation failures, `404` vs `403`, policy enforcement per endpoint, **and tenant isolation for every new endpoint** (extend the 1.7 suite rather than starting a parallel one)
 
 **Exit criteria**
-- [ ] Every new endpoint has an isolation test
-- [ ] Every policy-gated endpoint has a negative test proving an under-privileged caller is rejected
+- [x] Every new endpoint has an isolation test — seven rows added to `IsolationManifest`; two are `Exempt` and each names the test where the coverage actually lives. `EndpointCoverageTests` fails the build on a mapped endpoint with no row, in both directions.
+- [x] Every policy-gated endpoint has a negative test proving an under-privileged caller is rejected — `NegativeAuthorizationTests` from the manifest's `Refused` lists, plus the exact 401-vs-403 pinned by hand for the barcode routes, the ledger and the adjustment endpoint.
+
+**The falsification pass.** Six deliberate breaks, six caught, and two of them told us something:
+
+- Stopping `OnHand` following the ledger failed four tests — but **not the two rebuild tests**, correctly: a rebuild repairs drift, so it is insensitive to the write path being broken. Those tests protect the repair, not the write.
+- Removing the product-exists check from the movements endpoint failed its own test **and the by-id isolation theory** — without the check, a cross-tenant request answers 200 with an empty ledger rather than 404. That row is not vacuous.
+- Dropping the `TrackStock` filter from `GET /stock` failed its own test and the collection isolation theory, because the expected ids are the stocked products rather than all of them.
+- Serving the scan from the cost-bearing projection failed three tests, including the one that reads the generated SQL.
+- Matching a barcode delete on the barcode id alone, and letting a receipt carry a negative quantity, each failed at both the layer that implements the rule and the layer that exposes it.
 
 ---
 

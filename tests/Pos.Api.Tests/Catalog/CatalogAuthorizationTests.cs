@@ -150,4 +150,50 @@ public sealed class CatalogAuthorizationTests(PosApiFactory factory)
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
+    [Fact]
+    public async Task A_cashier_may_scan_but_may_not_change_the_codes()
+    {
+        // The asymmetry the barcode routes are built around: scanning is CanSell because a
+        // till does it thousands of times a day, while adding and removing codes is
+        // CanManageCatalog because it changes what the shop sells.
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Cashier);
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync(new Uri(
+                $"/api/v1/products/by-barcode/{CatalogFixture.WaterBarcode}", UriKind.Relative))).StatusCode);
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync(new Uri(
+                $"/api/v1/products/{sandbox.Catalog.WaterProductId}/barcodes", UriKind.Relative))).StatusCode);
+
+        var added = await client.PostAsJsonAsync(
+            $"/api/v1/products/{sandbox.Catalog.WaterProductId}/barcodes",
+            new { code = "9990000000002" });
+
+        Assert.Equal(HttpStatusCode.Forbidden, added.StatusCode);
+
+        // 403 rather than the 204 the real id would earn — authorization runs first, so the
+        // code is still there afterwards.
+        var removed = await client.DeleteAsync(new Uri(
+            $"/api/v1/products/{sandbox.Catalog.WaterProductId}/barcodes/{sandbox.Catalog.WaterBarcodeId}",
+            UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.Forbidden, removed.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_anonymous_caller_cannot_scan()
+    {
+        // 401, not 403. Worth its own test because the scan route is the one most likely to be
+        // reached for from an unauthenticated context — it is the one a till calls constantly.
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri(
+            $"/api/v1/products/by-barcode/{CatalogFixture.WaterBarcode}", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }

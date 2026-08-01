@@ -31,7 +31,11 @@ public sealed class ByIdIsolationTests(PosApiFactory factory)
 
         using var client = await factory.ClientForAsync(testCase.Caller, world);
 
-        var response = await client.SendAsync(testCase, world, testCase.UrlFor(testCase.VictimId!(world)));
+        // PathValuesFor, not VictimId: a route with two parameters needs two values, and
+        // UrlFor throws rather than leaving one of them unsubstituted — which would answer
+        // the same 404 this test asserts.
+        var response = await client.SendAsync(
+            testCase, world, testCase.UrlFor(testCase.PathValuesFor(world)));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 

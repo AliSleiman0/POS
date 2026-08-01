@@ -84,9 +84,17 @@ public sealed partial class DomainExceptionHandler(
         // input and branches on `type`.
         DuplicateSkuException => (StatusCodes.Status409Conflict, "SKU already in use"),
 
+        // The same shape one level down: a code already on some product in this tenant. The
+        // title deliberately does not name which product — see the remarks on the exception.
+        DuplicateBarcodeException => (StatusCodes.Status409Conflict, "Barcode already in use"),
+
         // Also 409, and for the same reason: two writers raced and one lost. Retrying after
         // a re-read is a meaningful thing to do, which is what separates this from a 400.
         DefaultTaxClassConflictException => (StatusCodes.Status409Conflict, "Default tax class changed concurrently"),
+
+        // The same race one table over, detected by StockItem's xmin token. Deliberately not
+        // retried for the caller — see the remarks on the exception.
+        ConcurrentStockUpdateException => (StatusCodes.Status409Conflict, "Stock changed concurrently"),
 
         // 400, and stated rather than left to the fallback below, because the fallback's
         // title ("Request could not be completed") tells a client nothing about which field

@@ -89,6 +89,67 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-01 (during Phase 2.3 and 2.4)
+
+- **One primary barcode per product is *not* enforced.** `Barcode.IsPrimary` is advisory: a
+  label/display hint, while the register scans whichever code is on the item in the customer's
+  hand. The alternative was a filtered unique index on `(tenant_id, product_id) WHERE
+  is_primary`, which has two real costs — EF would treat the foreign-key index as covered, and
+  "make this the label code" becomes a clear-then-set across two `SaveChanges` inside a
+  transaction, exactly the shape `TaxClassEndpoints.SaveWithDefaultAsync` had to grow. Paying
+  that for a rule nothing reads yet is not worth it. Two primaries on one product is therefore
+  possible and harmless; the screen that eventually shows a label code picks one. Pinned by
+  `BarcodeTests.A_primary_flag_is_stored_as_sent_and_nothing_polices_it`, so adding the
+  constraint later is a deliberate reversal rather than a tidy-up.
+
+- **A barcode is trimmed but never case-folded**, unlike a SKU. The asymmetry is deliberate: a
+  SKU is a human-typed identifier where `abc-1` and `ABC-1` must be one product, whereas a
+  barcode is whatever the symbology encodes, and GS1-128 application identifiers carry
+  case-significant data. Upper-casing a scan would silently change what the label says.
+
+- **`POST /stock/adjustments` is not idempotent, and the 🔒 has been removed from `API.md`
+  until it is.** `IdempotencyRecord` is Phase 3.5's, built once for sales, voids, refunds and
+  adjustments together — invariant 6 wants one mechanism, not a stock-shaped copy that 3.5
+  then has to reconcile with the sale path. The cost is real and is recorded rather than
+  discovered: a resubmitted adjustment writes a second movement. That is at least *visible* in
+  an append-only ledger, which a silently lost one would not be.
+  `StockAdjustmentTests.A_resubmitted_adjustment_writes_a_second_movement` pins today's
+  behaviour and is the test 3.5 should break.
+
+- **The stock ledger pages oldest-first, and `CursorPaging` stays ascending-only.** A
+  descending mode (`EF.Functions.LessThan` + `OrderByDescending`) would touch the helper every
+  list endpoint runs through, to serve a screen that does not exist until Phase 6. Oldest-first
+  is also the order `ix_stock_movement_tenant_product_occurred` holds and the order a rebuild
+  replays, so nothing is being worked around. Revisit in Phase 6 with a UI to argue from.
+
+- **`GET /stock/discrepancies` is deferred to Phase 3.6.** Nothing can flag an oversell until
+  the sale path exists, so the endpoint could only ever return an empty list — and an endpoint
+  whose only possible response is empty cannot be meaningfully tested, which would make it
+  worse than absent. It arrives with the phase that creates the flag.
+
+- **`RebuildOnHand` has no HTTP route.** It lives on `IStockLedger` and is exercised by tests.
+  Exposing "recompute the stock figures" needs a decision about who may run it, and how a
+  tenant-wide rebuild interacts with concurrent trading, that Phase 2 does not need to take.
+
+- **`IStockLedger` is the first persistence port `Pos.Core` declares**, and the precedent is
+  narrow on purpose. It earns one because the operation is not a save: it is a transaction with
+  a concurrency token in it, wrapped in an execution strategy, and Phase 3's sale path has to
+  *join* that transaction rather than reimplement it. A port per repository is not being
+  adopted — the endpoints still use `AppDbContext` directly, which is the existing pattern.
+
+- **A lost stock race is a 409 and is never retried inside the ledger.** Re-applying a delta
+  the caller may already have applied is indistinguishable, from inside, from "receive six"
+  arriving twice. Phase 3.5's idempotency keys are what make an automatic retry safe; until
+  then the decision belongs to whoever knows whether the stock physically moved.
+
+- **The isolation manifest's `UrlFor` substitutes every route parameter and refuses to build a
+  URL it cannot fill.** Previously it substituted only the first, which left a literal
+  `{barcodeId:guid}` in the path — a request that reaches no endpoint and answers 404, which is
+  the same 404 the by-id theory asserts. `EndpointCoverageTests` now also fails a by-id row with
+  more than one parameter and no `VictimPath`. Both halves were verified by deliberately
+  breaking the `DELETE` row. This closes trap 16 in the previous handoff structurally rather
+  than by remembering it.
+
 ### Resolved 2026-08-01 (during Phase 2.2)
 
 - **Case-insensitive search is `pg_trgm` + `btree_gin`, not a `lower()` expression index.**

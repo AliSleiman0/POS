@@ -69,6 +69,10 @@ public static class ActorExtensions
             "GET" => client.GetAsync(new Uri(url, UriKind.Relative)),
             "POST" => client.PostAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
             "PUT" => client.PutAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
+
+            // No body, deliberately: a DELETE that carried one would be describing a request
+            // the endpoints do not accept, and none of them reads one.
+            "DELETE" => client.DeleteAsync(new Uri(url, UriKind.Relative)),
             _ => throw new NotSupportedException(
                 $"The isolation theories do not know how to send '{testCase.Method}' yet. "
                 + "Add it here when an endpoint needs it."),

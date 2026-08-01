@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 2 in progress — 2.1 and 2.2 done, 414 tests green |
-| **Next up** | 2.3 barcode lookup. `IsolationCase.UrlFor` substitutes only one route parameter, and `SendAsync` has no `DELETE` — both need extending first. |
+| **Current phase** | Phase 2 complete — 569 tests green |
+| **Next up** | Phase 3.1, the `Money` type. `CatalogRules` is the validation-only predecessor and says so; 3.1 owns arithmetic and rounding. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-08-01 |
 
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | ✅ Done |
 | 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ✅ Done |
-| 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | 🔨 2.1–2.2 done |
+| 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ✅ Done |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ⬜ Not started |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ⬜ Not started |
 | 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ⬜ Not started |
@@ -67,9 +67,9 @@ Detail: [phases/PHASE-2-catalog-inventory.md](phases/PHASE-2-catalog-inventory.m
 
 - [x] **2.1 Entities** — `Product`, `Barcode` (many per product), `Category`, `StockItem`, `TaxClass`. Foreign keys carry `tenant_id` and point at `(tenant_id, id)` alternate keys, because **referential integrity checks bypass RLS** — a single-column key would accept a cross-tenant reference. `StockItem.RowVersion` maps to `xmin`. 178 tests green.
 - [x] **2.2 CRUD API** — products, categories and tax classes behind one cursor-paged envelope. `costPrice` **omitted** (not nulled) for callers without `CanViewMargins`, via two projections so a Cashier's SQL never names the column. `?q=` is a case-insensitive contains served by a `pg_trgm` GIN index, with the term escaped so `%` is literal. Duplicate SKU is a caught `23505`, never a pre-check. `activate` routes added — `deactivate` alone made a mis-click permanent. 414 tests green.
-- [ ] **2.3 Barcode lookup** — `GET /products/by-barcode/{code}`, unique index on `(TenantId, Code)`. Hottest path in the app.
-- [ ] **2.4 Stock movement ledger** — `Receive`/`Adjust`/`Sale`/`Refund`/`Waste` with reason + actor; on-hand is a cached projection of the ledger, never a bare mutable number.
-- [ ] **2.5 Tests** — Core unit tests + API integration tests including tenant isolation.
+- [x] **2.3 Barcode lookup** — `GET /products/by-barcode/{code}` answers with the product, its price and its tax rate in **one statement** (asserted on the generated SQL). A deactivated product still scans, carrying `isActive: false`. `GET`/`POST /products/{id}/barcodes` and `DELETE .../{barcodeId}`; `isPrimary` stays advisory by decision. No migration — 2.1 had already built the table and the index. 404 tests green.
+- [x] **2.4 Stock movement ledger** — `StockMovement` append-only and signed, written only through `IStockLedger` (the first port Core declares) so the movement and `StockItem.OnHand` move in one transaction or not at all. `reason` required, direction checked against the type, `Sale`/`Refund` refused by hand. `GET /stock`, `GET /stock/{productId}/movements`, `POST /stock/adjustments`. **Not idempotent — deferred to 3.5 and recorded.** 569 tests green.
+- [x] **2.5 Tests** — every new endpoint has an isolation manifest row and a negative-authorization row; the ledger invariant is asserted over a randomised sequence; a six-break falsification pass went red six times out of six.
 
 ## Phase 3 — Checkout & sales (cash)
 

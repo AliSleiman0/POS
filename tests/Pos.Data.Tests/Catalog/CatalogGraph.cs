@@ -8,7 +8,8 @@ internal sealed record SeededCatalog(
     Guid CategoryId,
     Guid ProductId,
     Guid BarcodeId,
-    Guid StockItemId);
+    Guid StockItemId,
+    Guid StockMovementId);
 
 /// <summary>
 /// Writes a minimal but complete catalog — tax class, category, product, barcode, stock
@@ -52,10 +53,23 @@ internal static class CatalogGraph
         var code = new Barcode { ProductId = product.Id, Code = barcode, IsPrimary = true };
         var stock = new StockItem { ProductId = product.Id, OnHand = 12.0000m, ReorderPoint = 4m };
 
+        // The receipt that put the twelve on the shelf, so on_hand agrees with its ledger
+        // from the start. A fixture whose cache and ledger disagreed would make every rebuild
+        // assertion pass for the wrong reason.
+        var movement = new StockMovement
+        {
+            ProductId = product.Id,
+            Type = StockMovementType.Receive,
+            Quantity = 12.0000m,
+            Reason = "Opening stock",
+            OccurredAt = DateTimeOffset.UtcNow,
+        };
+
         db.Barcodes.Add(code);
         db.StockItems.Add(stock);
+        db.StockMovements.Add(movement);
         await db.SaveChangesAsync();
 
-        return new SeededCatalog(taxClass.Id, category.Id, product.Id, code.Id, stock.Id);
+        return new SeededCatalog(taxClass.Id, category.Id, product.Id, code.Id, stock.Id, movement.Id);
     }
 }
