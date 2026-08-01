@@ -87,10 +87,21 @@ A device token is returned once by `POST /registers/{id}/enroll` and is stored o
 | PUT | `/products/{id}` | `CanManageCatalog` | Full replacement; `isActive` is not a field |
 | POST | `/products/{id}/deactivate` | `CanManageCatalog` | Soft-delete. **No `DELETE` verb exists** |
 | POST | `/products/{id}/activate` | `CanManageCatalog` | The way back. A mis-clicked deactivate is otherwise permanent |
+| GET | `/products/{id}/barcodes` | `CanSell` | A bare array, not paginated |
 | POST | `/products/{id}/barcodes` | `CanManageCatalog` | Many barcodes per product |
 | DELETE | `/products/{id}/barcodes/{barcodeId}` | `CanManageCatalog` | Barcodes *may* be deleted; products may not |
 
-`GET /products/by-barcode/{code}` returns `404` for an unknown barcode — the register turns that into "unknown item, add it?" rather than an error dialog.
+`GET /products/by-barcode/{code}` returns `404` for an unknown barcode — the register turns that into "unknown item, add it?" rather than an error dialog. A blank or whitespace-only code is also `404`, not `400`: every answer this endpoint gives has to be one of the two a register knows how to render.
+
+**The scan returns the product priced.** One response carries the product's fields, its `taxClassId`, its `taxClassName` and its `taxRate`, so a till never makes a second call to price a line. It is one SQL statement — barcode joined to product joined to tax class — and there is a test on the generated SQL, because an accidental N+1 on the hottest read in the application is a slow till and is invisible to a test that only checks the fields.
+
+**A deactivated product still scans**, carrying `isActive: false`. The register says "not for sale" instead of "unknown item, add it?", which is how a withdrawn product gets recreated as a duplicate by a cashier trying to help.
+
+`GET /products/{id}/barcodes` is **not paginated**, unlike every other list. It is a bounded sub-resource — a handful of codes on one product — rather than a tenant-wide collection, so the envelope would be ceremony. It exists because `DELETE .../{barcodeId}` is otherwise unaddressable: a client has no other way to learn a barcode's id.
+
+A code already used in that tenant returns `409` with `type: .../duplicate-barcode`, whichever product holds the other one. The same code in a different tenant is accepted — two shops stocking the same manufacturer's item hold the same barcode. A barcode addressed under the wrong product is `404`, not a delete.
+
+**`isPrimary` is advisory and nothing enforces one per product** (decided in 2.3). It is a label/display hint; the register scans whichever code is on the item in the customer's hand. A filtered unique index would make EF treat the foreign-key index as covered and would turn "make this the label code" into a clear-then-set across two saves, in exchange for a rule nothing reads yet. Revisit when a screen needs one.
 
 **`?activeOnly` defaults to `true`.** Omitting it hides deactivated products, because the register grid is the dominant caller and must never offer something unsellable — forgetting the parameter has to fail safe. The catalog admin screen passes `activeOnly=false` deliberately, in one place.
 
@@ -131,10 +142,30 @@ Editing a `TaxClass.Rate` affects **future** sales only. Historical sale lines h
 
 | Method | Route | Auth | Notes |
 |---|---|---|---|
-| GET | `/stock` | `CanSell` | On-hand list; `?belowReorderPoint=true` |
-| GET | `/stock/{productId}/movements` | `CanManageCatalog` | The ledger, paginated — answers "why is this wrong?" |
-| POST 🔒 | `/stock/adjustments` | `CanManageCatalog` | `{ productId, type, quantity, reason }`. `reason` is **required** |
-| GET | `/stock/discrepancies` | `CanManageCatalog` | Oversells flagged for review (Phase 3.6 / 9.4) |
+| GET | `/stock` | `CanSell` | On-hand list, paginated; `?belowReorderPoint=`, `?activeOnly=` |
+| GET | `/stock/{productId}/movements` | `CanManageCatalog` | The ledger, paginated oldest-first — answers "why is this wrong?" |
+| POST | `/stock/adjustments` | `CanManageCatalog` | `{ productId, type, quantity, reason }`. `reason` is **required** |
+| GET | `/stock/discrepancies` | `CanManageCatalog` | **Not built.** Deferred to Phase 3.6 — see below |
+
+**`GET /stock` lists products, not stock rows.** Each item's `id` is the *product's* id, because the stock row is an implementation detail that may not exist yet while every endpoint a client calls next takes a product id. A product that has never been counted therefore reads `onHand: 0` rather than being absent — the uncounted products are the ones most worth seeing. Products with `trackStock: false` are excluded entirely: a carrier bag with an on-hand of zero is noise in a report whose job is to show what needs ordering. `?activeOnly=` defaults to `true`, as elsewhere.
+
+**The ledger pages oldest-first.** That is the order the index holds, the order a rebuild replays, and the order a person reads a history in. It is also the only list keyed on a timestamp rather than a name, so its cursor round-trips a `DateTimeOffset`; a page-walk test asserts every row is seen exactly once.
+
+**`type` accepts `Receive`, `Adjust` and `Waste` only.** `Sale` and `Refund` are written by the sale that caused them and carry its id — accepting them by hand would let someone fabricate sales movements with no sale behind them, and the ledger would stop reconciling with the takings. `Recount` waits for a count-sheet feature: a recount states an absolute count and the movement is the delta.
+
+**The direction has to agree with the reason.** A receipt must be positive, a write-off negative, a correction non-zero. No check constraint can express this — both are perfectly good numbers for the column — and a receipt entered as `-5` is a stock figure wrong by ten, in the direction nobody notices until stocktake.
+
+**`reason` is required**, and that is the field which makes the ledger worth having. `quantity` is signed and fractional to four places, so 0.350 kg of cheese is an ordinary movement. `occurredAt` and `performedBy` are server-set and are not request fields: a caller who could supply them could backdate a write-off or attribute it to someone else.
+
+An unknown or cross-tenant `productId`, or one that does not track stock, is `400` on that field rather than `404` — the id is a field of the request, not the resource being addressed, and the answer is identical either way. Losing a race against another writer is `409` with `type: .../concurrent-stock-update`; it is deliberately not retried for you, because re-applying a delta the caller may already have applied is worse than asking.
+
+Stock may go **negative**. There is no `CHECK` and no clamping: a negative figure is evidence that something left without being received, and clamping it to zero deletes exactly the discrepancy a stocktake needs to find.
+
+> **`POST /stock/adjustments` is not idempotent yet**, and the 🔒 that used to be on this row has been removed until it is. `IdempotencyRecord` ([DATA-MODEL.md](DATA-MODEL.md#idempotency)) is built in **Phase 3.5**, once, for sales, voids, refunds and adjustments together. Until then a resubmitted adjustment writes a second movement — visible in the ledger, at least, unlike a lost one. `StockAdjustmentTests.A_resubmitted_adjustment_writes_a_second_movement` pins the current behaviour and is the test 3.5 should break.
+
+> **`GET /stock/discrepancies` is not implemented.** Nothing can flag an oversell until the sale path exists, so the endpoint could only ever return an empty list and there would be nothing to test it against. It arrives with **Phase 3.6**, which is what creates the flag.
+
+`RebuildOnHand` — recompute a product's on-hand from its movements — exists on `IStockLedger` and has **no route**. It is the proof that the ledger is the truth and the number is derived, and it is what you run when the invariant drifts; exposing "rewrite the stock figures" over HTTP needs a decision about who may run it that Phase 2 did not need to take.
 
 ## Sales — `/sales`
 

@@ -83,6 +83,8 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 
 - **Many per product** — multipacks, re-labelled stock, supplier variations, and the same item scanning differently across two suppliers. One-barcode-per-product is the single most common retail catalog modelling mistake.
 - Unique index on `(TenantId, Code)`, and this is the hottest read in the system.
+- **`IsPrimary` is advisory and unconstrained** (Phase 2.3). Nothing stops two primaries on one product: it is a label/display hint, and a filtered unique index would make EF treat the foreign-key index as covered while turning "make this the label code" into a clear-then-set across two saves. Codes are trimmed on the way in but **not** case-folded, unlike a SKU — GS1-128 payloads carry case-significant data.
+- Barcodes **may** be hard-deleted, unlike products. Nothing financial points at one; a sale line points at the product.
 
 ### Inventory
 
@@ -91,7 +93,14 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 - `OnHand` is a **cached projection** of `StockMovement`, kept for fast reads. The ledger is the truth; `OnHand` can always be rebuilt from it.
 - `RowVersion` maps to Postgres `xmin` for optimistic concurrency, so two registers selling the last unit collide loudly instead of silently.
 
-**`StockMovement`** — append-only. `ProductId`, `Type` (`Receive`|`Adjust`|`Sale`|`Refund`|`Waste`|`Recount`), `Quantity` (signed), `Reason?`, `SaleId?`, `PerformedBy`, `OccurredAt`.
+**`StockMovement`** — append-only. `ProductId`, `Type` (`Receive`|`Adjust`|`Sale`|`Refund`|`Waste`|`Recount`), `Quantity` (signed), `Reason?`, `SaleId?`, `PerformedBy?`, `OccurredAt`.
+
+- `Type` is stored as **text** with a check constraint generated from the enum's names, so a report or a psql session reads `Waste` rather than `4`. Renaming a member rewrites the constraint and orphans history — in a table that exists to be read back.
+- `Quantity` is signed rather than a magnitude plus a direction implied by `Type`, so rebuilding on-hand is a `SUM` and not a fold that has to know what every type means.
+- `Reason` is nullable in the column and **mandatory at `POST /stock/adjustments`**. A sale's reason is the sale; forcing prose onto it would produce a table full of the word "sale".
+- `PerformedBy` is nullable (the system acts with no user) and deliberately **overlaps `CreatedBy`**. The actor is part of what the row *means* — a shrinkage investigation asks who wrote off the missing six — whereas the audit columns are metadata every table carries and may be reshaped for unrelated reasons.
+- `OccurredAt` is separate from `CreatedAt` for the case Phase 9 creates: an offline movement is recorded when it happened and written when the till reconnects, and "what moved on Tuesday" means the first of those. Both are server-set, from `TimeProvider`.
+- Written only through **`IStockLedger`** (declared in `Pos.Core`, implemented in `Pos.Data`), which appends the movement and applies it to `StockItem.OnHand` inside one transaction. That port is the one place the invariant below is enforced, and Phase 3's sale path joins it rather than reimplementing it.
 
 **Why a ledger rather than a mutable count:** the question is never "what is on hand" — it is "why is on hand wrong?" A bare number cannot answer that, and shrinkage is a real business problem staff need to investigate. This also makes Phase 9's offline reconciliation possible: replaying queued movements against a ledger is tractable, reconciling two disagreeing counters is not.
 
