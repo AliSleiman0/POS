@@ -178,7 +178,52 @@ public static class IsolationManifest
             Forbidden = w => w.A.TaxClassIds,
         },
 
+        new()
+        {
+            Key = "GET api/v1/categories",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.CategoryIds,
+            Forbidden = w => w.A.CategoryIds,
+        },
+
         // ---- By id ------------------------------------------------------------------
+        new()
+        {
+            Key = "PUT api/v1/categories/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.GroceryCategoryId,
+            Body = _ => new { name = "Attempt", sortOrder = 99 },
+            AssertUntouched = AssertTenantAsGroceryCategoryIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/categories/{id:guid}/deactivate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.GroceryCategoryId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsGroceryCategoryIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/categories/{id:guid}/activate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+
+            // The world's categories are all active, so "still active" would be true whether
+            // this endpoint ran or not. Cheese is the victim here and the assertion reads its
+            // name and parent as well, which a stray write would disturb.
+            VictimId = w => w.A.Catalog.CheeseCategoryId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsCheeseCategoryIsUnchanged,
+        },
         new()
         {
             Key = "PUT api/v1/tax-classes/{id:guid}",
@@ -236,6 +281,16 @@ public static class IsolationManifest
         },
 
         // ---- Exempt, each saying where the coverage is --------------------------------
+        new()
+        {
+            Key = "POST api/v1/categories",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A write with no id, so neither shape fits. Covered for tenancy by "
+                      + "CategoryCrudTests.A_created_category_belongs_to_the_calling_tenant, and "
+                      + "for a cross-tenant parent by "
+                      + "CategoryCrudTests.Another_tenants_category_cannot_be_named_as_a_parent.",
+        },
         new()
         {
             Key = "POST api/v1/tax-classes",
@@ -366,6 +421,39 @@ public static class IsolationManifest
             var till = await db.Registers.FirstAsync(r => r.Id == world.A.FrontCounter.Id);
 
             Assert.Equal(OpaqueToken.Hash(world.A.FrontCounter.DeviceToken), till.DeviceTokenHash);
+        });
+
+    /// <summary>
+    /// Tenant A's Grocery category still has its own name, sort order and active flag.
+    /// </summary>
+    private static Task AssertTenantAsGroceryCategoryIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var category = await db.Categories.FirstAsync(c => c.Id == world.A.Catalog.GroceryCategoryId);
+
+            Assert.Equal(CatalogFixture.GroceryCategoryName, category.Name);
+            Assert.Equal(10, category.SortOrder);
+            Assert.True(category.IsActive);
+            Assert.Null(category.ParentCategoryId);
+        });
+
+    /// <summary>
+    /// Tenant A's Cheese category still hangs off Grocery, under its own name.
+    /// </summary>
+    private static Task AssertTenantAsCheeseCategoryIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var category = await db.Categories.FirstAsync(c => c.Id == world.A.Catalog.CheeseCategoryId);
+
+            Assert.Equal(CatalogFixture.CheeseCategoryName, category.Name);
+            Assert.Equal(world.A.Catalog.GroceryCategoryId, category.ParentCategoryId);
+            Assert.True(category.IsActive);
         });
 
     /// <summary>
