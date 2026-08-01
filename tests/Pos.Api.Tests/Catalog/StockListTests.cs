@@ -190,7 +190,7 @@ public sealed class StockListTests(PosApiFactory factory)
 
         public async Task AdjustAsync(Guid productId, string type, decimal quantity, string reason)
         {
-            var response = await Client.PostAsJsonAsync(
+            var response = await Client.PostIdempotentAsync(
                 "/api/v1/stock/adjustments",
                 new { productId, type, quantity, reason });
 

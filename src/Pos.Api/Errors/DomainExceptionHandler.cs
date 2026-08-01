@@ -111,6 +111,10 @@ public sealed partial class DomainExceptionHandler(
         // counter. There is no field to blame, so there is no errors map to fill.
         UnderTenderException => (StatusCodes.Status409Conflict, "Tender does not cover the sale"),
 
+        // 409, and loudly. The alternative — replaying the stored response — would show the
+        // till a sale that succeeded, for a basket the customer never had.
+        IdempotencyKeyReusedException => (StatusCodes.Status409Conflict, "Idempotency key already used"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }

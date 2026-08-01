@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Pos.Api.Idempotency;
 using Pos.Api.Tests.Infrastructure;
 using Pos.Api.Tests.Isolation;
 using Pos.Core.Entities;
@@ -178,7 +179,7 @@ public sealed class StockAdjustmentTests(PosApiFactory factory)
 
         var productId = await CreateProductAsync(client, sandbox);
 
-        var response = await client.PostAsJsonAsync(Route, new
+        var response = await PostRawAsync(client, new
         {
             productId,
             type = "Receive",
@@ -230,7 +231,7 @@ public sealed class StockAdjustmentTests(PosApiFactory factory)
     {
         var (client, _) = await factory.SignedInAsync(RoleNames.Manager);
 
-        var response = await client.PostAsJsonAsync(Route, new { });
+        var response = await PostRawAsync(client, new { });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
@@ -252,7 +253,7 @@ public sealed class StockAdjustmentTests(PosApiFactory factory)
 
         using var client = await factory.ClientForAsync(Actor.OwnerOfB, world);
 
-        var response = await client.PostAsJsonAsync(Route, new
+        var response = await PostRawAsync(client, new
         {
             productId = world.A.Catalog.WaterProductId,
             type = "Receive",
@@ -277,23 +278,183 @@ public sealed class StockAdjustmentTests(PosApiFactory factory)
     }
 
     [Fact]
-    public async Task A_resubmitted_adjustment_writes_a_second_movement()
+    public async Task A_resubmitted_adjustment_replays_the_original_movement()
     {
-        // Pinning a known gap rather than asserting a desired behaviour. docs/API.md marks
-        // this endpoint 🔒, but the IdempotencyRecord that would honour an Idempotency-Key is
-        // Phase 3.5's, built once for sales, voids, refunds and adjustments together. Until
-        // then a double submit really does receive twice — and a movement that is visible in
-        // the ledger is a better failure than one silently swallowed.
-        //
-        // When 3.5 lands, this test is the one that should fail and be rewritten.
+        // The test 3.5 promised to break. Until this milestone the same submission twice
+        // received twice, and A_resubmitted_adjustment_writes_a_second_movement pinned that
+        // gap so it was recorded rather than forgotten. This is its replacement.
         var (client, sandbox) = await factory.SignedInAsync(RoleNames.Manager);
 
         var productId = await CreateProductAsync(client, sandbox);
+        var key = Guid.CreateVersion7();
 
-        await AdjustAsync(client, productId, "Receive", 5m, "Delivery");
-        var second = await AdjustAsync(client, productId, "Receive", 5m, "Delivery");
+        var first = await AdjustAsync(client, productId, "Receive", 5m, "Delivery", key);
+        var second = await AdjustAsync(client, productId, "Receive", 5m, "Delivery", key);
 
-        Assert.Equal(10.0000m, second.GetProperty("onHand").GetDecimal());
+        // Five, not ten. The stock moved once.
+        Assert.Equal(5.0000m, first.GetProperty("onHand").GetDecimal());
+        Assert.Equal(5.0000m, second.GetProperty("onHand").GetDecimal());
+
+        // And the same movement, not a second one that happens to leave the same total —
+        // which is what an on-hand assertion alone would have accepted.
+        Assert.Equal(
+            first.GetProperty("movement").GetProperty("id").GetGuid(),
+            second.GetProperty("movement").GetProperty("id").GetGuid());
+
+        await factory.AsTenantAsync(sandbox.TenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            Assert.Single(await db.StockMovements.Where(m => m.ProductId == productId).ToListAsync());
+        });
+    }
+
+    [Fact]
+    public async Task A_replayed_response_is_byte_identical_and_says_so()
+    {
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Manager);
+
+        var productId = await CreateProductAsync(client, sandbox);
+        var key = Guid.CreateVersion7();
+
+        using var first = await PostAsync(client, productId, "Receive", 3m, "Delivery", key);
+        using var second = await PostAsync(client, productId, "Receive", 3m, "Delivery", key);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+
+        // Byte-identical, not merely equivalent. The client already acted on the first body —
+        // it printed the on-hand — so a replay that recomputed anything could disagree with
+        // what the till is showing. This is also why response_body is text and not jsonb.
+        Assert.Equal(
+            await first.Content.ReadAsStringAsync(),
+            await second.Content.ReadAsStringAsync());
+
+        Assert.False(first.Headers.Contains(IdempotencyFilter.ReplayHeaderName));
+        Assert.True(second.Headers.Contains(IdempotencyFilter.ReplayHeaderName));
+    }
+
+    [Fact]
+    public async Task The_same_key_with_a_different_body_is_refused_with_409()
+    {
+        // Written before the happy path, deliberately. Minimal-API endpoint filters run after
+        // model binding, so without Program.cs's EnableBuffering the filter reads zero bytes,
+        // every fingerprint matches, and THIS is the only test that notices — a replay test
+        // would go green while the system happily replayed a stored response for a completely
+        // different request.
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Manager);
+
+        var productId = await CreateProductAsync(client, sandbox);
+        var key = Guid.CreateVersion7();
+
+        await AdjustAsync(client, productId, "Receive", 5m, "Delivery", key);
+
+        using var reused = await PostAsync(client, productId, "Receive", 50m, "Delivery", key);
+
+        Assert.Equal(HttpStatusCode.Conflict, reused.StatusCode);
+
+        var body = await reused.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(
+            "https://pos.example/errors/idempotency-key-reused",
+            body.GetProperty("type").GetString());
+
+        // And the fifty never landed.
+        await factory.AsTenantAsync(sandbox.TenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var stock = await db.StockItems.FirstAsync(s => s.ProductId == productId);
+
+            Assert.Equal(5.0000m, stock.OnHand);
+        });
+    }
+
+    [Fact]
+    public async Task An_adjustment_with_no_idempotency_key_is_a_field_error()
+    {
+        // 400 with a named field rather than 428 Precondition Required: every other malformed
+        // request in this API answers that way, and a client that has to branch on 428 for one
+        // endpoint is a client that will not.
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Manager);
+
+        using var response = await client.PostAsJsonAsync(
+            Route,
+            new
+            {
+                productId = sandbox.Catalog.WaterProductId,
+                type = "Receive",
+                quantity = 1m,
+                reason = "No key",
+            });
+
+        await AssertFieldErrorAsync(response, IdempotencyFilter.HeaderName);
+    }
+
+    [Fact]
+    public async Task A_malformed_idempotency_key_is_a_field_error()
+    {
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Manager);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, Route)
+        {
+            Content = JsonContent.Create(new
+            {
+                productId = sandbox.Catalog.WaterProductId,
+                type = "Receive",
+                quantity = 1m,
+                reason = "Bad key",
+            }),
+        };
+
+        // Not a GUID. Guid.Empty is refused for the same reason: it is what an uninitialised
+        // client field looks like, so honouring it would make every such client share one key.
+        request.Headers.Add(IdempotencyFilter.HeaderName, "not-a-guid");
+
+        using var response = await client.SendAsync(request);
+
+        await AssertFieldErrorAsync(response, IdempotencyFilter.HeaderName);
+    }
+
+    [Fact]
+    public async Task Two_concurrent_identical_submits_move_the_stock_once()
+    {
+        // The case a sequential replay test cannot reach: both requests miss the lookup, both
+        // do the work, and one loses on ux_idempotency_record_tenant_key. The loser's INSERT
+        // blocks on that index until the winner commits, which is what makes a single re-read
+        // sufficient afterwards.
+        var (client, sandbox) = await factory.SignedInAsync(RoleNames.Manager);
+
+        var productId = await CreateProductAsync(client, sandbox);
+        var key = Guid.CreateVersion7();
+
+        using var second = factory.CreateClient();
+        second.WithBearer((await second.LoginAsync(
+            CatalogSandbox.Slug, CatalogSandbox.ManagerEmail, CatalogSandbox.Password)).AccessToken);
+
+        var responses = await Task.WhenAll(
+            PostAsync(client, productId, "Receive", 7m, "Delivery", key),
+            PostAsync(second, productId, "Receive", 7m, "Delivery", key));
+
+        // Whatever the interleaving, a 500 is never an acceptable answer to a double-tap.
+        Assert.DoesNotContain(HttpStatusCode.InternalServerError, responses.Select(r => r.StatusCode));
+
+        await factory.AsTenantAsync(sandbox.TenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            // Seven, once. This is the assertion the whole feature exists for: a cashier
+            // double-tapping on a slow connection must not move stock or money twice.
+            var stock = await db.StockItems.FirstAsync(s => s.ProductId == productId);
+            Assert.Equal(7.0000m, stock.OnHand);
+
+            Assert.Single(await db.StockMovements.Where(m => m.ProductId == productId).ToListAsync());
+            Assert.Single(await db.IdempotencyRecords.Where(r => r.Key == key).ToListAsync());
+        });
+
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
     }
 
     [Fact]
@@ -321,25 +482,73 @@ public sealed class StockAdjustmentTests(PosApiFactory factory)
         Guid productId,
         string type,
         decimal quantity,
-        string reason)
+        string reason,
+        Guid? idempotencyKey = null)
     {
-        var response = await PostAsync(client, productId, type, quantity, reason);
+        var response = await PostAsync(client, productId, type, quantity, reason, idempotencyKey);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        Assert.Equal(
-            $"/api/v1/stock/{productId}/movements",
-            response.Headers.Location?.ToString());
+
+        // Location on the original only. A replay reproduces the body and the status, not
+        // arbitrary headers — storing them to reproduce this one would be a column for a value
+        // nothing reads, and a client retrying already holds the first response's Location.
+        if (!response.Headers.Contains(IdempotencyFilter.ReplayHeaderName))
+        {
+            Assert.Equal(
+                $"/api/v1/stock/{productId}/movements",
+                response.Headers.Location?.ToString());
+        }
 
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 
+    /// <summary>
+    /// Posts an adjustment, with a fresh <c>Idempotency-Key</c> unless one is given.
+    /// </summary>
+    /// <remarks>
+    /// A fresh key by default so that each of these tests keeps meaning what it meant before
+    /// 3.5: an independent attempt. A test that wants a <i>retry</i> passes the same key
+    /// deliberately, which is the distinction the endpoint now draws.
+    /// </remarks>
     private static Task<HttpResponseMessage> PostAsync(
         HttpClient client,
         Guid productId,
         string type,
         decimal quantity,
-        string reason) =>
-        client.PostAsJsonAsync(Route, new { productId, type, quantity, reason });
+        string reason,
+        Guid? idempotencyKey = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, Route)
+        {
+            Content = JsonContent.Create(new { productId, type, quantity, reason }),
+        };
+
+        request.Headers.Add(
+            IdempotencyFilter.HeaderName,
+            (idempotencyKey ?? Guid.CreateVersion7()).ToString());
+
+        return client.SendAsync(request);
+    }
+
+    /// <summary>
+    /// Posts an arbitrary body with a fresh <c>Idempotency-Key</c>.
+    /// </summary>
+    /// <remarks>
+    /// The key is attached even when the test is about a malformed body, because the filter
+    /// runs before the handler: without one, a test asserting "reason is required" would be
+    /// answered "Idempotency-Key is required" and would pass for the wrong reason.
+    /// </remarks>
+    private static Task<HttpResponseMessage> PostRawAsync(HttpClient client, object body)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, Route)
+        {
+            Content = JsonContent.Create(body),
+        };
+
+        request.Headers.Add(IdempotencyFilter.HeaderName, Guid.CreateVersion7().ToString());
+
+        return client.SendAsync(request);
+    }
 
     private static async Task AssertFieldErrorAsync(HttpResponseMessage response, string field)
     {

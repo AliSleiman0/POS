@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
 using Pos.Api.Common;
+using Pos.Api.Idempotency;
 using Pos.Core.Entities;
 using Pos.Core.Inventory;
 using Pos.Data;
@@ -75,6 +76,7 @@ public static class StockEndpoints
 
         stock.MapPost("/adjustments", AdjustAsync)
             .RequireAuthorization(Policies.CanManageCatalog)
+            .RequireIdempotency()
             .WithSummary("Receive, correct or write off stock");
 
         return builder;
@@ -162,19 +164,26 @@ public static class StockEndpoints
     }
 
     /// <summary>
-    /// Writes one movement through <see cref="IStockLedger"/>.
+    /// Writes one movement through <see cref="IStockLedger"/>, exactly once.
     /// </summary>
     /// <remarks>
-    /// <b>Not idempotent, and that is a recorded decision rather than an oversight.</b>
-    /// docs/API.md marks this endpoint 🔒, but the <c>IdempotencyRecord</c> that would honour
-    /// an <c>Idempotency-Key</c> is Phase 3.5's, built once for sales, voids, refunds and
-    /// adjustments together. Until then a resubmitted adjustment writes a second movement —
-    /// which is at least visible in the ledger, unlike a lost one.
+    /// <b>Idempotent since Phase 3.5</b>, using the same mechanism as sales, voids, refunds and
+    /// shifts — which is why it was deferred rather than given a stock-shaped copy of its own
+    /// in 2.4. A resubmitted adjustment now replays the original response instead of writing a
+    /// second movement.
+    /// <para>
+    /// The transaction is owned here rather than by the ledger, because the idempotency record
+    /// has to be inserted alongside the movement or not at all. That is what
+    /// <c>RecordBatchAsync</c> exists for, and the single-element batch is not a workaround:
+    /// it is the same code path the sale writer uses, exercised on the simplest possible case.
+    /// </para>
     /// </remarks>
     private static async Task<Results<Created<StockAdjustmentResponse>, ValidationProblem>> AdjustAsync(
         CreateStockAdjustmentRequest request,
         AppDbContext db,
         IStockLedger ledger,
+        IIdempotencyContext idempotency,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -186,29 +195,56 @@ public static class StockEndpoints
             return TypedResults.ValidationProblem(fields.Errors);
         }
 
-        var result = await ledger.RecordAsync(
-            new StockMovementRequest(
-                request.ProductId!.Value,
-                fields.Type!.Value,
-                request.Quantity!.Value,
-                fields.Reason),
-            cancellationToken);
+        // Read before the retry block, like StockLedger does: a transient-failure replay must
+        // not re-timestamp the record, or the stored response would disagree with the movement
+        // it describes about when it happened.
+        var completedAt = timeProvider.GetUtcNow();
 
-        var movement = new StockMovementResponse(
-            result.MovementId,
-            request.ProductId.Value,
-            fields.Type.Value,
-            request.Quantity.Value,
-            fields.Reason,
-            SaleId: null,
-            PerformedBy: null,
-            result.OccurredAt);
+        StockAdjustmentResponse? response = null;
+
+        // A retrying execution strategy refuses a user-initiated transaction outright — it
+        // cannot replay a block it does not own — so the whole unit goes inside one.
+        var strategy = db.Database.CreateExecutionStrategy();
+
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+            var written = await ledger.RecordBatchAsync(
+                [
+                    new StockMovementRequest(
+                        request.ProductId!.Value,
+                        fields.Type!.Value,
+                        request.Quantity!.Value,
+                        fields.Reason),
+                ],
+                cancellationToken);
+
+            var result = written[0];
+
+            response = new StockAdjustmentResponse(
+                new StockMovementResponse(
+                    result.MovementId,
+                    request.ProductId.Value,
+                    fields.Type.Value,
+                    request.Quantity.Value,
+                    fields.Reason,
+                    SaleId: null,
+                    PerformedBy: null,
+                    result.OccurredAt),
+                result.OnHand);
+
+            idempotency.Record(db, StatusCodes.Status201Created, response, completedAt);
+
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        });
 
         // The ledger for the product, since a single movement has no route of its own — the
         // useful thing to look at after adjusting stock is what the product's history now says.
         return TypedResults.Created(
-            $"/api/v1/stock/{request.ProductId.Value}/movements",
-            new StockAdjustmentResponse(movement, result.OnHand));
+            $"/api/v1/stock/{request.ProductId!.Value}/movements",
+            response!);
     }
 
     private sealed record ValidatedFields(

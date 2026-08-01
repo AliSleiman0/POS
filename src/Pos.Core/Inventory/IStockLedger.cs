@@ -58,6 +58,36 @@ public interface IStockLedger
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Appends several movements inside a transaction the <b>caller</b> owns.
+    /// </summary>
+    /// <remarks>
+    /// This is how the sale path joins the ledger rather than reimplementing it. A sale writes
+    /// its lines, its tenders and its stock movements together or not at all, so the ledger
+    /// cannot be the one deciding when to commit.
+    /// <para>
+    /// <b>It does not begin, commit or roll back, and it throws if no transaction is open.</b>
+    /// The guard is the point: the entire value of this method over
+    /// <see cref="RecordAsync"/> is that its writes live and die with the caller's, and a
+    /// caller who forgot to open one would otherwise get an ambient auto-commit per statement
+    /// and discover it when a half-written sale survived a failure.
+    /// </para>
+    /// <para>
+    /// One <c>SaveChanges</c> for the whole batch, so the concurrency token still applies and
+    /// a lost race is still reported. One timestamp for the whole batch too: every movement of
+    /// one sale shares that sale's instant, which is what a ledger read expects. Two requests
+    /// for the same product produce <b>two</b> movements and one net change to the on-hand —
+    /// an item scanned twice is two honest ledger rows.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">No transaction is open on the caller's context.</exception>
+    /// <exception cref="Exceptions.ConcurrentStockUpdateException">
+    /// Another writer changed one of these products' stock first.
+    /// </exception>
+    Task<IReadOnlyList<StockMovementResult>> RecordBatchAsync(
+        IReadOnlyList<StockMovementRequest> requests,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Recomputes one product's on-hand from its movements and stores the result.
     /// </summary>
     /// <returns>The recomputed on-hand.</returns>

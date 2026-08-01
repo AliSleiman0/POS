@@ -116,6 +116,11 @@ public class AppDbContext : IdentityDbContext<
     /// </summary>
     public DbSet<SaleSequence> SaleSequences => Set<SaleSequence>();
 
+    /// <summary>
+    /// Stored responses for money- and stock-moving writes, so a retry replays.
+    /// </summary>
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);

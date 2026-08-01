@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Pos.Api.Idempotency;
 using Pos.Api.Tests.Infrastructure;
 
 namespace Pos.Api.Tests.Isolation;
@@ -118,6 +119,50 @@ public sealed class EndpointCoverageTests(PosApiFactory factory)
         }
 
         Assert.True(incomplete.Count == 0, string.Join("\n", incomplete));
+    }
+
+    [Fact]
+    public void The_manifests_idempotent_flags_match_the_filters_actually_attached()
+    {
+        // Read from the routing table, not from a list somebody maintains. The flag exists so
+        // an isolation probe carries an Idempotency-Key and reaches the handler rather than
+        // being turned away with a 400 — so a row that claims the flag without the filter, or
+        // an endpoint that grows the filter without the row, breaks a theory somewhere else
+        // and for a reason that looks unrelated. This is the test that names it.
+        var source = factory.Services.GetRequiredService<EndpointDataSource>();
+
+        var routed = source.Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.Metadata.GetMetadata<IdempotentEndpointMetadata>() is not null)
+            .SelectMany(endpoint =>
+            {
+                var methods = endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? ["ANY"];
+                var path = endpoint.RoutePattern.RawText?.Trim('/') ?? string.Empty;
+
+                return methods.Select(method => $"{method} {path}");
+            })
+            .ToHashSet(StringComparer.Ordinal);
+
+        var declared = IsolationManifest.Cases
+            .Where(c => c.Idempotent)
+            .Select(c => c.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var missingFlag = routed.Except(declared, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var missingFilter = declared.Except(routed, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+
+        Assert.True(
+            missingFlag.Length == 0 && missingFilter.Length == 0,
+            $"""
+             Endpoints carrying RequireIdempotency() with no Idempotent = true row ({missingFlag.Length}):
+               {string.Join("\n  ", missingFlag)}
+
+             Manifest rows claiming Idempotent = true with no filter attached ({missingFilter.Length}):
+               {string.Join("\n  ", missingFilter)}
+
+             docs/API.md marks these routes with a padlock. Set Idempotent = true on the row, or
+             add .RequireIdempotency() to the endpoint — whichever of the two is actually behind.
+             """);
     }
 
     /// <summary>Every routable (method, pattern) pair, keyed the way the manifest keys them.</summary>

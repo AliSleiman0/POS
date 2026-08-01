@@ -89,6 +89,49 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-01 (during Phase 3.5)
+
+- **Both `IdempotencyRecord` and `sale.client_transaction_id` exist, because they guarantee
+  different things.** The unique index on the sale is the *domain* guarantee — "exactly one
+  sale for this cart" survives even if the idempotency table were dropped, and it is what
+  Phase 9's outbox reconciles against. `IdempotencyRecord` is the *transport* guarantee: it
+  stores the original status and body so a replay is byte-identical, and it covers the 🔒
+  routes that create no sale at all (stock adjustments, shift open and close, cash movements)
+  plus a void, which mutates a sale rather than inserting one.
+
+- **The uniqueness is on `(tenant_id, key)` and deliberately excludes the endpoint.** Reusing
+  one key on two endpoints is the same client bug as reusing it with two bodies and earns the
+  same 409. The endpoint is inside the request hash instead, which is what makes it a mismatch
+  rather than a silent second success.
+
+- **The fingerprint is over the raw request bytes, not a re-serialised DTO.** A client that
+  changed a field the server currently ignores has still changed the request, and hashing the
+  bound object would call that a replay. It would also make every stored key depend on
+  serializer settings — turning on camelCase would 409 every in-flight retry in every shop.
+
+- **Endpoint filters run after model binding, so the request body must be buffered.** Without
+  `EnableBuffering()` the filter reads zero bytes, every fingerprint matches, and a retry
+  replays a stored response for an unrelated request. The filter therefore *refuses to guess*:
+  it throws when the body is not seekable rather than hashing nothing, which converts a silent
+  catastrophe into an immediate error. Verified by deleting the middleware and watching the
+  suite go red.
+
+- **A concurrent loser asks "is this request already done?", not "which index did I lose on".**
+  The first implementation matched specific constraint names and returned a 500 the moment two
+  *first* receipts of a brand-new product collided on `ux_stock_item_tenant_product` instead —
+  a race neither index in the list covered. The filter now catches any unique violation,
+  re-reads the key, and replays if it is present. One re-read suffices with no retry loop,
+  because the losing INSERT blocks until the winner commits, so the winner's row is already
+  visible when the 23505 arrives.
+
+- **A replay reproduces status and body, not headers.** A replayed `201` carries no `Location`.
+  Storing arbitrary headers to reproduce one value that a retrying client already holds would
+  be a column nothing reads.
+
+- **A missing or malformed `Idempotency-Key` is a `400` with a field error, not a `428`.**
+  Every other malformed request in this API answers that way, and a client that must branch on
+  428 for one endpoint is a client that will not.
+
 ### Resolved 2026-08-01 (during Phase 3.1)
 
 - **`Money` is an EF-mapped value type on entities, and stays out of API DTOs.** A

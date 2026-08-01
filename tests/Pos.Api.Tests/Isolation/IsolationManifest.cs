@@ -100,6 +100,23 @@ public sealed record IsolationCase
     /// </remarks>
     public bool Paginated { get; init; }
 
+    /// <summary>
+    /// Whether this route requires an <c>Idempotency-Key</c> — the 🔒 in docs/API.md.
+    /// </summary>
+    /// <remarks>
+    /// Declared rather than inferred, and then <b>checked against the routing table</b> by
+    /// <c>EndpointCoverageTests</c>, so the manifest cannot drift from which endpoints
+    /// actually carry the filter.
+    /// <para>
+    /// It has to be here at all because the filter runs before authorization reaches the
+    /// handler and before any route parameter is looked at: without a key, a 🔒 route answers
+    /// 400 on the header. A by-id theory expecting 404 would then go red for entirely the
+    /// wrong reason — the same structural trap <c>UrlFor</c>'s arity check closed in 2.3,
+    /// where a test passed having proven nothing.
+    /// </para>
+    /// </remarks>
+    public bool Idempotent { get; init; }
+
     /// <summary>Required when <see cref="Kind"/> is <see cref="IsolationKind.Exempt"/>.</summary>
     public string? Exemption { get; init; }
 
@@ -482,6 +499,7 @@ public static class IsolationManifest
         {
             Key = "POST api/v1/stock/adjustments",
             Kind = IsolationKind.Exempt,
+            Idempotent = true,
             Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
             Exemption = "The subject id travels in the body, so there is no URL to attack and "
                       + "neither shape fits. Naming another tenant's product is answered 400 on "

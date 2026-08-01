@@ -190,7 +190,7 @@ public sealed class StockMovementListTests(PosApiFactory factory)
         decimal quantity,
         string reason)
     {
-        var response = await client.PostAsJsonAsync(
+        var response = await client.PostIdempotentAsync(
             "/api/v1/stock/adjustments",
             new { productId, type, quantity, reason });
 

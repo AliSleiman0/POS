@@ -27,6 +27,28 @@ internal static class PostgresErrors
     /// does not match falls through and becomes a 500, which is the correct answer for a
     /// constraint nobody wrote a message for.
     /// </remarks>
+    /// <summary>
+    /// Whether <paramref name="exception"/> is a unique violation on <b>any</b> constraint.
+    /// </summary>
+    /// <remarks>
+    /// The nameless overload exists for exactly one caller: <c>IdempotencyFilter</c>, which is
+    /// not asking "which index did I lose on" but "has somebody else already completed this
+    /// request?". A concurrent retry can lose on the idempotency index, on a sale's
+    /// client-transaction index, or — the case that found this — on the stock row two first
+    /// receipts of a new product both tried to create. Enumerating those is a list that goes
+    /// stale on the next index; re-reading the key answers the question directly, and the
+    /// filter rethrows when the answer is no.
+    /// <para>
+    /// Everywhere else, name the constraint. Matching on <c>23505</c> alone would report any
+    /// of a table's unique indexes as whatever the nearest catch block happened to be about.
+    /// </para>
+    /// </remarks>
+    public static bool IsUniqueViolation(Exception exception) =>
+        exception is DbUpdateException
+        {
+            InnerException: PostgresException { SqlState: PostgresErrorCodes.UniqueViolation },
+        };
+
     public static bool IsUniqueViolation(Exception exception, string constraintName) =>
         exception is DbUpdateException
         {
