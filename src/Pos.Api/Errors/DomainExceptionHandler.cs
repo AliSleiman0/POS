@@ -106,6 +106,11 @@ public sealed partial class DomainExceptionHandler(
         // statement about the body and would be equally wrong tomorrow.
         InvalidDiscountException => (StatusCodes.Status400BadRequest, "Discount is not valid"),
 
+        // 409 rather than 400, on the same reasoning as the duplicate-key rows above: the
+        // body is well-formed and would be accepted unchanged with one more note on the
+        // counter. There is no field to blame, so there is no errors map to fill.
+        UnderTenderException => (StatusCodes.Status409Conflict, "Tender does not cover the sale"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }
