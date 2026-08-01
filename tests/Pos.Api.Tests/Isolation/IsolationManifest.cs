@@ -160,7 +160,46 @@ public static class IsolationManifest
             Forbidden = w => w.A.PinEligibleIds,
         },
 
+        new()
+        {
+            Key = "GET api/v1/tax-classes",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+
+            // A Cashier, because this is CanSell — the register needs a rate to price a
+            // line. The first row in this manifest where that actor is the legitimate
+            // caller rather than one being turned away.
+            Caller = Actor.CashierOfB,
+
+            // OwnerOfB is deliberately absent: CanSell admits every role, so an Owner
+            // reading this list is correct, not a leak.
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.TaxClassIds,
+            Forbidden = w => w.A.TaxClassIds,
+        },
+
         // ---- By id ------------------------------------------------------------------
+        new()
+        {
+            Key = "PUT api/v1/tax-classes/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.StandardTaxClassId,
+
+            // Valid in tenant B, like the set-pin row above: the handler validates the body
+            // before it looks the row up, so a malformed one would be answered 400 and the
+            // cross-tenant lookup this row exists to test would never run.
+            //
+            // isDefault is false on purpose, and the gap that leaves is covered elsewhere.
+            // This row asserts tenant A's row was not touched. A true here would make the
+            // request act on tenant B's *own* default before reaching the 404 — a different
+            // failure, and one AssertUntouched cannot see because it only ever reads tenant
+            // A. That one is
+            // TaxClassCrudTests.A_cross_tenant_promotion_does_not_demote_the_callers_own_default.
+            Body = _ => new { name = "Attempt", rate = 0.1000m, isDefault = false },
+            AssertUntouched = AssertTenantAsStandardTaxClassIsUnchanged,
+        },
         new()
         {
             Key = "POST api/v1/registers/{id:guid}/enroll",
@@ -197,6 +236,19 @@ public static class IsolationManifest
         },
 
         // ---- Exempt, each saying where the coverage is --------------------------------
+        new()
+        {
+            Key = "POST api/v1/tax-classes",
+            Kind = IsolationKind.Exempt,
+
+            // Exempt on tenancy, still negatively tested on authorization. Kind and Refused
+            // answer different questions, and RefusedCallers() keys off the latter.
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A write with no id, so neither shape fits. The tenancy question for "
+                      + "it is which tenant the row lands in, covered by "
+                      + "TaxClassCrudTests.A_created_tax_class_belongs_to_the_calling_tenant "
+                      + "and ForgedTenancyTests.A_tenant_id_in_the_request_body_is_never_honoured.",
+        },
         new()
         {
             Key = "POST api/v1/registers",
@@ -314,6 +366,27 @@ public static class IsolationManifest
             var till = await db.Registers.FirstAsync(r => r.Id == world.A.FrontCounter.Id);
 
             Assert.Equal(OpaqueToken.Hash(world.A.FrontCounter.DeviceToken), till.DeviceTokenHash);
+        });
+
+    /// <summary>
+    /// Tenant A's Standard tax class still has its own name, rate and default flag — so the
+    /// PUT from tenant B neither edited it nor demoted it.
+    /// </summary>
+    /// <remarks>
+    /// The 404 is the promise; this is the evidence. A handler that wrote before checking
+    /// would still answer 404 and still be wrong, and only this notices.
+    /// </remarks>
+    private static Task AssertTenantAsStandardTaxClassIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var taxClass = await db.TaxClasses.FirstAsync(t => t.Id == world.A.Catalog.StandardTaxClassId);
+
+            Assert.Equal(CatalogFixture.StandardTaxClassName, taxClass.Name);
+            Assert.Equal(0.2300m, taxClass.Rate);
+            Assert.True(taxClass.IsDefault);
         });
 
     /// <summary>

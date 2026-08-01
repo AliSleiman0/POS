@@ -159,6 +159,7 @@ app.UseAuthorization();
 app.MapAuthEndpoints();
 app.MapRegisterEndpoints();
 app.MapEmployeeEndpoints();
+app.MapTaxClassEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.
