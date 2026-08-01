@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Pos.Core.Entities;
+using Pos.Core.Monetary;
 using Pos.Core.Tenancy;
+using Pos.Data.Conversions;
 using Pos.Data.Identity;
 
 namespace Pos.Data;
@@ -101,6 +103,20 @@ public class AppDbContext : IdentityDbContext<
         // which would silently truncate a unit price's 3rd and 4th decimals.
         configurationBuilder.Properties<decimal>().HavePrecision(MoneyPrecision, MoneyScale);
         configurationBuilder.Properties<decimal?>().HavePrecision(MoneyPrecision, MoneyScale);
+
+        // Money is a struct over decimal, so the sweep above does NOT cover it — these
+        // conventions match on the CLR property type, and Money is not decimal. Without
+        // HavePrecision here a money column maps at the provider default of numeric(18,2)
+        // and silently truncates a unit price's 3rd and 4th decimals.
+        // DatabaseSchemaTests.Every_money_and_quantity_column_is_numeric_19_4 is the guard
+        // that catches it, and it sweeps every numeric column in the database precisely so
+        // that a forgotten line here fails rather than ships.
+        configurationBuilder.Properties<Money>()
+            .HaveConversion<MoneyConverter>()
+            .HavePrecision(MoneyPrecision, MoneyScale);
+        configurationBuilder.Properties<Money?>()
+            .HaveConversion<MoneyConverter>()
+            .HavePrecision(MoneyPrecision, MoneyScale);
 
         // UTC everywhere, per invariant 8. timestamptz is Npgsql's default for
         // DateTimeOffset; stating it here makes the intent explicit and covers

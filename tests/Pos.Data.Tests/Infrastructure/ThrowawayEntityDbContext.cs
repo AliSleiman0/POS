@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Pos.Core.Auditing;
+using Pos.Core.Monetary;
 using Pos.Core.Tenancy;
 using Pos.Data.Interceptors;
 using Pos.Data.Migrations;
@@ -27,6 +28,23 @@ public sealed class ThrowawayEntity : TenantEntity
     /// numeric(19,4) without its author doing anything.
     /// </summary>
     public decimal Amount { get; set; }
+
+    /// <summary>
+    /// The same question for <see cref="Money"/>, which Phase 3.1 made the type of every
+    /// amount on an entity.
+    /// </summary>
+    /// <remarks>
+    /// A separate property rather than a change to <see cref="Amount"/>, because the two
+    /// conventions are separate: <c>Properties&lt;decimal&gt;()</c> matches on the CLR type
+    /// and does <b>not</b> cover a <see cref="Money"/> property. Without its own convention
+    /// entry a money column maps at the provider default of <c>numeric(18,2)</c>, and both
+    /// assertions are needed to show the two paths are configured rather than one of them
+    /// carrying the other.
+    /// </remarks>
+    public Money Price { get; set; }
+
+    /// <summary>The nullable overload, which is a separate convention registration.</summary>
+    public Money? OptionalPrice { get; set; }
 }
 
 /// <summary>
@@ -73,6 +91,8 @@ public sealed class ThrowawayEntityDbContext(DbContextOptions options, ITenantCo
                 tenant_id   uuid NOT NULL,
                 label       text NOT NULL,
                 amount      numeric(19,4) NOT NULL,
+                price       numeric(19,4) NOT NULL,
+                optional_price numeric(19,4) NULL,
                 created_at  timestamptz NOT NULL,
                 created_by  uuid NULL,
                 updated_at  timestamptz NULL,

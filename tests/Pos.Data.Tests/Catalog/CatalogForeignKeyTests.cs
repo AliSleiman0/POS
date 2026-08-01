@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Pos.Core.Entities;
 using Pos.Data.Tests.Infrastructure;
+using Pos.Core.Monetary;
 
 namespace Pos.Data.Tests.Catalog;
 
@@ -171,7 +172,7 @@ public sealed class CatalogForeignKeyTests(PostgresFixture postgres)
             Sku = "SKU-BORROWED",
             Name = "Borrowed Tax Class",
             TaxClassId = catalog.TaxClassId,
-            UnitPrice = 1m,
+            UnitPrice = (Money)1m,
         });
 
         // Borrowing another tenant's tax class would price this shop's goods from a rate
@@ -253,7 +254,7 @@ public sealed class CatalogForeignKeyTests(PostgresFixture postgres)
                 Sku = "SKU-SERVICE-2",
                 Name = "Coffee to Go",
                 TaxClassId = catalog.TaxClassId,
-                UnitPrice = 3.5000m,
+                UnitPrice = (Money)3.5000m,
                 TrackStock = false,
             };
 

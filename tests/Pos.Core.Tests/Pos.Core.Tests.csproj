@@ -3,6 +3,8 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- Test-only. See the note in Directory.Packages.props. -->
+    <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>

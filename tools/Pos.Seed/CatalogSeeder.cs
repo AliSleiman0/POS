@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Pos.Core.Entities;
 using Pos.Core.Tenancy;
 using Pos.Data;
+using Pos.Core.Monetary;
 
 namespace Pos.Seed;
 
@@ -177,8 +178,8 @@ internal sealed class CatalogSeeder(IServiceProvider services)
                 Name = seed.Name,
                 CategoryId = category?.Id,
                 TaxClassId = taxClass.Id,
-                UnitPrice = seed.UnitPrice,
-                CostPrice = seed.CostPrice,
+                UnitPrice = (Money)seed.UnitPrice,
+                CostPrice = (Money?)seed.CostPrice,
                 Unit = seed.Unit,
                 TrackStock = seed.TrackStock,
             };

@@ -10,6 +10,7 @@ using Pos.Api.Errors;
 using Pos.Core.Catalog;
 using Pos.Core.Entities;
 using Pos.Core.Exceptions;
+using Pos.Core.Monetary;
 using Pos.Data;
 
 namespace Pos.Api.Endpoints;
@@ -439,12 +440,12 @@ public static class ProductEndpoints
             Description = fields.Description,
             CategoryId = request.CategoryId,
             TaxClassId = request.TaxClassId!.Value,
-            UnitPrice = request.UnitPrice!.Value,
+            UnitPrice = (Money)request.UnitPrice!.Value,
 
             // A field a role may not read is a field it may not write. A Manager's create is
             // stored with no cost rather than refused, for the same reason a TenantId in a
             // body is ignored rather than rejected — see ForgedTenancyTests.
-            CostPrice = canViewMargins ? request.CostPrice : null,
+            CostPrice = canViewMargins ? (Money?)request.CostPrice : null,
             Unit = fields.Unit ?? Core.Entities.Unit.Each,
             TrackStock = request.TrackStock ?? true,
         };
@@ -499,14 +500,14 @@ public static class ProductEndpoints
         product.Description = fields.Description;
         product.CategoryId = request.CategoryId;
         product.TaxClassId = request.TaxClassId!.Value;
-        product.UnitPrice = request.UnitPrice!.Value;
+        product.UnitPrice = (Money)request.UnitPrice!.Value;
 
         // Left alone for a caller who cannot see it. Their GET omits costPrice, so a
         // read-modify-write round trip sends it back absent — and full-replace semantics
         // would wipe the Owner's cost data on every edit a Manager made.
         if (canViewMargins)
         {
-            product.CostPrice = request.CostPrice;
+            product.CostPrice = (Money?)request.CostPrice;
         }
 
         // The two exceptions to full replacement. See UpdateProductRequest.
@@ -633,8 +634,8 @@ public static class ProductEndpoints
             product.Name,
             product.Description,
             product.CategoryId,
-            product.UnitPrice,
-            product.CostPrice,
+            (decimal)product.UnitPrice,
+            (decimal?)product.CostPrice,
             product.Unit,
             product.IsActive,
             product.TrackStock,
@@ -657,7 +658,7 @@ public static class ProductEndpoints
             product.Name,
             product.Description,
             product.CategoryId,
-            product.UnitPrice,
+            (decimal)product.UnitPrice,
             null,
             product.Unit,
             product.IsActive,
@@ -805,12 +806,12 @@ public static class ProductEndpoints
     /// </remarks>
     private static Expression<Func<Product, ProductResponse>> ProjectWithCost =>
         p => new ProductResponse(
-            p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, p.UnitPrice,
-            p.CostPrice, p.Unit, p.IsActive, p.TrackStock, p.CreatedAt, p.UpdatedAt);
+            p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, (decimal)p.UnitPrice,
+            (decimal?)p.CostPrice, p.Unit, p.IsActive, p.TrackStock, p.CreatedAt, p.UpdatedAt);
 
     private static Expression<Func<Product, ProductResponse>> ProjectWithoutCost =>
         p => new ProductResponse(
-            p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, p.UnitPrice,
+            p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, (decimal)p.UnitPrice,
             null, p.Unit, p.IsActive, p.TrackStock, p.CreatedAt, p.UpdatedAt);
 
     private static ProductResponse Map(Product product, bool canViewMargins) => new(
@@ -820,8 +821,8 @@ public static class ProductEndpoints
         product.Description,
         product.CategoryId,
         product.TaxClassId,
-        product.UnitPrice,
-        canViewMargins ? product.CostPrice : null,
+        product.UnitPrice.ToDecimal(),
+        canViewMargins ? product.CostPrice?.ToDecimal() : null,
         product.Unit,
         product.IsActive,
         product.TrackStock,

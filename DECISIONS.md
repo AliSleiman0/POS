@@ -89,6 +89,62 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-01 (during Phase 3.1)
+
+- **`Money` is an EF-mapped value type on entities, and stays out of API DTOs.** A
+  `readonly record struct Money(decimal Amount)` in `Pos.Core`, mapped model-wide by a value
+  converter, so `Product.UnitPrice` and every Phase 3 amount column is typed `Money` rather
+  than `decimal`. Request and response DTOs stay `decimal`, so the JSON contract and Phase 4's
+  generated TypeScript client are untouched by the change.
+
+  The enforcement this buys is specific: there is **no `operator +(Money, decimal)`**, so
+  `total + 1.005m` does not compile and raw decimal arithmetic on a price has to be written as
+  an explicit cast that shows up in a diff. That is CLAUDE.md invariant 3 moved from review
+  discipline into the compiler. Converting the two `Product` columns immediately surfaced
+  every boundary in the codebase as a compile error — which is the mechanism working, not a
+  cost of it.
+
+- **The namespace is `Pos.Core.Monetary`, not `Pos.Core.Money`.** The phase doc says
+  `Pos.Core/Money/Money.cs`, and that does not compile for consumers. A namespace `Pos.Core.Money`
+  makes `Money` a *member of `Pos.Core`*, and enclosing-namespace members outrank types imported
+  by a `using` — so every file under `Pos.Core.*` writing `Money` gets **CS0118: 'Money' is a
+  namespace but is used like a type**, which is the whole domain layer. Verified by trying it.
+  The alternatives were qualifying every usage as `Money.Money` or dropping the type into the
+  `Pos.Core` root and breaking the folder↔namespace convention every other folder follows.
+  Renaming the folder is the cheapest of the three and costs nothing at the call site.
+
+- **The `Money` value converter does not round.** Rounding on write would put a rounding rule
+  in a layer nobody reads. Writers call `RoundToStorage()` explicitly before `SaveChanges`, so
+  the decision is visible where it is taken. Postgres would silently round a fifth decimal
+  place anyway; keeping the converter dumb is what makes `CatalogRules.IsStorable*` the thing
+  that prevents it rather than a second line of defence nobody can see.
+
+- **Recorded cost: EF cannot aggregate over a value-converted property.**
+  `db.Tenders.SumAsync(t => t.Amount.Amount)` does not translate, so 3.8's shift arithmetic
+  reads its aggregates through `db.Database.SqlQuery<decimal>` — one statement per component,
+  with the `tenant_id` predicate written **explicitly** because the query filter does not
+  compose over raw SQL, and RLS underneath as the second layer. This is the strongest argument
+  available against typing entity amounts as `Money`, so it is written down rather than
+  discovered. Pinned by `MoneyMappingTests.Summing_money_in_the_database_is_not_translatable`,
+  which fails if a future EF version gains the ability — at which point the workaround can go.
+
+- **`CatalogRules` was kept, not folded into `Money`.** It validates a tax *rate* and a signed
+  *quantity*, and neither of those is money — folding them in would make a kilogram a currency.
+  What they now share is the `Rounding` primitive, so the repository holds exactly one
+  `MidpointRounding` constant and one `decimal.Round` call site. `CatalogRulesTests` passed
+  **unedited** through the extraction, which is what makes "behaviour-preserving" a claim
+  somebody checked rather than asserted.
+
+- **`ArchitectureTests.Core_does_not_read_the_ambient_clock` is a real Mono.Cecil IL scan.**
+  The placeholder's own comment named Phase 3, and 3.1 is where Core first gained logic whose
+  determinism is the product. `Mono.Cecil` is referenced by `tests/Pos.Core.Tests` only, so the
+  two checks that Core declares and compiles against nothing outside the BCL are unaffected.
+  `TimeProvider.System` is on the forbidden list alongside `DateTime.UtcNow` and friends —
+  reaching the clock *through* `TimeProvider` is the same sin and merely looks compliant.
+  Falsified in both directions before being trusted: a planted `DateTime.UtcNow` and a planted
+  `TimeProvider.System` **inside a lambda** were both caught, the second proving the walk into
+  compiler-generated nested types is load-bearing.
+
 ### Resolved 2026-08-01 (during Phase 2.3 and 2.4)
 
 - **One primary barcode per product is *not* enforced.** `Barcode.IsPrimary` is advisory: a

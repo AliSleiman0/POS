@@ -45,6 +45,17 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
     <!--
+      IL inspection, for ArchitectureTests.Core_does_not_read_the_ambient_clock. Referenced
+      by tests/Pos.Core.Tests ONLY: it never reaches src/, so the two checks that Pos.Core
+      declares and compiles against nothing outside the BCL are unaffected by it.
+
+      The zero-dependency alternative is System.Reflection.Metadata, which can read the IL
+      and the MemberRef table from the BCL — about sixty lines of handle-resolution
+      plumbing to avoid one test-only package, on a suite that already carries
+      Testcontainers. Not worth the maintenance surface for a guardrail.
+    -->
+    <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
+    <!--
       Real Postgres in the test suite, not an in-memory provider. Row-level
       security, snake_case mapping and numeric(19,4) precision are all things an
       in-memory provider silently ignores — so a suite built on one would pass

@@ -1,4 +1,5 @@
 using Pos.Core.Entities;
+using Pos.Core.Monetary;
 
 namespace Pos.Data.Tests.Catalog;
 
@@ -43,8 +44,8 @@ internal static class CatalogGraph
             Name = "Still Water 500ml",
             CategoryId = category.Id,
             TaxClassId = taxClass.Id,
-            UnitPrice = 1.2000m,
-            CostPrice = 0.5500m,
+            UnitPrice = (Money)1.2000m,
+            CostPrice = (Money)0.5500m,
         };
 
         db.Products.Add(product);

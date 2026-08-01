@@ -1,4 +1,5 @@
 using Pos.Core.Entities;
+using Pos.Core.Monetary;
 
 namespace Pos.Core.Tests.Entities;
 
@@ -183,6 +184,6 @@ public sealed class CatalogEntityTests
         Sku = "SKU-1001",
         Name = "Still Water 500ml",
         TaxClassId = Guid.CreateVersion7(),
-        UnitPrice = 1.20m,
+        UnitPrice = (Money)1.20m,
     };
 }

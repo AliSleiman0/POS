@@ -6,6 +6,7 @@ using Pos.Api.Common;
 using Pos.Api.Tests.Infrastructure;
 using Pos.Core.Entities;
 using Pos.Data;
+using Pos.Core.Monetary;
 
 namespace Pos.Api.Tests.Common;
 
@@ -369,7 +370,7 @@ public sealed class CursorPaginationTests(PosApiFactory factory)
                     Sku = Product.NormalizeSku($"{name}-{Guid.CreateVersion7():N}")!,
                     Name = name,
                     TaxClassId = taxClass.Id,
-                    UnitPrice = 1.0000m,
+                    UnitPrice = (Money)1.0000m,
                 };
 
                 db.Products.Add(product);

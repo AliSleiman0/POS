@@ -45,6 +45,22 @@ public sealed partial class Tenant
     public TaxMode TaxMode { get; set; } = TaxMode.Inclusive;
 
     /// <summary>
+    /// The smallest coin a cash total is rounded to, e.g. <c>0.05</c>. Zero — the default —
+    /// means the jurisdiction has no such rule.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="decimal"/> rather than a <c>Money</c>, because it is a <i>parameter</i> to
+    /// rounding and not an amount anything is added to: it is divided by, never summed.
+    /// <c>CashRounding.ToIncrement</c> takes it in that form for the same reason.
+    /// <para>
+    /// The adjustment it produces is recorded on the sale as <c>RoundingAdjustment</c> and
+    /// never absorbed into the total — otherwise the drawer is over or short by an amount
+    /// nothing explains. See <c>Pos.Core.Monetary.CashRounding</c>.
+    /// </para>
+    /// </remarks>
+    public decimal CashRoundingIncrement { get; set; }
+
+    /// <summary>
     /// How far past midnight this tenant's trading day starts, in local time.
     /// </summary>
     /// <remarks>

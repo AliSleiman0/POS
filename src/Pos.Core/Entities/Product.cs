@@ -1,3 +1,4 @@
+using Pos.Core.Monetary;
 using Pos.Core.Tenancy;
 
 namespace Pos.Core.Entities;
@@ -43,14 +44,14 @@ public sealed class Product : TenantEntity
     public Guid TaxClassId { get; set; }
 
     /// <summary>Current selling price, <c>numeric(19,4)</c>. Interpreted per the tenant's <see cref="TaxMode"/>.</summary>
-    public decimal UnitPrice { get; set; }
+    public Money UnitPrice { get; set; }
 
     /// <summary>
     /// What the shop paid. Drives margin reporting, and is <b>omitted from the response</b>
     /// for callers without <c>CanViewMargins</c> — not hidden client-side, because anything
     /// sent to a browser is readable.
     /// </summary>
-    public decimal? CostPrice { get; set; }
+    public Money? CostPrice { get; set; }
 
     /// <inheritdoc cref="Entities.Unit" />
     public Unit Unit { get; set; } = Unit.Each;

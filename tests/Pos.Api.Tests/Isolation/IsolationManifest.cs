@@ -6,6 +6,7 @@ using Pos.Api.Tests.Infrastructure;
 using Pos.Core.Security;
 using Pos.Data;
 using Pos.Data.Identity;
+using Pos.Core.Monetary;
 
 namespace Pos.Api.Tests.Isolation;
 
@@ -658,8 +659,8 @@ public static class IsolationManifest
 
             Assert.Equal(CatalogFixture.WaterSku, product.Sku);
             Assert.Equal(CatalogFixture.WaterName, product.Name);
-            Assert.Equal(1.2000m, product.UnitPrice);
-            Assert.Equal(CatalogFixture.WaterCostPrice, product.CostPrice);
+            Assert.Equal(1.2000m, product.UnitPrice.ToDecimal());
+            Assert.Equal(CatalogFixture.WaterCostPrice, product.CostPrice?.ToDecimal());
             Assert.True(product.IsActive);
         });
 
@@ -714,7 +715,7 @@ public static class IsolationManifest
             var product = await db.Products.FirstAsync(p => p.Id == world.A.Catalog.CoffeeProductId);
 
             Assert.Equal(CatalogFixture.CoffeeSku, product.Sku);
-            Assert.Equal(CatalogFixture.CoffeeCostPrice, product.CostPrice);
+            Assert.Equal(CatalogFixture.CoffeeCostPrice, product.CostPrice?.ToDecimal());
             Assert.True(product.IsActive);
         });
 

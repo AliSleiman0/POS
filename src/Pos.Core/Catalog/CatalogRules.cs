@@ -1,3 +1,5 @@
+using Pos.Core.Monetary;
+
 namespace Pos.Core.Catalog;
 
 /// <summary>
@@ -5,28 +7,31 @@ namespace Pos.Core.Catalog;
 /// agree on the boundaries.
 /// </summary>
 /// <remarks>
-/// <b>This is not the <c>Money</c> type.</b> Phase 3.1 introduces that, and it owns
-/// arithmetic and rounding. These are validation predicates over values that have not been
-/// stored yet — the question is only "would the column hold this exactly?", which is a
-/// different and much smaller question than "how do we add two prices?".
+/// <b>This is not the <see cref="Money"/> type</b>, which owns arithmetic and rounding.
+/// These are validation predicates over values that have not been stored yet — the question
+/// is only "would the column hold this exactly?", which is a different and much smaller
+/// question than "how do we add two prices?".
 /// <para>
-/// The point of checking scale is that Postgres <i>rounds</i> rather than refusing. A price
-/// of 1.00005 stores as 1.0001 and the shop is charging a hundredth of a cent it never
-/// entered, with no error anywhere. Silence is the failure mode being prevented here.
+/// The two were kept separate when 3.1 landed, deliberately: <see cref="IsValidTaxRate"/> is
+/// a rate and <see cref="IsStorableSignedAmount"/> is what <c>StockRules.IsStorableQuantity</c>
+/// calls for a <i>quantity</i>, and neither of those is money. Folding them into
+/// <see cref="Money"/> would make a kilogram a currency. What they now share is the
+/// <see cref="Rounding"/> primitive, so there is one rounding mode and one storage scale in
+/// the system rather than two that agree until the day they do not.
 /// </para>
 /// </remarks>
 public static class CatalogRules
 {
     /// <summary>Scale of the money and quantity columns: <c>numeric(19,4)</c>.</summary>
-    public const int AmountScale = 4;
+    public const int AmountScale = Rounding.StorageScale;
 
     /// <summary>
     /// The largest value <c>numeric(19,4)</c> holds: 15 digits before the point, 4 after.
     /// </summary>
-    public const decimal MaxAmount = 999_999_999_999_999.9999m;
+    public const decimal MaxAmount = Rounding.MaxStorable;
 
     /// <summary>Scale of <c>tax_class.rate</c>, which is narrower at <c>numeric(6,4)</c>.</summary>
-    public const int RateScale = 4;
+    public const int RateScale = Rounding.StorageScale;
 
     /// <summary>
     /// Whether a price or quantity is non-negative and survives the column exactly.
@@ -42,8 +47,7 @@ public static class CatalogRules
     /// are negative. Sharing the range and scale check with <see cref="IsStorableAmount"/>
     /// rather than restating it is what stops the two drifting the day the column changes.
     /// </remarks>
-    public static bool IsStorableSignedAmount(decimal value) =>
-        value >= -MaxAmount && value <= MaxAmount && HasScaleAtMost(value, AmountScale);
+    public static bool IsStorableSignedAmount(decimal value) => Rounding.IsStorable(value);
 
     /// <summary>
     /// Whether a tax rate is a fraction the <c>ck_tax_class_rate_range</c> check will accept
@@ -56,17 +60,5 @@ public static class CatalogRules
     /// much rather than a unit mix-up the code can guess at.
     /// </remarks>
     public static bool IsValidTaxRate(decimal value) =>
-        value >= 0m && value <= 1m && HasScaleAtMost(value, RateScale);
-
-    /// <summary>
-    /// Whether <paramref name="value"/> needs no more than <paramref name="scale"/> decimal
-    /// places, so storing it cannot round it.
-    /// </summary>
-    /// <remarks>
-    /// Compares against a rounded copy rather than reading the scale out of the decimal's
-    /// representation, because 1.5000m and 1.5m are equal but carry different scales — and
-    /// a client that serialises a trailing zero has not done anything wrong.
-    /// </remarks>
-    private static bool HasScaleAtMost(decimal value, int scale) =>
-        decimal.Round(value, scale, MidpointRounding.AwayFromZero) == value;
+        value >= 0m && value <= 1m && Rounding.IsExactAt(value, RateScale);
 }
