@@ -101,6 +101,11 @@ public sealed partial class DomainExceptionHandler(
         // to blame. No race is involved: that parent can never be that category's parent.
         CategoryCycleException => (StatusCodes.Status400BadRequest, "Category hierarchy would form a cycle"),
 
+        // 400 and named, for the same reason as the row above: the fallback's title says
+        // nothing about which field to blame. Nothing raced — €12 off a €10 basket is a
+        // statement about the body and would be equally wrong tomorrow.
+        InvalidDiscountException => (StatusCodes.Status400BadRequest, "Discount is not valid"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }
