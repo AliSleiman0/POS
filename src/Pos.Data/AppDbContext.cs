@@ -124,6 +124,23 @@ public class AppDbContext : IdentityDbContext<
         // is cleaner than scoping something nothing writes to.
         builder.Ignore<IdentityUserPasskey<Guid>>();
 
+        // Declared on the model rather than written as raw SQL in a migration, so they land
+        // in AppDbContextModelSnapshot. A migration that only knows about them through
+        // Sql() leaves the snapshot describing a database that no longer exists, and the
+        // next `migrations add` reasons from that incomplete picture.
+        //
+        // Both are trusted extensions in PG 13+, so CREATE on the database is enough and no
+        // superuser is involved. That matters for Phase 8.2: a managed host has to allow
+        // them, and all three environments here (dev, Testcontainers, CI) run migrations as
+        // the schema owner, which suffices.
+        //
+        // pg_trgm gives ILIKE '%q%' an index to use — see ProductConfiguration. btree_gin
+        // is what lets tenant_id lead that GIN index, which is not cosmetic: an index not
+        // leading with the tenant cannot satisfy the query filter's predicate, and a test
+        // fails the build over it.
+        builder.HasPostgresExtension("pg_trgm");
+        builder.HasPostgresExtension("btree_gin");
+
         // One IEntityTypeConfiguration<T> per entity, discovered by assembly scan,
         // so adding an entity never means editing this method.
         builder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);

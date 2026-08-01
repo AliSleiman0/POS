@@ -74,6 +74,18 @@ public sealed record IsolationCase
     /// </summary>
     public Func<PosApiFactory, TwoTenantWorld, Task>? AssertUntouched { get; init; }
 
+    /// <summary>
+    /// Whether a <see cref="IsolationKind.Collection"/> answers with a
+    /// <c>{ items, nextCursor, hasMore }</c> envelope rather than a bare JSON array.
+    /// </summary>
+    /// <remarks>
+    /// Stated per row rather than sniffed from the response. "Unwrap <c>items</c> if the
+    /// body happens to have it" would keep passing on the day a list endpoint stopped being
+    /// paginated, which is precisely the change that ought to be noticed — the manifest
+    /// exists to record decisions, not to infer them.
+    /// </remarks>
+    public bool Paginated { get; init; }
+
     /// <summary>Required when <see cref="Kind"/> is <see cref="IsolationKind.Exempt"/>.</summary>
     public string? Exemption { get; init; }
 
@@ -148,7 +160,152 @@ public static class IsolationManifest
             Forbidden = w => w.A.PinEligibleIds,
         },
 
+        new()
+        {
+            Key = "GET api/v1/tax-classes",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+
+            // A Cashier, because this is CanSell — the register needs a rate to price a
+            // line. The first row in this manifest where that actor is the legitimate
+            // caller rather than one being turned away.
+            Caller = Actor.CashierOfB,
+
+            // OwnerOfB is deliberately absent: CanSell admits every role, so an Owner
+            // reading this list is correct, not a leak.
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.TaxClassIds,
+            Forbidden = w => w.A.TaxClassIds,
+        },
+
+        new()
+        {
+            Key = "GET api/v1/products",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.ProductIds,
+            Forbidden = w => w.A.ProductIds,
+        },
+        new()
+        {
+            Key = "GET api/v1/categories",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.CategoryIds,
+            Forbidden = w => w.A.CategoryIds,
+        },
+
         // ---- By id ------------------------------------------------------------------
+        new()
+        {
+            Key = "GET api/v1/products/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+
+            // A read, so there is nothing to have changed. The 404 is the whole assertion.
+        },
+        new()
+        {
+            Key = "PUT api/v1/products/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+
+            // Valid *in tenant B*: the handler validates the body — including that the tax
+            // class exists in the caller's tenant — before it looks the product up. A body
+            // naming tenant A's tax class would be answered 400 and the cross-tenant lookup
+            // this row exists to test would never run.
+            Body = w => new
+            {
+                sku = "CROSS-TENANT-PUT",
+                name = "Attempt",
+                unitPrice = 1.0000m,
+                taxClassId = w.B.Catalog.StandardTaxClassId,
+            },
+            AssertUntouched = AssertTenantAsWaterProductIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/products/{id:guid}/deactivate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsWaterProductIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/products/{id:guid}/activate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.CoffeeProductId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsCoffeeProductIsUnchanged,
+        },
+        new()
+        {
+            Key = "PUT api/v1/categories/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.GroceryCategoryId,
+            Body = _ => new { name = "Attempt", sortOrder = 99 },
+            AssertUntouched = AssertTenantAsGroceryCategoryIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/categories/{id:guid}/deactivate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.GroceryCategoryId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsGroceryCategoryIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/categories/{id:guid}/activate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+
+            // The world's categories are all active, so "still active" would be true whether
+            // this endpoint ran or not. Cheese is the victim here and the assertion reads its
+            // name and parent as well, which a stray write would disturb.
+            VictimId = w => w.A.Catalog.CheeseCategoryId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsCheeseCategoryIsUnchanged,
+        },
+        new()
+        {
+            Key = "PUT api/v1/tax-classes/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.StandardTaxClassId,
+
+            // Valid in tenant B, like the set-pin row above: the handler validates the body
+            // before it looks the row up, so a malformed one would be answered 400 and the
+            // cross-tenant lookup this row exists to test would never run.
+            //
+            // isDefault is false on purpose, and the gap that leaves is covered elsewhere.
+            // This row asserts tenant A's row was not touched. A true here would make the
+            // request act on tenant B's *own* default before reaching the 404 — a different
+            // failure, and one AssertUntouched cannot see because it only ever reads tenant
+            // A. That one is
+            // TaxClassCrudTests.A_cross_tenant_promotion_does_not_demote_the_callers_own_default.
+            Body = _ => new { name = "Attempt", rate = 0.1000m, isDefault = false },
+            AssertUntouched = AssertTenantAsStandardTaxClassIsUnchanged,
+        },
         new()
         {
             Key = "POST api/v1/registers/{id:guid}/enroll",
@@ -185,6 +342,39 @@ public static class IsolationManifest
         },
 
         // ---- Exempt, each saying where the coverage is --------------------------------
+        new()
+        {
+            Key = "POST api/v1/products",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A write with no id, so neither shape fits. Covered for tenancy by "
+                      + "ProductCrudTests.The_same_sku_is_accepted_in_two_tenants and "
+                      + "ProductCrudTests.Another_tenants_tax_class_cannot_be_named, and by "
+                      + "ForgedTenancyTests.A_tenant_id_in_the_request_body_is_never_honoured.",
+        },
+        new()
+        {
+            Key = "POST api/v1/categories",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A write with no id, so neither shape fits. Covered for tenancy by "
+                      + "CategoryCrudTests.A_created_category_belongs_to_the_calling_tenant, and "
+                      + "for a cross-tenant parent by "
+                      + "CategoryCrudTests.Another_tenants_category_cannot_be_named_as_a_parent.",
+        },
+        new()
+        {
+            Key = "POST api/v1/tax-classes",
+            Kind = IsolationKind.Exempt,
+
+            // Exempt on tenancy, still negatively tested on authorization. Kind and Refused
+            // answer different questions, and RefusedCallers() keys off the latter.
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A write with no id, so neither shape fits. The tenancy question for "
+                      + "it is which tenant the row lands in, covered by "
+                      + "TaxClassCrudTests.A_created_tax_class_belongs_to_the_calling_tenant "
+                      + "and ForgedTenancyTests.A_tenant_id_in_the_request_body_is_never_honoured.",
+        },
         new()
         {
             Key = "POST api/v1/registers",
@@ -266,11 +456,19 @@ public static class IsolationManifest
     }
 
     /// <summary>Every (endpoint, caller-who-must-be-refused) pair, as theory rows.</summary>
+    /// <remarks>
+    /// Driven off <see cref="IsolationCase.Refused"/> alone, not off <see cref="Kind"/>. The
+    /// two are orthogonal questions — <c>Kind</c> says how tenancy is proven, <c>Refused</c>
+    /// says who must be turned away — and conflating them left the policy-gated creates
+    /// (<c>POST /products</c> and friends) with no negative-authorization coverage at all,
+    /// because a write with no id is <c>Exempt</c> on the tenancy question while still being
+    /// the endpoint a Cashier most needs to be refused from.
+    /// </remarks>
     public static TheoryData<string, Actor> RefusedCallers()
     {
         var data = new TheoryData<string, Actor>();
 
-        foreach (var testCase in Cases.Where(c => c.Kind != IsolationKind.Exempt))
+        foreach (var testCase in Cases.Where(c => c.Refused.Length > 0))
         {
             foreach (var actor in testCase.Refused)
             {
@@ -294,6 +492,96 @@ public static class IsolationManifest
             var till = await db.Registers.FirstAsync(r => r.Id == world.A.FrontCounter.Id);
 
             Assert.Equal(OpaqueToken.Hash(world.A.FrontCounter.DeviceToken), till.DeviceTokenHash);
+        });
+
+    /// <summary>
+    /// Tenant A's Still Water still has its own SKU, name, price, cost and active flag.
+    /// </summary>
+    /// <remarks>
+    /// The cost is asserted too, because a cross-tenant PUT that reached the row would blank
+    /// it — the attacker holds <c>CanViewMargins</c> in their own tenant and sends no cost.
+    /// </remarks>
+    private static Task AssertTenantAsWaterProductIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var product = await db.Products.FirstAsync(p => p.Id == world.A.Catalog.WaterProductId);
+
+            Assert.Equal(CatalogFixture.WaterSku, product.Sku);
+            Assert.Equal(CatalogFixture.WaterName, product.Name);
+            Assert.Equal(1.2000m, product.UnitPrice);
+            Assert.Equal(CatalogFixture.WaterCostPrice, product.CostPrice);
+            Assert.True(product.IsActive);
+        });
+
+    /// <summary>Tenant A's Coffee still has its own name, cost and active flag.</summary>
+    private static Task AssertTenantAsCoffeeProductIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var product = await db.Products.FirstAsync(p => p.Id == world.A.Catalog.CoffeeProductId);
+
+            Assert.Equal(CatalogFixture.CoffeeSku, product.Sku);
+            Assert.Equal(CatalogFixture.CoffeeCostPrice, product.CostPrice);
+            Assert.True(product.IsActive);
+        });
+
+    /// <summary>
+    /// Tenant A's Grocery category still has its own name, sort order and active flag.
+    /// </summary>
+    private static Task AssertTenantAsGroceryCategoryIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var category = await db.Categories.FirstAsync(c => c.Id == world.A.Catalog.GroceryCategoryId);
+
+            Assert.Equal(CatalogFixture.GroceryCategoryName, category.Name);
+            Assert.Equal(10, category.SortOrder);
+            Assert.True(category.IsActive);
+            Assert.Null(category.ParentCategoryId);
+        });
+
+    /// <summary>
+    /// Tenant A's Cheese category still hangs off Grocery, under its own name.
+    /// </summary>
+    private static Task AssertTenantAsCheeseCategoryIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var category = await db.Categories.FirstAsync(c => c.Id == world.A.Catalog.CheeseCategoryId);
+
+            Assert.Equal(CatalogFixture.CheeseCategoryName, category.Name);
+            Assert.Equal(world.A.Catalog.GroceryCategoryId, category.ParentCategoryId);
+            Assert.True(category.IsActive);
+        });
+
+    /// <summary>
+    /// Tenant A's Standard tax class still has its own name, rate and default flag — so the
+    /// PUT from tenant B neither edited it nor demoted it.
+    /// </summary>
+    /// <remarks>
+    /// The 404 is the promise; this is the evidence. A handler that wrote before checking
+    /// would still answer 404 and still be wrong, and only this notices.
+    /// </remarks>
+    private static Task AssertTenantAsStandardTaxClassIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var taxClass = await db.TaxClasses.FirstAsync(t => t.Id == world.A.Catalog.StandardTaxClassId);
+
+            Assert.Equal(CatalogFixture.StandardTaxClassName, taxClass.Name);
+            Assert.Equal(0.2300m, taxClass.Rate);
+            Assert.True(taxClass.IsDefault);
         });
 
     /// <summary>

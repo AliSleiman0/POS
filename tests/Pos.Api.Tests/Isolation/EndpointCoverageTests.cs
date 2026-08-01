@@ -98,6 +98,14 @@ public sealed class EndpointCoverageTests(PosApiFactory factory)
             }
         }
 
+        // Paginated describes how a collection's body is shaped, so it means nothing
+        // anywhere else. Set on a by-id row it would read as a claim the theories silently
+        // ignore, which is how a manifest stops being trustworthy as a record.
+        foreach (var c in IsolationManifest.Cases.Where(c => c.Paginated && c.Kind != IsolationKind.Collection))
+        {
+            incomplete.Add($"{c.Key}: Paginated only means something for a collection");
+        }
+
         Assert.True(incomplete.Count == 0, string.Join("\n", incomplete));
     }
 

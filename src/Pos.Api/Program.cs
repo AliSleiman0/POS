@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -11,10 +12,19 @@ using Pos.Api.Tenancy;
 using Pos.Core.Auditing;
 using Pos.Data;
 using Pos.Data.Identity;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+
+// Enums go over the wire as their names, not their ordinals. Without this a
+// Product.Unit would serialise as 0/1/2 — readable by nobody, and Phase 4.1's
+// generated TypeScript client would inherit a numeric enum that silently
+// reorders if a member is ever inserted. Added before the first response
+// carries an enum, because changing it afterwards is a breaking change.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 // Fail fast and loudly at startup rather than on the first request. A missing
 // connection string should not surface as a 500 during a customer's checkout.
@@ -121,6 +131,13 @@ if (app.Environment.IsDevelopment())
     // Anonymous, and stated rather than assumed — the endpoint-authorization test treats
     // any endpoint with no authorization metadata as a bug, including this one.
     app.MapOpenApi().AllowAnonymous();
+
+    // The document above is JSON and nothing rendered it, so exercising the API by hand
+    // meant hand-writing requests. Scalar at /scalar/ is what makes Phase 2.5's
+    // click-through of the catalog possible. Development only: the test host runs in
+    // "Testing", so neither of these is ever routed there — which is also why neither
+    // needs a row in the isolation manifest.
+    app.MapScalarApiReference().AllowAnonymous();
 }
 
 app.UseHttpsRedirection();
@@ -142,6 +159,9 @@ app.UseAuthorization();
 app.MapAuthEndpoints();
 app.MapRegisterEndpoints();
 app.MapEmployeeEndpoints();
+app.MapTaxClassEndpoints();
+app.MapCategoryEndpoints();
+app.MapProductEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.

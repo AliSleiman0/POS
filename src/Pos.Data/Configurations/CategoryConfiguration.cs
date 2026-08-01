@@ -30,6 +30,12 @@ internal sealed class CategoryConfiguration : IEntityTypeConfiguration<Category>
         builder.HasIndex(c => new { c.TenantId, c.ParentCategoryId })
             .HasDatabaseName("ix_category_tenant_parent");
 
+        // GET /categories orders by (name, id) and pages by keyset. SortOrder is what the
+        // client arranges its picker by, but it is neither unique nor indexed, so it cannot
+        // be the sort key a cursor resumes from — a keyset needs a total order.
+        builder.HasIndex(c => new { c.TenantId, c.Name })
+            .HasDatabaseName("ix_category_tenant_name");
+
         builder.Property(c => c.IsActive).HasDefaultValue(true);
     }
 }

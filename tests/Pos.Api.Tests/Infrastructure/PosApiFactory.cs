@@ -54,6 +54,9 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
     private readonly SemaphoreSlim _worldGate = new(1, 1);
     private Isolation.TwoTenantWorld? _world;
 
+    private readonly SemaphoreSlim _sandboxGate = new(1, 1);
+    private CatalogSandbox? _sandbox;
+
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
@@ -245,6 +248,47 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
         finally
         {
             _worldGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// One tenant with all three roles and a catalog, which catalog tests may freely change.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="IsolationWorldAsync"/>, and the two exist for opposite
+    /// reasons. The world is read-only because its assertions are exact set equalities that
+    /// any added row would break; this one may be written to because its tests assert
+    /// <i>contains</i> and never a count.
+    /// <para>
+    /// It exists at all because a CRUD test that creates its own tenant pays for three
+    /// Identity password hashes, which are deliberately slow, and there are dozens of such
+    /// tests. Sharing one tenant makes the difference between a suite that runs in seconds
+    /// and one nobody waits for.
+    /// </para>
+    /// <para>
+    /// <b>The Manager lives here rather than in the world</b>, which is what keeps
+    /// <c>PinEligibleIds</c> and the register counts untouched — and it means the isolation
+    /// manifest needs no new <c>Actor</c>: a Cashier is already the under-privileged caller
+    /// for every <c>CanManageCatalog</c> route. A test that genuinely needs two tenants
+    /// (the same SKU accepted in each) still creates its own throwaways.
+    /// </para>
+    /// </remarks>
+    public async Task<CatalogSandbox> CatalogSandboxAsync()
+    {
+        if (_sandbox is not null)
+        {
+            return _sandbox;
+        }
+
+        await _sandboxGate.WaitAsync();
+
+        try
+        {
+            return _sandbox ??= await CatalogSandbox.SeedAsync(this);
+        }
+        finally
+        {
+            _sandboxGate.Release();
         }
     }
 
