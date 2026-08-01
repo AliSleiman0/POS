@@ -58,6 +58,45 @@ public sealed record SaleCommitResult(
     IReadOnlyList<Guid> LineIds,
     IReadOnlyList<Guid> Discrepancies);
 
+/// <summary>What a void did.</summary>
+/// <param name="SaleId">The sale that was voided.</param>
+/// <param name="VoidedAt">Server-set, from <c>TimeProvider</c>.</param>
+/// <param name="RestoredProductIds">The products whose stock was put back.</param>
+public sealed record SaleVoidResult(
+    Guid SaleId,
+    DateTimeOffset VoidedAt,
+    IReadOnlyList<Guid> RestoredProductIds);
+
+/// <summary>One line being returned.</summary>
+/// <param name="SaleLineId">The original line. Not a product id — the same product can be on
+/// two lines of one sale, and then a product id names neither of them.</param>
+/// <param name="Quantity">How many units come back. Positive.</param>
+public sealed record RefundLineInstruction(Guid SaleLineId, decimal Quantity);
+
+/// <summary>A refund against a completed sale.</summary>
+/// <param name="OriginalSaleId">The sale being returned against.</param>
+/// <param name="ClientTransactionId">The refund's own idempotency identity.</param>
+/// <param name="RegisterId">The till taking the return.</param>
+/// <param name="ShiftId">The <b>current</b> open shift, whose drawer the cash leaves.</param>
+/// <param name="Reason">Required. A refund with no reason is the record you will want.</param>
+/// <param name="Lines">
+/// The lines and quantities to return. Empty means everything still refundable.
+/// </param>
+/// <param name="CashRoundingIncrement">The tenant's smallest coin, applied to the refund total.</param>
+/// <remarks>
+/// There is no stock-tracked product set here, unlike <see cref="SaleCommitRequest"/>. A refund
+/// names sale lines rather than products, so the caller would have to re-read the catalog to
+/// supply one; the writer resolves it from the lines it is already reading.
+/// </remarks>
+public sealed record SaleRefundRequest(
+    Guid OriginalSaleId,
+    Guid ClientTransactionId,
+    Guid RegisterId,
+    Guid ShiftId,
+    string Reason,
+    IReadOnlyList<RefundLineInstruction> Lines,
+    decimal CashRoundingIncrement);
+
 /// <summary>
 /// Commits a sale: its number, its lines, its tenders, its stock movements and its
 /// idempotency record, in one transaction.
@@ -93,6 +132,46 @@ public interface ISaleWriter
     /// </exception>
     Task<SaleCommitResult> CommitAsync(
         SaleCommitRequest request,
+        Action<SaleCommitResult>? onCommitting,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Voids a completed sale: a status flag plus compensating stock movements.
+    /// </summary>
+    /// <remarks>
+    /// <b>The one place a completed sale row is ever updated</b>, and it touches only the four
+    /// void columns — the amounts and the sale number are left exactly as they were, which a
+    /// test asserts by reading every money column before and after. The original stock
+    /// movements are not deleted either; the ledger still explains where the goods went and
+    /// came back.
+    /// </remarks>
+    /// <exception cref="Exceptions.SaleAlreadyVoidedException">It is not <c>Completed</c>.</exception>
+    /// <exception cref="Exceptions.SaleAlreadyRefundedException">
+    /// A refund has already returned some of it, so voiding would return the goods twice.
+    /// </exception>
+    Task<SaleVoidResult> VoidAsync(
+        Guid saleId,
+        string reason,
+        Action<SaleVoidResult>? onCommitting,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a new linked <c>Refund</c> sale with negative amounts. Never an edit.
+    /// </summary>
+    /// <remarks>
+    /// Re-priced from the original's <b>snapshots</b>, never from the catalog: a customer
+    /// returning something is owed what they paid, not what it costs today.
+    /// <para>
+    /// The money comes out of the <i>current</i> open shift's drawer, not the original's. That
+    /// is where the cash physically is, and a refund charged to a shift that was counted last
+    /// Tuesday would make two days' variance wrong at once.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="Exceptions.RefundExceedsOriginalException">
+    /// More was asked for than remains refundable.
+    /// </exception>
+    Task<SaleCommitResult> RefundAsync(
+        SaleRefundRequest request,
         Action<SaleCommitResult>? onCommitting,
         CancellationToken cancellationToken);
 }

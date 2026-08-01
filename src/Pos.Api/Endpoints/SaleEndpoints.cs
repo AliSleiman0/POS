@@ -80,6 +80,26 @@ public sealed record SaleResponse(
     IReadOnlyList<SaleLineResponse> Lines,
     IReadOnlyList<SaleTenderResponse> Tenders);
 
+/// <summary>Why a sale is being reversed. Required — see the endpoint.</summary>
+public sealed record VoidSaleRequest(string? Reason);
+
+/// <summary>One line being returned, named by its sale line rather than its product.</summary>
+public sealed record RefundLineRequest(Guid? SaleLineId, decimal? Quantity);
+
+/// <summary>
+/// A return against a completed sale. Omitting <c>lines</c> refunds everything still owing.
+/// </summary>
+/// <remarks>
+/// The shift and register are the <b>current</b> ones, not the original sale's: the cash comes
+/// out of the drawer that is open now, which is where it physically is.
+/// </remarks>
+public sealed record RefundSaleRequest(
+    Guid? ClientTransactionId,
+    Guid? RegisterId,
+    Guid? ShiftId,
+    string? Reason,
+    IReadOnlyList<RefundLineRequest>? Lines);
+
 /// <summary>A sale as the history list shows it, without its lines.</summary>
 public sealed record SaleSummaryResponse(
     Guid Id,
@@ -121,6 +141,20 @@ public static class SaleEndpoints
             .RequireIdempotency()
             .WithSummary("Complete a sale");
 
+        sales.MapPost("/{id:guid}/void", VoidAsync)
+            .RequireAuthorization(Policies.CanVoidSale)
+            .RequireIdempotency()
+            .WithSummary("Void a sale and put its stock back");
+
+        sales.MapPost("/{id:guid}/refund", RefundAsync)
+            .RequireAuthorization(Policies.CanRefund)
+            .RequireIdempotency()
+            .WithSummary("Refund all or part of a sale");
+
+        // There is deliberately no PUT and no DELETE, and there never will be. A completed
+        // sale is append-only: corrections are the two routes above, which write new rows and
+        // a status flag. NoRouteUpdatesOrDeletesASale enumerates the routing table and fails
+        // the build if one ever appears.
         return builder;
     }
 
@@ -453,6 +487,169 @@ public static class SaleEndpoints
             new Cart(lines, (Money)cartDiscount, settings.TaxMode, settings.CashRoundingIncrement),
             errors,
             tracked);
+    }
+
+    private static async Task<Results<Ok<SaleResponse>, NotFound, ValidationProblem>> VoidAsync(
+        Guid id,
+        VoidSaleRequest request,
+        AppDbContext db,
+        ISaleWriter writer,
+        IIdempotencyContext idempotency,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var reason = request.Reason?.Trim();
+
+        if (string.IsNullOrEmpty(reason))
+        {
+            // Required. A void with no reason is exactly the record you need six months later
+            // and will not have — the same rule as a stock adjustment's.
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["reason"] = ["A reason is required."],
+            });
+        }
+
+        if (reason.Length > Sale.VoidReasonMaxLength)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["reason"] = [$"A reason of at most {Sale.VoidReasonMaxLength} characters is required."],
+            });
+        }
+
+        // 404 before the writer, so another tenant's sale is indistinguishable from one that
+        // does not exist. The writer's locked re-read is what makes the decision safe.
+        if (!await db.Sales.AnyAsync(s => s.Id == id, cancellationToken))
+        {
+            return TypedResults.NotFound();
+        }
+
+        SaleResponse? response = null;
+
+        await writer.VoidAsync(
+            id,
+            reason,
+            voided => idempotency.Record(db, StatusCodes.Status200OK, VoidedMarker(voided), voided.VoidedAt),
+            cancellationToken);
+
+        var sale = await db.Sales.AsNoTracking().FirstAsync(s => s.Id == id, cancellationToken);
+        response = await ReadAsync(db, sale, cancellationToken);
+
+        return TypedResults.Ok(response);
+    }
+
+    /// <summary>
+    /// What a replayed void returns.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not the whole sale. The stored body has to be written <i>inside</i> the
+    /// transaction, before the sale can be read back in its final state, and inventing a
+    /// snapshot there would risk it disagreeing with the row. A small, honest acknowledgement
+    /// is better than a large one that might be wrong.
+    /// </remarks>
+    private static object VoidedMarker(SaleVoidResult voided) =>
+        new { id = voided.SaleId, status = nameof(SaleStatus.Voided), voidedAt = voided.VoidedAt };
+
+    private static async Task<Results<Created<SaleResponse>, NotFound, ValidationProblem>> RefundAsync(
+        Guid id,
+        RefundSaleRequest request,
+        AppDbContext db,
+        ISaleWriter writer,
+        IIdempotencyContext idempotency,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var errors = new Dictionary<string, string[]>();
+
+        var reason = request.Reason?.Trim();
+
+        if (string.IsNullOrEmpty(reason))
+        {
+            errors["reason"] = ["A reason is required."];
+        }
+
+        if (request.ClientTransactionId is not { } clientTransactionId || clientTransactionId == Guid.Empty)
+        {
+            errors["clientTransactionId"] = ["A client transaction id is required."];
+        }
+
+        if (request.RegisterId is not { } registerId || registerId == Guid.Empty)
+        {
+            errors["registerId"] = ["A register is required."];
+        }
+
+        if (request.ShiftId is not { } shiftId || shiftId == Guid.Empty)
+        {
+            errors["shiftId"] = ["A shift is required."];
+        }
+
+        for (var index = 0; index < (request.Lines?.Count ?? 0); index++)
+        {
+            var line = request.Lines![index];
+
+            if (line.SaleLineId is not { } lineId || lineId == Guid.Empty)
+            {
+                errors[$"lines[{index}].saleLineId"] = ["A sale line is required."];
+            }
+
+            if (line.Quantity is not { } quantity || quantity <= 0m)
+            {
+                errors[$"lines[{index}].quantity"] = ["A quantity greater than zero is required."];
+            }
+            else if (!Core.Catalog.CatalogRules.IsStorableAmount(quantity))
+            {
+                errors[$"lines[{index}].quantity"] = ["A quantity with at most 4 decimal places is required."];
+            }
+        }
+
+        await ValidateShiftAsync(
+            db,
+            new CreateSaleRequest(null, request.RegisterId, request.ShiftId, null, null, null),
+            errors,
+            cancellationToken);
+
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        if (!await db.Sales.AnyAsync(s => s.Id == id, cancellationToken))
+        {
+            return TypedResults.NotFound();
+        }
+
+        var increment = await db.Tenants
+            .AsNoTracking()
+            .Where(t => t.Id == db.CurrentTenantId)
+            .Select(t => t.CashRoundingIncrement)
+            .FirstAsync(cancellationToken);
+
+        SaleResponse? response = null;
+
+        var result = await writer.RefundAsync(
+            new SaleRefundRequest(
+                id,
+                request.ClientTransactionId!.Value,
+                request.RegisterId!.Value,
+                request.ShiftId!.Value,
+                reason!,
+                [.. (request.Lines ?? []).Select(l =>
+                    new RefundLineInstruction(l.SaleLineId!.Value, l.Quantity!.Value))],
+                increment),
+            committed => idempotency.Record(
+                db,
+                StatusCodes.Status201Created,
+                new { id = committed.SaleId, saleNumber = committed.SaleNumber },
+                committed.CompletedAt),
+            cancellationToken);
+
+        var refund = await db.Sales.AsNoTracking().FirstAsync(s => s.Id == result.SaleId, cancellationToken);
+        response = await ReadAsync(db, refund, cancellationToken);
+
+        return TypedResults.Created($"/api/v1/sales/{result.SaleId}", response);
     }
 
     /// <summary>

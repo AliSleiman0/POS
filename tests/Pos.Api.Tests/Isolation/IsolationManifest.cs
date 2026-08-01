@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Pos.Api.Tests.Infrastructure;
+using Pos.Core.Entities;
 using Pos.Core.Security;
 using Pos.Data;
 using Pos.Data.Identity;
@@ -338,6 +339,34 @@ public static class IsolationManifest
                       + "SaleCommitTests.A_cross_tenant_product_is_refused_and_commits_nothing "
                       + "and A_cross_tenant_shift_is_refused, both of which also assert the "
                       + "victim tenant gained no sale.",
+        },
+        new()
+        {
+            Key = "POST api/v1/sales/{id:guid}/void",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+            Body = _ => new { reason = "Attempt" },
+            AssertUntouched = AssertTenantAsFirstSaleIsStillCompleted,
+        },
+        new()
+        {
+            Key = "POST api/v1/sales/{id:guid}/refund",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+            Body = w => new
+            {
+                clientTransactionId = Guid.CreateVersion7(),
+                registerId = w.B.FrontCounter.Id,
+                shiftId = w.B.Sales.OpenShiftId,
+                reason = "Attempt",
+            },
+            AssertUntouched = AssertNeitherTenantGainedARefund,
         },
         new()
         {
@@ -781,6 +810,58 @@ public static class IsolationManifest
     /// not there, and only reading B notices that.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The victim's sale is still exactly as it was: completed, with every amount and its
+    /// number untouched.
+    /// </summary>
+    /// <remarks>
+    /// A void is the one operation that legitimately updates a completed sale, so a 404 alone
+    /// would not prove the attempt did nothing — a handler that voided first and checked
+    /// afterwards would answer 404 and still have reversed somebody else's takings.
+    /// </remarks>
+    private static Task AssertTenantAsFirstSaleIsStillCompleted(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var sale = await db.Sales.FirstAsync(s => s.Id == world.A.Sales.FirstSaleId);
+
+            Assert.Equal(SaleStatus.Completed, sale.Status);
+            Assert.Null(sale.VoidedAt);
+            Assert.Null(sale.VoidedBy);
+            Assert.Null(sale.VoidReason);
+            Assert.Equal(1, sale.SaleNumber);
+        });
+
+    /// <summary>
+    /// Neither tenant gained a refund — the victim's, and the caller's own.
+    /// </summary>
+    /// <remarks>
+    /// Reads <b>both</b>, per the rule 2.2's falsification pass established: the failure mode
+    /// that is genuinely reachable is a handler writing into the caller's own tenant before it
+    /// discovers the target is not there, and only reading B notices that.
+    /// </remarks>
+    private static async Task AssertNeitherTenantGainedARefund(
+        PosApiFactory factory,
+        TwoTenantWorld world)
+    {
+        await AssertRefundsAreTheSeededOnes(factory, world.A);
+        await AssertRefundsAreTheSeededOnes(factory, world.B);
+    }
+
+    private static Task AssertRefundsAreTheSeededOnes(PosApiFactory factory, IsolatedTenant tenant) =>
+        factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            // Exactly the one SalesFixture seeded, and it still points where it did.
+            var refund = Assert.Single(await db.Sales.Where(s => s.Type == SaleType.Refund).ToListAsync());
+
+            Assert.Equal(tenant.Sales.RefundSaleId, refund.Id);
+            Assert.Equal(tenant.Sales.SecondSaleId, refund.OriginalSaleId);
+        });
+
     private static async Task AssertNeitherTenantsWaterGainedACode(
         PosApiFactory factory,
         TwoTenantWorld world)

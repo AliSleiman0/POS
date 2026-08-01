@@ -124,6 +124,19 @@ public sealed partial class DomainExceptionHandler(
         // index. Re-reading is meaningful — GET /shifts/current returns the winner.
         ShiftAlreadyOpenException => (StatusCodes.Status409Conflict, "Register already has an open shift"),
 
+        // 409, not 404: the sale exists and the caller can see it. What changed is that
+        // somebody voided it already, and re-voiding would put the goods back twice.
+        SaleAlreadyVoidedException => (StatusCodes.Status409Conflict, "Sale is not voidable"),
+
+        // Also 409, and the caller has a real next move — refund the remainder, or void the
+        // refund first.
+        SaleAlreadyRefundedException => (StatusCodes.Status409Conflict, "Sale has already been refunded"),
+
+        // 409 rather than a field error: the quantity was well-formed and would have been
+        // accepted a moment earlier. What it collides with is another refund, which is a race
+        // the caller resolves by re-reading what remains.
+        RefundExceedsOriginalException => (StatusCodes.Status409Conflict, "Refund exceeds what remains"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }

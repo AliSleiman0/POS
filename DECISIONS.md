@@ -89,6 +89,44 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-02 (during Phase 3.7)
+
+- **A refund is re-priced from the original sale line's snapshots**, never from the catalog.
+  The customer is owed what they paid. Falsified by pricing from `Product.UnitPrice` instead,
+  which refunds today's price and looks entirely correct on the receipt.
+
+- **A line discount comes back in proportion to the quantity returned.** One of three items
+  with €0.60 off the line returns €0.20 of it. The share is computed at full precision and
+  rounded once with everything else — rounding a per-unit figure and multiplying it back up is
+  the per-line rounding bug wearing a different hat.
+
+- **Voided refunds do not count against the remaining refundable quantity.** A voided refund
+  put the goods back on the customer's side of the counter, so counting it would refuse a
+  refund they never received. Falsified.
+
+- **A sale with a live refund against it cannot be voided** — voiding writes compensating
+  movements for every line, and a refund has already returned some of them, so doing both
+  returns the same goods twice. The rule is deliberately type-agnostic, which is what lets a
+  *refund* be voided by the same code path.
+
+- **Two refunds of the same units in one refund cost a cent less than two separate refunds**,
+  and that is correct rather than a bug. Two units in one refund is 2 × 1.2000 = 2.4000 net,
+  +23% = 2.9520 → €2.95; two separate one-unit refunds are €1.48 each → €2.96. Each refund is
+  its own amount a person is handed, rounded once. Asserting €2.96 for the combined case would
+  have been asserting per-line rounding.
+
+- **The original sale is locked `FOR UPDATE` while a refund is computed**, so two concurrent
+  refunds cannot each see the same "two remaining" and each pay out two.
+
+- **A replayed void returns a small acknowledgement, not the whole sale.** The stored body has
+  to be written inside the transaction, before the sale can be read back in its final state, so
+  storing a full snapshot there would risk it disagreeing with the row. An honest small
+  response beats a large one that might be wrong.
+
+- **`No_route_updates_or_deletes_a_sale` enumerates the routing table** rather than grepping.
+  A `PUT`, `PATCH` or `DELETE` under `/sales` would be a way to rewrite a financial record in
+  place, and the test stays true as routes are added.
+
 ### Resolved 2026-08-02 (during Phase 3.6)
 
 - **`ISaleWriter` is the second port Core declares, and the precedent stays narrow.** It earns
