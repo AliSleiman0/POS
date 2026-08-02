@@ -30,3 +30,8 @@
 # Generated files: collapse in PR diffs
 pnpm-lock.yaml linguist-generated=true
 **/Migrations/*.Designer.cs linguist-generated=true
+
+# Produced by `pnpm generate:api` from the running API's OpenAPI document, and
+# never hand-edited. Committed so the frontend build needs no API; the CI
+# `contract` job regenerates it and fails if this file has gone stale.
+src/Pos.Web/src/api/schema.d.ts linguist-generated=true

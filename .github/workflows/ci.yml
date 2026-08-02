@@ -189,6 +189,16 @@ jobs:
           cache: pnpm
           cache-dependency-path: src/Pos.Web/pnpm-lock.yaml
 
+      # `dotnet ef` is a tool, not part of the SDK. The Playwright config chains
+      # `dotnet ef database update` ahead of the API, so without this the server
+      # command fails with "the specified command or file was not found" and the
+      # whole suite reports as a webServer startup failure. The version is
+      # pinned in .config/dotnet-tools.json so CI and a developer's machine
+      # cannot quietly run different tooling against the same migrations.
+      - name: Restore .NET tools
+        run: dotnet tool restore
+        working-directory: ${{ github.workspace }}
+
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile
 
