@@ -125,10 +125,13 @@ jobs:
       # No database. /openapi/v1.json describes routes and schemas and touches
       # no data, so the connection string only has to be present — Program.cs
       # fails fast on a missing one, deliberately, and never opens it here.
+      # The signing key is generated per run rather than written down. Nothing
+      # here mints a token that outlives the job, so there is nothing to reuse
+      # — and no credential-shaped literal in the workflow.
       - name: Start the API
         run: |
-          ConnectionStrings__Postgres="Host=localhost;Database=unused;Username=unused;Password=unused" \
-          Jwt__SigningKey="ci-only-signing-key-not-a-secret-0123456789abcdef" \
+          ConnectionStrings__Postgres="Host=localhost;Database=unused;Username=unused;Password=$(openssl rand -base64 24)" \
+          Jwt__SigningKey="$(openssl rand -base64 48)" \
           Jwt__Issuer=pos-ci Jwt__Audience=pos-ci \
           ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5013 \
           dotnet run --project src/Pos.Api --no-launch-profile &
@@ -232,12 +235,22 @@ jobs:
       # instead, on the same terms: NOBYPASSRLS, and the API connects as it.
       # `pos_e2e` itself is created by `dotnet ef database update`, which the
       # Playwright config chains ahead of the API.
+      #
+      # Its password is generated per run and handed to the fixtures through the
+      # environment, so the app role's credential exists only for this job. The
+      # service container's own password above has to be a literal — service
+      # `env:` is evaluated before any step runs — and is the same documented
+      # throwaway as docker-compose.yml.
       - name: Create the pos_app role
         env:
           PGPASSWORD: dev_only_not_a_secret
         run: |
+          APP_PASSWORD="$(openssl rand -base64 24)"
+          echo "::add-mask::$APP_PASSWORD"
           psql -h localhost -U pos -d postgres -v ON_ERROR_STOP=1 \
-            -c "CREATE ROLE pos_app WITH LOGIN NOBYPASSRLS PASSWORD 'dev_only_not_a_secret';"
+            -v pw="$APP_PASSWORD" \
+            -c "CREATE ROLE pos_app WITH LOGIN NOBYPASSRLS PASSWORD :'pw';"
+          echo "POSTGRES_APP_PASSWORD=$APP_PASSWORD" >> "$GITHUB_ENV"
 
       - name: Run the E2E suite
         run: pnpm test:e2e

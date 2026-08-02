@@ -23,15 +23,45 @@ const HOST = process.env['POSTGRES_HOST'] ?? 'localhost'
 const PORT = process.env['POSTGRES_PORT'] ?? '5432'
 const DATABASE = 'pos_e2e'
 
+/**
+ * The local Compose default, and the only place this file names one.
+ *
+ * `docker-compose.yml` publishes the same value the same way —
+ * `${POSTGRES_APP_PASSWORD:-dev_only_not_a_secret}` — so a machine that has
+ * overridden it works here without editing anything, and CI or any non-default
+ * setup supplies its own through the environment rather than relying on this.
+ *
+ * It is a throwaway on exactly the terms `docker-compose.yml` documents: it
+ * binds to localhost on a dev machine, or to a CI service container that lives
+ * for one job. No real secret is ever this value. Secret scanning still flags
+ * the shape, which is the scanner working correctly — see docs/HANDOFF.md.
+ */
+const COMPOSE_DEFAULT_PASSWORD = 'dev_only_not_a_secret'
+
+const OWNER_PASSWORD = process.env['POSTGRES_PASSWORD'] ?? COMPOSE_DEFAULT_PASSWORD
+const APP_PASSWORD = process.env['POSTGRES_APP_PASSWORD'] ?? COMPOSE_DEFAULT_PASSWORD
+
+function connectionFor(username: string, password: string): string {
+  return `Host=${HOST};Port=${PORT};Database=${DATABASE};Username=${username};Password=${password}`
+}
+
 /** The schema owner. Migrations only — it is a superuser and bypasses RLS. */
-export const OWNER_CONNECTION = `Host=${HOST};Port=${PORT};Database=${DATABASE};Username=pos;Password=dev_only_not_a_secret`
+export const OWNER_CONNECTION = connectionFor('pos', OWNER_PASSWORD)
 
 /** What the API connects as: NOBYPASSRLS, no CREATE on the schema. */
-export const APP_CONNECTION = `Host=${HOST};Port=${PORT};Database=${DATABASE};Username=pos_app;Password=dev_only_not_a_secret`
+export const APP_CONNECTION = connectionFor('pos_app', APP_PASSWORD)
 
 export const TENANT_SLUG = 'e2e-shop'
-export const PASSWORD = 'Dev-Password-1'
 export const CASHIER_PIN = '4821'
+
+/**
+ * The seeded users' password.
+ *
+ * Satisfies the Identity rules in `AddPosIdentity` (10+, upper, lower, digit)
+ * and matches `SeedOptions.DefaultPassword`. Same terms as above: it belongs to
+ * three fake users in a throwaway database.
+ */
+export const PASSWORD = process.env['POS_SEED_PASSWORD'] ?? 'Dev-Password-1'
 
 export const OWNER_EMAIL = `owner@${TENANT_SLUG}.test`
 export const MANAGER_EMAIL = `manager@${TENANT_SLUG}.test`

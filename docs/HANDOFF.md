@@ -134,7 +134,7 @@ Everything below was driven in a real browser, because jsdom does not paint.
 
 ## Outstanding / deferred
 
-- **No PR is open for this branch yet**, and it is stacked on `phase-3/checkout-sales` (PR #8, still open against `main`). Merge order matters.
+- **Secret scanning flagged the E2E connection string**, correctly by pattern. The credentials are the documented Compose throwaways, but a literal `Username=…;Password=…` in a `.ts` file is against CLAUDE.md's own rule regardless of the value. Now: both passwords come from the environment (`POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`) with the Compose default as the local fallback; the JWT signing keys for the E2E and contract runs are **generated per run** rather than written down; and CI creates `pos_app` with a random password masked out of the log. The one literal left is the Postgres *service container's* password in `ci.yml`, which cannot be generated — service `env:` is evaluated before any step runs.
 - **The `e2e` CI job creates the `pos_app` role in a step**, because a service container cannot run `docker/postgres-init/01-app-role.sh` — that needs a mounted entrypoint directory.
 - **The `e2e` job builds in Debug**, matching what `dotnet run` and `dotnet ef` use. The `backend` job builds Release separately; the two do not share a cache beyond NuGet.
 - **`auth/policies.ts` is a hand-written list** and can drift from `PolicyCatalog`. Nothing in the type system catches it; the Playwright authorization specs do, which is stated in the file.

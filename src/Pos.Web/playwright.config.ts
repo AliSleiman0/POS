@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { defineConfig, devices } from '@playwright/test'
 import { APP_CONNECTION, OWNER_CONNECTION } from './e2e/fixtures/seed'
 
@@ -62,9 +63,11 @@ export default defineConfig({
         ASPNETCORE_URLS: 'http://localhost:5013',
         ConnectionStrings__Postgres: APP_CONNECTION,
         // Supplied rather than taken from user-secrets: CI has none, and a
-        // deploy with no usable signing key must refuse to start (ValidateOnStart).
-        // A throwaway on the same terms as the compose passwords.
-        Jwt__SigningKey: 'e2e-only-signing-key-not-a-secret-0123456789abcdef',
+        // deploy with no usable signing key must refuse to start
+        // (ValidateOnStart). Generated per run rather than written down — no
+        // token minted here outlives the process that made it, and there is
+        // nothing for a scanner to find or for anyone to reuse.
+        Jwt__SigningKey: randomBytes(48).toString('base64url'),
         Jwt__Issuer: 'pos-e2e',
         Jwt__Audience: 'pos-e2e',
       },
