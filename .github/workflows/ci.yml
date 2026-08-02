@@ -89,3 +89,184 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # The generated client is committed so the job above needs no API. This job is
+  # what stops it going stale: it regenerates from the real document and fails if
+  # the result differs from what is in git.
+  #
+  # Without it, a backend contract change nobody regenerated for surfaces as
+  # `undefined` in a money field at runtime — which is exactly the silent drift
+  # that hand-written DTOs are forbidden over.
+  contract:
+    name: API contract (client drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: src/Pos.Web/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/Pos.Web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: src/Pos.Web
+
+      # No database. /openapi/v1.json describes routes and schemas and touches
+      # no data, so the connection string only has to be present — Program.cs
+      # fails fast on a missing one, deliberately, and never opens it here.
+      # The signing key is generated per run rather than written down. Nothing
+      # here mints a token that outlives the job, so there is nothing to reuse
+      # — and no credential-shaped literal in the workflow.
+      - name: Start the API
+        run: |
+          ConnectionStrings__Postgres="Host=localhost;Database=unused;Username=unused;Password=$(openssl rand -base64 24)" \
+          Jwt__SigningKey="$(openssl rand -base64 48)" \
+          Jwt__Issuer=pos-ci Jwt__Audience=pos-ci \
+          ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5013 \
+          dotnet run --project src/Pos.Api --no-launch-profile &
+          timeout 180 bash -c 'until curl -sf http://localhost:5013/openapi/v1.json -o /dev/null; do sleep 2; done'
+
+      - name: Regenerate the client
+        run: pnpm generate:api
+        working-directory: src/Pos.Web
+
+      - name: Fail if it differs from what is committed
+        run: |
+          if ! git diff --exit-code -- src/Pos.Web/src/api/schema.d.ts; then
+            echo "::error::The API contract changed and src/api/schema.d.ts was not regenerated."
+            echo "Run the API locally and 'pnpm --dir src/Pos.Web generate:api', then commit the result."
+            exit 1
+          fi
+
+  e2e:
+    name: e2e (Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/Pos.Web
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: pos
+          POSTGRES_PASSWORD: dev_only_not_a_secret
+          # Deterministic collation, matching docker-compose.yml, so ORDER BY and
+          # unique indexes behave here as they do locally and in production.
+          POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: src/Pos.Web/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/Pos.Web/pnpm-lock.yaml
+
+      # `dotnet ef` is a tool, not part of the SDK. The Playwright config chains
+      # `dotnet ef database update` ahead of the API, so without this the server
+      # command fails with "the specified command or file was not found" and the
+      # whole suite reports as a webServer startup failure. The version is
+      # pinned in .config/dotnet-tools.json so CI and a developer's machine
+      # cannot quietly run different tooling against the same migrations.
+      - name: Restore .NET tools
+        run: dotnet tool restore
+        working-directory: ${{ github.workspace }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Restored and built up front, not left to the first `dotnet run` inside
+      # Playwright's webServer. Two reasons: a compile error there is reported as
+      # "Process from config.webServer was not able to start", which says nothing
+      # about what is actually wrong; and the API has to be listening inside the
+      # readiness timeout, which a cold restore-and-build can eat on its own.
+      # Debug, matching what `dotnet run` and `dotnet ef` use by default — a
+      # Release build here would be discarded and paid for twice.
+      - name: Restore and build
+        run: dotnet build --configuration Debug
+        working-directory: ${{ github.workspace }}
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Chromium only — the projects list has one entry. --with-deps installs the
+      # shared libraries the runner does not ship; it is a Linux flag and hangs
+      # on Windows, where plain `playwright install chromium` is the local
+      # equivalent.
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # A service container cannot run docker/postgres-init/01-app-role.sh — that
+      # script needs a mounted entrypoint directory. The role is created here
+      # instead, on the same terms: NOBYPASSRLS, and the API connects as it.
+      # `pos_e2e` itself is created by `dotnet ef database update`, which the
+      # Playwright config chains ahead of the API.
+      #
+      # Its password is generated per run and handed to the fixtures through the
+      # environment, so the app role's credential exists only for this job. The
+      # service container's own password above has to be a literal — service
+      # `env:` is evaluated before any step runs — and is the same documented
+      # throwaway as docker-compose.yml.
+      - name: Create the pos_app role
+        env:
+          PGPASSWORD: dev_only_not_a_secret
+        run: |
+          APP_PASSWORD="$(openssl rand -base64 24)"
+          echo "::add-mask::$APP_PASSWORD"
+
+          # Piped, not `-c`: psql interpolates :'var' only when reading a script
+          # or stdin, so `-c "... PASSWORD :'pw'"` is a syntax error at the
+          # colon. docker/postgres-init/01-app-role.sh uses a heredoc for the
+          # same reason; stdin is used here because a heredoc's terminator would
+          # have to sit at column 0 inside a YAML block scalar, and `<<-` strips
+          # only tabs. Interpolated rather than concatenated, so psql quotes the
+          # value and it never becomes part of the statement text.
+          printf "%s\n" "CREATE ROLE pos_app WITH LOGIN NOBYPASSRLS PASSWORD :'pw';" \
+            | psql -h localhost -U pos -d postgres -v ON_ERROR_STOP=1 -v pw="$APP_PASSWORD"
+
+          echo "POSTGRES_APP_PASSWORD=$APP_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Run the E2E suite
+        run: pnpm test:e2e
+
+      - name: Upload the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: src/Pos.Web/blob-report
+          retention-days: 7

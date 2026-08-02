@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 3 complete — 846 tests green |
-| **Next up** | Phase 4.1, the web app shell. The API client is generated from OpenAPI, so DTOs cannot drift. |
+| **Current phase** | Phase 4 complete — 854 .NET + 66 Vitest + 11 Playwright green |
+| **Next up** | Phase 5.1, the register screen. It inherits the generated client, the single-flight refresh, the idempotency helper and a re-auth flow that does not unmount the route tree. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-08-02 |
 
@@ -24,7 +24,7 @@
 | 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ✅ Done |
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ✅ Done |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ✅ Done |
-| 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ⬜ Not started |
+| 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ✅ Done |
 | 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ⬜ Not started |
 | 6 | [Receipts & reporting](phases/PHASE-6-receipts-reporting.md) | Receipt render/print, Z-report, sale history | ⬜ Not started |
 | 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log | ⬜ Not started |
@@ -89,10 +89,10 @@ The money phase. All rules live in `Pos.Core` as pure, DB-free logic. Detail: [p
 
 Detail: [phases/PHASE-4-web-shell-catalog.md](phases/PHASE-4-web-shell-catalog.md)
 
-- [ ] **4.1 App shell** — routing, layout, error boundary, TanStack Query, API client **generated from OpenAPI** so DTOs can't drift from the backend.
-- [ ] **4.2 Auth flow** — login, silent refresh, role-aware route guards, cashier PIN swap, session expiry.
-- [ ] **4.3 Catalog UI** — product list/search/create/edit, categories, stock adjustment.
-- [ ] **4.4 Tests** — Vitest on components/hooks; Playwright: login → create product → see it listed.
+- [x] **4.1 App shell** — router, authenticated layout, error boundary, in-page toasts, TanStack Query with two staleness tiers (catalog 60s; anything drawer- or money-adjacent always refetched). `openapi-typescript` + `openapi-fetch`, output committed with a CI drift check. Generating the client found two contract gaps that were invisible from the backend: all five `/auth` handlers returned bare `IResult` so their bodies typed as `never`, and `Idempotency-Key` was enforced but undocumented so no generated client could send it. Both fixed and pinned.
+- [x] **4.2 Auth flow** — access token in memory, refresh token in `sessionStorage` (trade-off in `DECISIONS.md`; the httpOnly-cookie question is deferred to 8.2, which decides the topology). **One** refresh shared by concurrent 401s, because rotation plus revoke-on-reuse turns five parallel refreshes into a logout. An expired session renders a prompt **over** the current route rather than navigating, so Phase 5's cart survives. Device enrolment and PIN swap.
+- [x] **4.3 Catalog UI** — product list on cursor pagination, create/edit mirroring the server's validation, scan-to-add barcodes, categories, tax classes, stock adjustment with a required reason and an idempotency key minted per dialog rather than per attempt. Loading, empty and error states on every list.
+- [x] **4.4 Tests** — 66 Vitest (single-flight refresh, `problem+json` mapping, money, guards, validation) and 11 Playwright specs against a **real API and a real Postgres** in a dedicated `pos_e2e` database. CI gained a contract-drift job and an e2e job. The suite found two real bugs — see below.
 
 ## Phase 5 — Web: register screen
 

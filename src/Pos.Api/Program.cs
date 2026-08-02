@@ -17,7 +17,12 @@ using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+    // The Idempotency-Key header is read by an endpoint filter, not bound as a parameter, so
+    // OpenAPI cannot infer it from any handler signature. Without this the document describes
+    // the money- and stock-moving endpoints as taking no header, and Phase 4.1's generated
+    // client has no typed way to send the one thing that makes a retry safe.
+    options.AddOperationTransformer<IdempotencyOperationTransformer>());
 
 // Enums go over the wire as their names, not their ordinals. Without this a
 // Product.Unit would serialise as 0/1/2 — readable by nobody, and Phase 4.1's
@@ -133,17 +138,23 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 
-if (app.Environment.IsDevelopment())
+// Also in Testing, so a contract test can assert against the *real* document rather than
+// rebuilding an approximation of it. That matters: the document is what the web app's client
+// is generated from, and two gaps in it (untyped auth responses, an undeclared
+// Idempotency-Key header) were both invisible to every test that did not read it.
+// Never in Production — this describes every route to an anonymous caller.
+if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing"))
 {
     // Anonymous, and stated rather than assumed — the endpoint-authorization test treats
     // any endpoint with no authorization metadata as a bug, including this one.
     app.MapOpenApi().AllowAnonymous();
+}
 
+if (app.Environment.IsDevelopment())
+{
     // The document above is JSON and nothing rendered it, so exercising the API by hand
     // meant hand-writing requests. Scalar at /scalar/ is what makes Phase 2.5's
-    // click-through of the catalog possible. Development only: the test host runs in
-    // "Testing", so neither of these is ever routed there — which is also why neither
-    // needs a row in the isolation manifest.
+    // click-through of the catalog possible.
     app.MapScalarApiReference().AllowAnonymous();
 }
 

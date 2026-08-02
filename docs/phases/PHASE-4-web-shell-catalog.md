@@ -20,11 +20,11 @@
 - A fetch wrapper that attaches the access token, retries once after a 401 via silent refresh, and maps `problem+json` to typed errors branching on `type` (not `detail`)
 
 **Exit criteria**
-- [ ] Routing + layout + error boundary
-- [ ] `pnpm generate:api` produces types from the running API's OpenAPI doc
-- [ ] Zero hand-written request/response interfaces
-- [ ] `problem+json` surfaces as readable errors, branching on `type`
-- [ ] TanStack Query configured with sensible staleness (catalog can be stale; a shift's state cannot)
+- [x] Routing + layout + error boundary
+- [x] `pnpm generate:api` produces types from the running API's OpenAPI doc
+- [x] Zero hand-written request/response interfaces
+- [x] `problem+json` surfaces as readable errors, branching on `type`
+- [x] TanStack Query configured with sensible staleness (catalog can be stale; a shift's state cannot)
 
 ## 4.2 Auth flow
 
@@ -38,11 +38,11 @@
 - Session expiry: a clear re-auth prompt that **preserves an in-progress cart**. Losing a half-built basket because a token expired is the kind of thing that gets a POS replaced.
 
 **Exit criteria**
-- [ ] Login, logout, silent refresh
-- [ ] Concurrent 401s trigger exactly one refresh, with a test
-- [ ] Guards hide controls the user's policies don't grant
-- [ ] PIN swap works from an enrolled device
-- [ ] Token expiry mid-cart does not lose the cart
+- [x] Login, logout, silent refresh
+- [x] Concurrent 401s trigger exactly one refresh, with a test
+- [x] Guards hide controls the user's policies don't grant
+- [x] PIN swap works from an enrolled device
+- [x] Token expiry mid-cart does not lose the cart
 
 ## 4.3 Catalog UI
 
@@ -56,11 +56,11 @@
 - `costPrice` and margin fields rendered only with `CanViewMargins` — and absent from the payload anyway (Phase 2.2), so this is defence in depth, not the control
 
 **Exit criteria**
-- [ ] Full product lifecycle through the UI
-- [ ] Multiple barcodes per product, scan-to-add works
-- [ ] Stock adjustment requires a reason in the UI as well as the API
-- [ ] Margin fields hidden for non-Owner
-- [ ] Loading, empty and error states exist for every list (an empty catalog is the first thing a new tenant sees)
+- [x] Full product lifecycle through the UI
+- [x] Multiple barcodes per product, scan-to-add works
+- [x] Stock adjustment requires a reason in the UI as well as the API
+- [x] Margin fields hidden for non-Owner
+- [x] Loading, empty and error states exist for every list (an empty catalog is the first thing a new tenant sees)
 
 ## 4.4 Tests
 
@@ -69,9 +69,9 @@
 - Playwright runs against the real API + Testcontainers Postgres, not mocks. A mocked E2E test proves the frontend agrees with the mock.
 
 **Exit criteria**
-- [ ] `pnpm test` and `pnpm test:e2e` green
-- [ ] E2E runs against a real backend
-- [ ] CI runs both
+- [x] `pnpm test` and `pnpm test:e2e` green
+- [x] E2E runs against a real backend
+- [x] CI runs both
 
 ---
 

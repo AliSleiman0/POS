@@ -36,8 +36,15 @@ docker compose up -d                                   # Postgres + pgAdmin
 dotnet build                                           # warnings are errors
 dotnet test                                            # all .NET tests
 dotnet run --project src/Pos.Api                       # API on :5013 (launchSettings, not ASPNETCORE_URLS)
-# No API docs UI yet — Development serves the raw OpenAPI document at /openapi/v1.json and
-# nothing renders it. Several phase docs say "via Swagger"; that UI has to be added first.
+# Development serves the OpenAPI document at /openapi/v1.json and renders it with Scalar at
+# /scalar/ — that is what phase docs mean when they say "via Swagger". Both are Development-only
+# and anonymous; the test host runs in "Testing", so neither is ever routed there.
+# /openapi/v1.json is also the input to the web app's `pnpm generate:api`, so the API has to be
+# running before regenerating the client.
+# `dotnet ef` is a local tool pinned in .config/dotnet-tools.json, not a global install.
+# Run this once after cloning, or `dotnet ef` is "command not found".
+dotnet tool restore
+
 dotnet ef migrations add <Name> --project src/Pos.Data --startup-project src/Pos.Api
 
 # Migrations connect as the schema OWNER. The app's connection string is pos_app, which

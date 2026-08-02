@@ -88,6 +88,68 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
+- **Refresh token in an `httpOnly` cookie** — deferred to [Phase 8.2](docs/phases/PHASE-8-deployment.md) along with hosting, because the right answer depends on the topology that phase picks. See the Phase 4.2 entry below for what ships until then.
+
+### Resolved 2026-08-02 (during Phase 4)
+
+- **The refresh token lives in `sessionStorage`; the access token lives in memory only.**
+
+  The alternative is an `httpOnly` cookie, and it is genuinely safer against XSS. It is deferred
+  rather than rejected, for a reason that is about sequencing rather than security: the API
+  returns both tokens in the login body today, and the cookie version's shape depends entirely
+  on the deployment topology. Phase 8.2 puts the web app on a static host/CDN and the API in a
+  container — *cross-origin* — which needs `SameSite=None; Secure`, credentialed CORS, and a
+  CSRF story that same-origin would not. Building that now would be guessing at 8.2's answer,
+  and guessing wrong means writing it twice.
+
+  `sessionStorage` rather than `localStorage` is the part that is decided rather than deferred:
+  both are readable by an injected script, but `sessionStorage` dies with the tab, so a shared
+  counter tablet holds no usable refresh token once the browser is closed. The cost is a login
+  after a reboot, which is the right direction to fail for a device sitting on a shop counter.
+
+  What actually limits the damage is server-side and already built: refresh tokens rotate on
+  every use and reuse of a rotated one revokes the whole family. A stolen refresh token is
+  usable only until its owner next refreshes, and the theft then logs both parties out — loudly,
+  rather than granting quiet indefinite access.
+
+- **Concurrent 401s share one refresh.** Not an optimisation. Rotation plus revoke-on-reuse
+  means five parallel refreshes rotate once and replay a spent token four times, which the
+  server correctly reads as a leak — so the naive version signs the cashier out mid-sale. One
+  module-level promise, and `refresh.test.ts` holds five callers open at once to prove it.
+
+- **An expired session prompts *over* the current screen; it does not navigate.** The obvious
+  implementation redirects to `/login`, which unmounts the route tree and takes Phase 5's cart
+  with it. So the session status distinguishes `anonymous` (never signed in → navigate) from
+  `expired` (was signed in → modal on top, screen untouched). Built in Phase 4, where there is
+  nothing to lose yet, precisely so Phase 5 inherits it working.
+
+- **Every endpoint handler returns a `Results<…>` union, never a bare `IResult`.** A contract
+  requirement, not a style preference: OpenAPI infers the response schema from the declared
+  return type, and `Task<IResult>` produces an operation with no response content — which the
+  generated TypeScript client types as `never`. All five `/auth` handlers were like this, so the
+  two calls every client makes first were untyped. `ResponseSchemaContractTests` fails the build
+  on a regression.
+
+- **`Idempotency-Key` is declared in the OpenAPI document by an operation transformer**, driven
+  off the same `IdempotentEndpointMetadata` marker that attaches the filter. The header is read
+  by an endpoint filter rather than bound as a parameter, so nothing told OpenAPI it existed and
+  the generated client had no typed way to send it. `IdempotencyDocumentTests` asserts the two
+  lists agree in both directions.
+
+- **The OpenAPI document is served in Testing as well as Development, and never in Production.**
+  Testing so a contract test can read the real document rather than a rebuilt approximation —
+  an approximation would have agreed with itself and missed both gaps above. Not Production: it
+  is anonymous by necessity and enumerates every route and schema, which is free reconnaissance
+  for no benefit. `OpenApiRoutingTests` pins all three environments.
+
+- **A last-login timestamp is written set-based, not through the change tracker.** `LastLoginAt`
+  went through `UserManager.UpdateAsync`, which checks Identity's `ConcurrencyStamp` and returns
+  a *failed result rather than throwing*. Two simultaneous logins for one account left the user
+  entity `Modified` in the tracker, and the next `SaveChangesAsync` — inserting the refresh
+  token — threw. The login failed with a 500 having already verified the password. A convenience
+  timestamp must never be able to fail a login, so it is an `ExecuteUpdateAsync` that names the
+  row and carries no concurrency token. Found by the Playwright suite running workers in
+  parallel; pinned by `ConcurrentLoginTests`.
 
 ### Resolved 2026-08-02 (during Phase 3.8)
 
@@ -496,9 +558,10 @@ Called out because they are cheap now and expensive-to-impossible later:
 
 ## Current State
 
-**Phases 0 and 1 are complete**, on branch `phase-1/tenancy-auth`. Tenant isolation is built and
-proven at all three layers; Identity, JWT, RBAC and PIN login are in. 133 tests green, the Data and Api
-suites against real Postgres via Testcontainers.
+**Phases 0–4 are complete.** The backend prices, tenders and commits a cash sale exactly once
+behind three layers of tenant isolation, and a real user can now log in through a browser and
+manage their catalog. 854 .NET tests, 66 Vitest and 11 Playwright specs — the last against a
+real API and a real Postgres, not mocks.
 
-Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 2, and read
+Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 5, the register screen, and read
 [`docs/HANDOFF.md`](docs/HANDOFF.md) first for session state.

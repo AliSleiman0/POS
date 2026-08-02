@@ -1,6 +1,10 @@
 {
   "files": [],
-  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.e2e.json" }
+  ],
   "compilerOptions": {
     /* Not used for compilation — `files: []` means this config builds nothing.
        It exists so tooling that reads the ROOT tsconfig (shadcn/ui's alias

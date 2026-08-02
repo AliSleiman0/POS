@@ -36,5 +36,9 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "e2e"]
+  /* `src` only. The Playwright specs are a separate project (tsconfig.e2e.json)
+     because they run in Node and need its globals — and app code must NOT have
+     `process` or `node:fs` in scope, since anything reaching for them here
+     would compile and then fail in a browser. */
+  "include": ["src"]
 }
