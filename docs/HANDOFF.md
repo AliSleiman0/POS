@@ -2,7 +2,7 @@
 
 **Written:** 2026-08-02 · **Branch:** `phase-4/web-shell-catalog` · **Phase 4 complete — start Phase 5.1**
 
-> A real user logs in through a browser and manages their catalog. **854 .NET tests, 66 Vitest, 11 Playwright** — the last against a real API and a real Postgres in a dedicated `pos_e2e` database, not mocks. Release build warning-free with `$env:CI="true"`; `pnpm lint`, `format:check`, `build` and `test` all clean.
+> A real user logs in through a browser and manages their catalog. **854 .NET tests, 66 Vitest, 11 Playwright** — the last against a real API and a real Postgres in a dedicated `pos_e2e` database, not mocks. **All four CI jobs green** (run 30747058123): `backend`, `frontend`, `contract` and `e2e`.
 >
 > **Generating the API client found two contract gaps and the E2E suite found two real bugs.** None of the four was visible from the backend, and all four are now pinned by tests. They are the most useful thing in this document — see [What the client and the browser found](#what-the-client-and-the-browser-found).
 
@@ -16,12 +16,23 @@
 
 ## State
 
-Two commits on `phase-4/web-shell-catalog`, branched from `phase-3/checkout-sales`:
+Four commits on `phase-4/web-shell-catalog`, branched from `phase-3/checkout-sales`:
 
 ```
 d373824  4.1–4.3  app shell, generated client, auth flow and catalog UI
-<next>   4.4      tests, CI jobs, and the two bugs the suite found
+547f108  4.4      tests, CI jobs, and the two bugs the suite found
+60c7d53  4.4      pin dotnet-ef in a tool manifest so CI can run the migration
+af91a39  4.4      restore and build before the e2e suite runs
 ```
+
+The last two are CI-only failures worth knowing about, because both were
+invisible locally — this machine had state the runner does not:
+
+- **`dotnet ef` is a tool, not part of the SDK.** It was installed globally here.
+  Now pinned in `.config/dotnet-tools.json`; run `dotnet tool restore` after cloning.
+- **The `e2e` job had never restored NuGet packages.** Both surfaced as
+  "Process from config.webServer was not able to start", which names nothing —
+  the job now builds up front so a compile failure is reported as a build failure.
 
 **Phase 3's CI was already green** — PR #8, both the push and pull_request runs. The previous handoff's "CI has not run" was stale by the time this session started.
 
@@ -123,8 +134,9 @@ Everything below was driven in a real browser, because jsdom does not paint.
 
 ## Outstanding / deferred
 
-- **CI has not run on this branch yet.** Push and open the PR; the two new jobs (`contract`, `e2e`) have only ever run locally. Do that before calling Phase 4 done.
+- **No PR is open for this branch yet**, and it is stacked on `phase-3/checkout-sales` (PR #8, still open against `main`). Merge order matters.
 - **The `e2e` CI job creates the `pos_app` role in a step**, because a service container cannot run `docker/postgres-init/01-app-role.sh` — that needs a mounted entrypoint directory.
+- **The `e2e` job builds in Debug**, matching what `dotnet run` and `dotnet ef` use. The `backend` job builds Release separately; the two do not share a cache beyond NuGet.
 - **`auth/policies.ts` is a hand-written list** and can drift from `PolicyCatalog`. Nothing in the type system catches it; the Playwright authorization specs do, which is stated in the file.
 - **Existing dev databases carry stock drift.** `tools/Pos.Seed` used to write stock rows with an opening balance and no matching movement. Fixed for fresh seeds; an existing one needs the opening receipts adding by hand. **Do not "fix" it with `RebuildOnHand`** — that discards the seeded opening stock. E2E sidesteps it with a fresh `pos_e2e`.
 - **No audit log.** Phase 7.2. Price overrides are recorded on the sale line; a *rejected* attempt is recorded nowhere. `docs/API.md` now says so.
