@@ -1,8 +1,8 @@
 # Session Handoff
 
-**Written:** 2026-08-02 · **Branch:** `phase-5/web-register` (not pushed, not committed) · **Phase 5.1 and 5.2 done — start 5.3**
+**Written:** 2026-08-02 · **Branch:** `phase-5/web-register`, open as **PR #11** · **Phase 5.1 and 5.2 done — start 5.3**
 
-> A cashier can open the drawer, scan items with a wedge scanner, build a cart the server prices, and drive the whole screen from the keyboard. **854 .NET · 101 Vitest · 18 Playwright**, all green locally. **CI has not run on this branch** — nothing is pushed. See [Before anything else](#before-anything-else).
+> A cashier can open the drawer, scan items with a wedge scanner, build a cart the server prices, and drive the whole screen from the keyboard. **854 .NET · 101 Vitest · 18 Playwright**, all four CI jobs green on the PR.
 >
 > The open defect the last session flagged — a network blip signing the till out — **is fixed and verified in a browser.**
 
@@ -12,13 +12,9 @@
 
 ## Before anything else
 
-**The work is uncommitted on `phase-5/web-register`.** `git status` lists 14 modified and 7 new files. Nothing has been committed, pushed, or seen by CI, so "green" above means "green on this machine". The roadmap's own rule is that a phase is not done until CI says so — commit, push, and let the four jobs run before building on 5.3.
+**PR #11 is green and unmerged.** Two commits: the auth fix on its own (it stands alone and is worth bisecting to), then the phase. Merge it before building on 5.3.
 
-Two things to expect from CI specifically:
-
-- `format:check` and `lint` are separate jobs from `test`. Both pass locally (`pnpm exec prettier --check`, `pnpm exec oxlint`).
-- **One unexplained Vitest timeout was seen once**, on a machine that was simultaneously running the API, the dev server and a Playwright browser; it did not reproduce in five subsequent runs and the failing test's name was lost. The three async waits in `AuthProvider.test.tsx` were given 5s instead of testing-library's 1s default as a result, since they are the ones that wait on a fetch plus an effect. If CI produces a timeout, that is the first place to look — and this time, write down which test it was.
-- The `contract` job regenerates `schema.d.ts` from the running API. **No backend file changed this session**, so there is nothing for it to find — but that also means it has never run against this branch.
+One thing worth carrying forward: **an unexplained Vitest timeout was seen once locally**, on a machine simultaneously running the API, the dev server and a Playwright browser. It did not reproduce in five subsequent runs, CI has not shown it, and the failing test's name was lost. The three async waits in `AuthProvider.test.tsx` were given 5s instead of testing-library's 1s default as a result, since they are the ones waiting on a fetch plus an effect. If a timeout appears, look there first — and this time write down which test it was.
 
 ---
 
