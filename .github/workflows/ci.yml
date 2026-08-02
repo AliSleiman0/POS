@@ -247,9 +247,17 @@ jobs:
         run: |
           APP_PASSWORD="$(openssl rand -base64 24)"
           echo "::add-mask::$APP_PASSWORD"
-          psql -h localhost -U pos -d postgres -v ON_ERROR_STOP=1 \
-            -v pw="$APP_PASSWORD" \
-            -c "CREATE ROLE pos_app WITH LOGIN NOBYPASSRLS PASSWORD :'pw';"
+
+          # Piped, not `-c`: psql interpolates :'var' only when reading a script
+          # or stdin, so `-c "... PASSWORD :'pw'"` is a syntax error at the
+          # colon. docker/postgres-init/01-app-role.sh uses a heredoc for the
+          # same reason; stdin is used here because a heredoc's terminator would
+          # have to sit at column 0 inside a YAML block scalar, and `<<-` strips
+          # only tabs. Interpolated rather than concatenated, so psql quotes the
+          # value and it never becomes part of the statement text.
+          printf "%s\n" "CREATE ROLE pos_app WITH LOGIN NOBYPASSRLS PASSWORD :'pw';" \
+            | psql -h localhost -U pos -d postgres -v ON_ERROR_STOP=1 -v pw="$APP_PASSWORD"
+
           echo "POSTGRES_APP_PASSWORD=$APP_PASSWORD" >> "$GITHUB_ENV"
 
       - name: Run the E2E suite
