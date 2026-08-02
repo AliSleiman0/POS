@@ -7,6 +7,7 @@ import {
   parseServerDecimal,
   provisionalLineTotal,
   provisionalSubtotal,
+  toMinorUnits,
 } from './money'
 
 describe('formatMoney', () => {
@@ -105,5 +106,25 @@ describe('provisional minor-unit arithmetic', () => {
   it('rejects a non-integer unit price, which would mean a float slipped in', () => {
     expect(() => provisionalLineTotal(12.99, 1)).toThrow(TypeError)
     expect(() => formatMinorUnits(12.5, 'GBP', 'en-GB')).toThrow(TypeError)
+  })
+})
+
+describe('toMinorUnits', () => {
+  it('converts a server decimal for display arithmetic', () => {
+    expect(toMinorUnits(1.2)).toBe(120)
+    expect(toMinorUnits('12.95')).toBe(1295)
+    expect(toMinorUnits(0)).toBe(0)
+  })
+
+  it('rounds the fourth decimal place the catalog stores away', () => {
+    // A paper bag really costs 0.1650. The provisional display says 17p; the
+    // server prices the real figure and its answer is the one a customer pays.
+    expect(toMinorUnits(0.165)).toBe(17)
+    expect(Number.isInteger(toMinorUnits(0.165))).toBe(true)
+  })
+
+  it('refuses a value that is not a decimal at all', () => {
+    expect(() => toMinorUnits('')).toThrow(TypeError)
+    expect(() => toMinorUnits('1e3')).toThrow(TypeError)
   })
 })

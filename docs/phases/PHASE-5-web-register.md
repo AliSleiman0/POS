@@ -20,10 +20,12 @@ Three regions: **cart** (left, the focus), **keypad + total + tender** (right), 
 - Shift state visible; opening a shift is the first action of the day and must be obvious rather than buried in a menu
 
 **Exit criteria**
-- [ ] Layout works at tablet and desktop widths
-- [ ] Every action reachable by keyboard
-- [ ] Total legible from a metre away
-- [ ] Shift state visible; open-shift prompt when none is open
+- [x] Layout works at tablet and desktop widths — two columns at `lg`, stacked below; screenshotted at 1280×900 and 834×1112
+- [x] Every action reachable by keyboard — ↑/↓ select, `+`/`−` step, digits then Enter set a quantity, `Delete` voids, `F2` focuses the search. Printable characters belong to the scan/keypad buffer, so the shortcuts are keys a barcode cannot contain
+- [x] Total legible from a metre away — `text-5xl`, and it is the server's figure from `POST /sales/quote`, not a client sum
+- [x] Shift state visible; open-shift prompt when none is open — in the right-hand column where the tender panel will be, not in a menu
+
+> **Pulled forward from 5.3:** the quote round trip and keypad quantity entry. A "total displayed prominently" that was a client-side guess would have been the wrong foundation. Line discount, price override and the manager-override flow stay in 5.3.
 
 ## 5.2 Scan input
 
@@ -39,11 +41,16 @@ A barcode wedge scanner types the code and presses Enter — it is indistinguish
 - Audible/visual feedback on a successful scan. Staff do not look at the screen between items; without feedback they cannot tell a miss from a hit.
 
 **Exit criteria**
-- [ ] Scan works with nothing focused
-- [ ] Manual entry unaffected while focused
-- [ ] Duplicate double-fire suppressed, with a test
-- [ ] Unknown code is non-blocking
-- [ ] Feedback on every scan, success or failure
+- [x] Scan works with nothing focused — a `keydown` listener on `document`, active whenever the session is live
+- [x] Manual entry unaffected while focused — `isEditableTarget` stands the handler down for input/textarea/select/contenteditable. Pinned by an e2e test that dispatches a machine-paced burst at the focused field; typing alone did **not** pin it (see below)
+- [x] Duplicate double-fire suppressed, with a test — 300ms from the previous scan's *start*, so transmission time does not eat the window
+- [x] Unknown code is non-blocking — an in-page banner offering "search for it", no dialog, no `alert()`
+- [x] Feedback on every scan, success or failure — a synthesised beep (high on a hit, low on a miss) plus a flash on the affected line, with a mute toggle
+
+**Two things this milestone got wrong first, both found by driving it rather than by reasoning:**
+
+1. **Per-gap timing splits codes.** The first implementation started a new buffer whenever two keystrokes were more than 60ms apart. The frame that renders the *previous* scan runs exactly when the next one arrives, so a real scan lost its leading digit and the register looked up `099999000011` — a code nobody scanned, which could match another product. The rule is now a budget over the whole burst: `maxIntervalMs` per character *on average*. One stalled frame is survivable; a person typing the same string is an order of magnitude over.
+2. **A mis-timed scan became a quantity.** When a burst failed the pacing test it fell through to the keypad, and `5099999000011` clamped to the maximum quantity — 9,999 bottles of water. A manual entry above `MAX_LINE_QUANTITY` is now refused outright with "that looked like a barcode, not a quantity", and nothing changes.
 
 ## 5.3 Cart interactions
 

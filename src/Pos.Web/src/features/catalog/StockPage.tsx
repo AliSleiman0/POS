@@ -19,7 +19,7 @@ export function StockPage() {
   const rows = stock.data?.pages.flatMap((page) => page.items) ?? []
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6">
+    <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6">
       <header>
         <h1 className="text-xl font-semibold text-foreground">Stock</h1>
         <p className="mt-1 text-sm text-muted-foreground">

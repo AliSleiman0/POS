@@ -183,24 +183,32 @@ export function ProductDetailPage() {
     }
   }
 
+  // The padding lives on the page rather than on the layout's <main>, so these
+  // early returns bring their own — see AppLayout.
   if (!isNew && existing.isPending) {
-    return <LoadingState label="Loading the product…" />
+    return (
+      <div className="p-6">
+        <LoadingState label="Loading the product…" />
+      </div>
+    )
   }
 
   if (!isNew && existing.isError) {
     return (
-      <ErrorState
-        error={existing.error}
-        onRetry={() => {
-          void existing.refetch()
-        }}
-        title="Could not load that product."
-      />
+      <div className="p-6">
+        <ErrorState
+          error={existing.error}
+          onRetry={() => {
+            void existing.refetch()
+          }}
+          title="Could not load that product."
+        />
+      </div>
     )
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-8">
+    <div className="mx-auto flex max-w-2xl flex-col gap-8 p-6">
       <header className="flex items-center justify-between gap-4">
         <div>
           <Link

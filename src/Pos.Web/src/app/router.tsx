@@ -11,6 +11,7 @@ import { ProductDetailPage } from '@/features/catalog/ProductDetailPage'
 import { ProductListPage } from '@/features/catalog/ProductListPage'
 import { TaxClassesPage } from '@/features/catalog/TaxClassesPage'
 import { StockPage } from '@/features/catalog/StockPage'
+import { RegisterPage } from '@/features/register/RegisterPage'
 
 /**
  * Routes.
@@ -41,6 +42,17 @@ export const router = createBrowserRouter([
         element: <AppLayout />,
         children: [
           { index: true, element: <OverviewPage /> },
+
+          {
+            // The till. Inside `AppLayout` so the cart, which lives above the
+            // outlet, is not remounted when a cashier looks something up.
+            path: 'register',
+            element: (
+              <RequirePolicy policy="CanSell">
+                <RegisterPage />
+              </RequirePolicy>
+            ),
+          },
 
           {
             path: 'catalog',

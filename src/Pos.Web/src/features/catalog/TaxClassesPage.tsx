@@ -63,7 +63,7 @@ export function TaxClassesPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
       <header>
         <h1 className="text-xl font-semibold text-foreground">Tax classes</h1>
         <p className="mt-1 text-sm text-muted-foreground">
