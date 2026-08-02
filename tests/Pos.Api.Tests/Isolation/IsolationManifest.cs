@@ -743,6 +743,18 @@ public static class IsolationManifest
             Kind = IsolationKind.Exempt,
             Exemption = "Readiness only. Opens a connection but reads no tenant-owned row.",
         },
+        new()
+        {
+            Key = "GET openapi/{documentName}.json",
+            Kind = IsolationKind.Exempt,
+            Exemption = "The API's own description. Routed in Development and Testing only — "
+                      + "never in Production, which is asserted by "
+                      + "OpenApiRoutingTests.The_document_is_not_served_outside_development_and_testing. "
+                      + "It contains no tenant-owned data of any kind: it describes routes and "
+                      + "schemas, and the same bytes are served to every caller. Routed in Testing "
+                      + "so IdempotencyDocumentTests and the CI drift check can assert against the "
+                      + "real document rather than a rebuilt approximation of it.",
+        },
     ];
 
     public static IReadOnlyDictionary<string, IsolationCase> ByKey { get; } =

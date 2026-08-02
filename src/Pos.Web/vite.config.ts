@@ -21,12 +21,16 @@ export default defineConfig({
       // Proxy the API in development so the browser sees a single origin.
       // Avoids CORS locally and keeps cookie-based refresh tokens same-site,
       // which is how production behaves behind one domain.
+      // Port 5013 is what src/Pos.Api/Properties/launchSettings.json binds, and
+      // `dotnet run` reads that file rather than ASPNETCORE_URLS. Use the `http`
+      // profile: the `https` one also binds 7091, which switches
+      // UseHttpsRedirection on and 307s every proxied request out of the proxy.
       '/api': {
-        target: 'http://localhost:5199',
+        target: 'http://localhost:5013',
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:5199',
+        target: 'http://localhost:5013',
         changeOrigin: true,
       },
     },

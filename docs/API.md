@@ -218,7 +218,7 @@ The endpoint that must not get this wrong.
 Semantics:
 
 - **The server computes every amount.** There is nowhere to put a total: the request has no such field. A price a client can send is a price a customer can edit.
-- `unitPriceOverride` requires `CanOverridePrice`; `discountAmount`/`cartDiscountAmount` require `CanApplyDiscount`. A Cashier sending them gets `403` — **refused, not ignored**, unlike an unreadable `costPrice`, because this changes what the customer pays. The override is recorded on the sale line as `isPriceOverridden` + `overriddenBy`; **there is no audit log yet** (Phase 7.2), so API.md's older claim that "the attempt is audited" is not yet true.
+- `unitPriceOverride` requires `CanOverridePrice`; `discountAmount`/`cartDiscountAmount` require `CanApplyDiscount`. A Cashier sending them gets `403` — **refused, not ignored**, unlike an unreadable `costPrice`, because this changes what the customer pays. The override is recorded on the sale line as `isPriceOverridden` + `overriddenBy`, and **that line is the whole trail** — there is no audit log until Phase 7.2, so a *rejected* attempt is currently recorded nowhere.
 - Sale insert, lines, tenders, stock movements, discrepancies and the sale-number assignment happen in **one transaction**. Either all of it lands or none.
 - **Insufficient stock does not block the sale.** The customer is standing there holding the item; refusing to sell it is the wrong behaviour. The sale completes, stock goes negative, and a discrepancy is flagged for review (per `DECISIONS.md`).
 - The **cashier is taken from the token**, never the body. A caller able to supply it could attribute a sale — and a price override — to a colleague.

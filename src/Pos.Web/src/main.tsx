@@ -1,21 +1,15 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { RouterProvider } from 'react-router'
 import './index.css'
-import App from './App.tsx'
+import { createQueryClient } from './app/queryClient'
+import { ErrorBoundary } from './app/ErrorBoundary'
+import { router } from './app/router'
+import { AuthProvider } from './auth/AuthProvider'
+import { ToastProvider } from './components/toast'
 
-// Server state lives in TanStack Query; local UI state in React. No global
-// store for data the server owns — see CLAUDE.md.
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // A POS sits open on one screen for a whole shift. Refetching on every
-      // window focus hammers the API from an idle till for no benefit.
-      refetchOnWindowFocus: false,
-      staleTime: 30_000,
-    },
-  },
-})
+const queryClient = createQueryClient()
 
 // The template used `document.getElementById('root')!`. CLAUDE.md forbids a
 // bare `!` without justification, and this one is avoidable: a missing root
@@ -25,10 +19,20 @@ if (!container) {
   throw new Error("Root element '#root' was not found in index.html")
 }
 
+// Provider order is load-bearing. AuthProvider uses TanStack Query for
+// `/auth/me`, so it is inside QueryClientProvider; the router's screens use
+// both plus toasts, so it is innermost. The outermost ErrorBoundary catches a
+// crash in the providers themselves, which the in-layout one cannot.
 createRoot(container).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <AuthProvider>
+            <RouterProvider router={router} />
+          </AuthProvider>
+        </ToastProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )

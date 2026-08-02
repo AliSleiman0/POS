@@ -27,6 +27,19 @@ public sealed record TenantSettings(string Slug, string Name, string CurrencyCod
 
 public sealed record MeResponse(AuthUser User, TenantSettings Tenant);
 
+/// <remarks>
+/// Every handler below returns a <c>Results&lt;…&gt;</c> union rather than a bare
+/// <c>IResult</c>, and that is a contract requirement rather than a style preference.
+/// OpenAPI infers a response schema from the declared return type; a handler typed
+/// <c>Task&lt;IResult&gt;</c> produces an operation with <b>no response content at all</b>, and
+/// Phase 4.1's generated TypeScript client then types the login and <c>/me</c> bodies as
+/// <c>never</c> — so the one screen every user meets first would have had to be written against
+/// hand-written DTOs, which CLAUDE.md forbids precisely because they drift.
+/// <para>
+/// <c>ResponseSchemaContractTests.Every_endpoint_that_returns_a_body_declares_its_schema</c> fails the build if a
+/// handler here reverts to <c>IResult</c>.
+/// </para>
+/// </remarks>
 public static class AuthEndpoints
 {
     /// <summary>
@@ -68,7 +81,7 @@ public static class AuthEndpoints
         return builder;
     }
 
-    private static async Task<IResult> LoginAsync(
+    private static async Task<Results<Ok<AuthResponse>, ProblemHttpResult>> LoginAsync(
         LoginRequest request,
         AppDbContext db,
         AmbientTenantContext tenantContext,
@@ -122,7 +135,7 @@ public static class AuthEndpoints
         return TypedResults.Ok(await BuildAuthResponseAsync(tokens, user, registerId: null, cancellationToken));
     }
 
-    private static async Task<IResult> PinLoginAsync(
+    private static async Task<Results<Ok<AuthResponse>, ProblemHttpResult>> PinLoginAsync(
         PinLoginRequest request,
         HttpContext http,
         AppDbContext db,
@@ -187,7 +200,7 @@ public static class AuthEndpoints
         return TypedResults.Ok(await BuildAuthResponseAsync(tokens, user, registerId, cancellationToken));
     }
 
-    private static async Task<IResult> RefreshAsync(
+    private static async Task<Results<Ok<AuthResponse>, ProblemHttpResult>> RefreshAsync(
         RefreshRequest request,
         TokenService tokens,
         CancellationToken cancellationToken)
@@ -210,7 +223,7 @@ public static class AuthEndpoints
             ToAuthUser(result.User!, role)));
     }
 
-    private static async Task<IResult> LogoutAsync(
+    private static async Task<NoContent> LogoutAsync(
         LogoutRequest request,
         AppDbContext db,
         TokenService tokens,
@@ -245,7 +258,7 @@ public static class AuthEndpoints
         return TypedResults.NoContent();
     }
 
-    private static async Task<IResult> MeAsync(
+    private static async Task<Results<Ok<MeResponse>, UnauthorizedHttpResult>> MeAsync(
         AppDbContext db,
         UserManager<ApplicationUser> users,
         TokenService tokens,
