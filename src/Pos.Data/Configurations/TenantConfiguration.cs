@@ -31,6 +31,13 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
             "ck_tenant_slug_format",
             "slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'"));
 
+        // Zero means "no cash rounding", which is the default and the common case. Negative
+        // would invert the rounding direction and silently move every cash total the wrong
+        // way, so the column refuses it rather than trusting whatever wrote the row.
+        builder.ToTable(t => t.HasCheckConstraint(
+            "ck_tenant_cash_rounding_increment_range",
+            "cash_rounding_increment >= 0"));
+
         builder.Property(t => t.BusinessDayStartOffset).HasColumnType("interval");
 
         builder.Property(t => t.IsActive).HasDefaultValue(true);

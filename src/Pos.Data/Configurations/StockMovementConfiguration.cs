@@ -31,9 +31,26 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
             .OnDelete(DeleteBehavior.Restrict)
             .HasConstraintName("fk_stock_movement_product");
 
+        // Added in 3.3, when there was finally something to point at. Until then SaleId was a
+        // bare Guid? with no relationship behind it, and that is the trap: an unconstrained
+        // column is invisible to TenantModelTests.Every_tenant_scoped_relationship_carries_
+        // the_tenant_in_its_foreign_key, which only inspects foreign keys that exist. Nothing
+        // would have failed if this were forgotten — a sale movement could name any sale, in
+        // any tenant, and the ledger would stop reconciling with the takings.
+        builder.HasOne<Sale>()
+            .WithMany()
+            .HasPrincipalKey(s => new { s.TenantId, s.Id })
+            .HasForeignKey(m => new { m.TenantId, m.SaleId })
+            .OnDelete(DeleteBehavior.Restrict)
+            .HasConstraintName("fk_stock_movement_sale");
+
         // "This product's ledger, oldest first" — the paged endpoint and the rebuild both
         // walk it in exactly this order, so the index serves the filter and the sort at once.
         builder.HasIndex(m => new { m.TenantId, m.ProductId, m.OccurredAt })
             .HasDatabaseName("ix_stock_movement_tenant_product_occurred");
+
+        // "Which movements did this sale write?" — what a void reads to compensate them.
+        builder.HasIndex(m => new { m.TenantId, m.SaleId })
+            .HasDatabaseName("ix_stock_movement_tenant_sale");
     }
 }

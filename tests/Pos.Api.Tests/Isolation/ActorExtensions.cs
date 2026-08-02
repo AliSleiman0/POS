@@ -67,6 +67,13 @@ public static class ActorExtensions
         return testCase.Method switch
         {
             "GET" => client.GetAsync(new Uri(url, UriKind.Relative)),
+
+            // A fresh key on every 🔒 route, so the probe reaches the handler instead of
+            // being turned away with a 400 on the header — which would make a by-id theory
+            // expecting 404 pass for the wrong reason.
+            "POST" when testCase.Idempotent =>
+                client.PostIdempotentAsync(url, testCase.Body?.Invoke(world) ?? new { }),
+
             "POST" => client.PostAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
             "PUT" => client.PutAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
 

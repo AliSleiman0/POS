@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Pos.Core.Entities;
 using Pos.Core.Tenancy;
 using Pos.Data;
+using Pos.Core.Monetary;
 
 namespace Pos.Api.Tests.Infrastructure;
 
@@ -145,8 +146,8 @@ public static class CatalogFixture
                 Name = WaterName,
                 CategoryId = grocery.Id,
                 TaxClassId = standard.Id,
-                UnitPrice = 1.2000m,
-                CostPrice = WaterCostPrice,
+                UnitPrice = (Money)1.2000m,
+                CostPrice = (Money)WaterCostPrice,
             };
 
             var coffee = new Product
@@ -155,8 +156,8 @@ public static class CatalogFixture
                 Name = CoffeeName,
                 CategoryId = cheese.Id,
                 TaxClassId = standard.Id,
-                UnitPrice = 4.5000m,
-                CostPrice = CoffeeCostPrice,
+                UnitPrice = (Money)4.5000m,
+                CostPrice = (Money)CoffeeCostPrice,
             };
 
             // No category, no cost, no stock tracking. The awkward row: it is what proves a
@@ -167,7 +168,7 @@ public static class CatalogFixture
                 Sku = BagSku,
                 Name = BagName,
                 TaxClassId = zero.Id,
-                UnitPrice = 0.1650m,
+                UnitPrice = (Money)0.1650m,
                 TrackStock = false,
             };
 

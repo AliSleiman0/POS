@@ -5,6 +5,7 @@ using Pos.Core.Exceptions;
 using Pos.Core.Inventory;
 using Pos.Data.Tests.Catalog;
 using Pos.Data.Tests.Infrastructure;
+using Pos.Core.Monetary;
 
 namespace Pos.Data.Tests.Inventory;
 
@@ -91,7 +92,7 @@ public sealed class StockLedgerTests(PostgresFixture postgres)
             Sku = "SKU-NO-STOCK-ROW",
             Name = "Newly listed",
             TaxClassId = catalog.TaxClassId,
-            UnitPrice = 3m,
+            UnitPrice = (Money)3m,
         };
 
         scoped.Db.Products.Add(fresh);

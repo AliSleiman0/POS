@@ -80,6 +80,74 @@ namespace Pos.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Pos.Core.Entities.CashMovement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<Guid>("PerformedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("performed_by");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("ShiftId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("shift_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("type");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_cash_movement");
+
+                    b.HasIndex("TenantId", "ShiftId", "OccurredAt")
+                        .HasDatabaseName("ix_cash_movement_tenant_shift_occurred");
+
+                    b.ToTable("cash_movement", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_cash_movement_reason_length", "length(\"reason\") <= 200");
+
+                            t.HasCheckConstraint("ck_cash_movement_type_allowed", "\"type\" IN ('Drop', 'Payout', 'PettyCash', 'Correction')");
+                        });
+                });
+
             modelBuilder.Entity("Pos.Core.Entities.Category", b =>
                 {
                     b.Property<Guid>("Id")
@@ -141,6 +209,75 @@ namespace Pos.Data.Migrations
                     b.ToTable("category", null, t =>
                         {
                             t.HasCheckConstraint("ck_category_name_length", "length(\"name\") <= 100");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.IdempotencyRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("endpoint");
+
+                    b.Property<Guid>("Key")
+                        .HasColumnType("uuid")
+                        .HasColumnName("key");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("request_hash");
+
+                    b.Property<string>("ResponseBody")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("response_body");
+
+                    b.Property<int>("ResponseStatus")
+                        .HasColumnType("integer")
+                        .HasColumnName("response_status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_idempotency_record");
+
+                    b.HasIndex("TenantId", "Key")
+                        .IsUnique()
+                        .HasDatabaseName("ux_idempotency_record_tenant_key");
+
+                    b.ToTable("idempotency_record", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_idempotency_record_endpoint_length", "length(\"endpoint\") <= 200");
+
+                            t.HasCheckConstraint("ck_idempotency_record_request_hash_length", "length(\"request_hash\") <= 64");
                         });
                 });
 
@@ -381,6 +518,9 @@ namespace Pos.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_register");
 
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_register_tenant_id_id");
+
                     b.HasIndex("TenantId", "DeviceTokenHash")
                         .IsUnique()
                         .HasDatabaseName("ux_register_tenant_device_token_hash")
@@ -392,6 +532,477 @@ namespace Pos.Data.Migrations
 
                             t.HasCheckConstraint("ck_register_name_length", "length(\"name\") <= 80");
                         });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.Sale", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("CashierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cashier_id");
+
+                    b.Property<Guid>("ClientTransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_transaction_id");
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<decimal>("DiscountTotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("discount_total");
+
+                    b.Property<Guid?>("OriginalSaleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("original_sale_id");
+
+                    b.Property<string>("RefundReason")
+                        .HasColumnType("text")
+                        .HasColumnName("refund_reason");
+
+                    b.Property<Guid>("RegisterId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("register_id");
+
+                    b.Property<decimal>("RoundingAdjustment")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("rounding_adjustment");
+
+                    b.Property<long>("SaleNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("sale_number");
+
+                    b.Property<Guid>("ShiftId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("shift_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("subtotal");
+
+                    b.Property<string>("TaxMode")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("tax_mode");
+
+                    b.Property<decimal>("TaxTotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("tax_total");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("total");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("type");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<string>("VoidReason")
+                        .HasColumnType("text")
+                        .HasColumnName("void_reason");
+
+                    b.Property<DateTimeOffset?>("VoidedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("voided_at");
+
+                    b.Property<Guid?>("VoidedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("voided_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_sale");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_sale_tenant_id_id");
+
+                    b.HasIndex("TenantId", "ClientTransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_sale_tenant_client_transaction_id");
+
+                    b.HasIndex("TenantId", "CompletedAt")
+                        .HasDatabaseName("ix_sale_tenant_completed_at");
+
+                    b.HasIndex("TenantId", "OriginalSaleId")
+                        .HasDatabaseName("ix_sale_tenant_original");
+
+                    b.HasIndex("TenantId", "RegisterId")
+                        .HasDatabaseName("ix_sale_tenant_id_register_id");
+
+                    b.HasIndex("TenantId", "SaleNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_sale_tenant_sale_number");
+
+                    b.HasIndex("TenantId", "ShiftId")
+                        .HasDatabaseName("ix_sale_tenant_shift");
+
+                    b.ToTable("sale", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_sale_refund_reason_length", "length(\"refund_reason\") <= 200");
+
+                            t.HasCheckConstraint("ck_sale_status_allowed", "\"status\" IN ('Completed', 'Voided')");
+
+                            t.HasCheckConstraint("ck_sale_tax_mode_allowed", "\"tax_mode\" IN ('Inclusive', 'Exclusive')");
+
+                            t.HasCheckConstraint("ck_sale_type_allowed", "\"type\" IN ('Sale', 'Refund')");
+
+                            t.HasCheckConstraint("ck_sale_void_reason_length", "length(\"void_reason\") <= 200");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.SaleLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("description");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("discount_amount");
+
+                    b.Property<bool>("IsPriceOverridden")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_price_overridden");
+
+                    b.Property<int>("LineNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("line_number");
+
+                    b.Property<decimal>("LineSubtotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("line_subtotal");
+
+                    b.Property<decimal>("LineTax")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("line_tax");
+
+                    b.Property<decimal>("LineTotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("line_total");
+
+                    b.Property<Guid?>("OriginalSaleLineId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("original_sale_line_id");
+
+                    b.Property<Guid?>("OverriddenBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("overridden_by");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("quantity");
+
+                    b.Property<Guid>("SaleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sale_id");
+
+                    b.Property<decimal>("TaxRate")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("tax_rate");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("unit_price");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_sale_line");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_sale_line_tenant_id_id");
+
+                    b.HasIndex("TenantId", "OriginalSaleLineId")
+                        .HasDatabaseName("ix_sale_line_tenant_original");
+
+                    b.HasIndex("TenantId", "ProductId")
+                        .HasDatabaseName("ix_sale_line_tenant_id_product_id");
+
+                    b.HasIndex("TenantId", "SaleId")
+                        .HasDatabaseName("ix_sale_line_tenant_sale");
+
+                    b.HasIndex("TenantId", "SaleId", "LineNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_sale_line_tenant_sale_line_number");
+
+                    b.ToTable("sale_line", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_sale_line_description_length", "length(\"description\") <= 200");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.SaleSequence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<long>("LastNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_number");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_sale_sequence");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_sale_sequence_tenant");
+
+                    b.ToTable("sale_sequence", (string)null);
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.Shift", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("closed_at");
+
+                    b.Property<Guid?>("ClosedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("closed_by");
+
+                    b.Property<decimal?>("CountedCash")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("counted_cash");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<decimal?>("ExpectedCash")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("expected_cash");
+
+                    b.Property<DateTimeOffset>("OpenedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("opened_at");
+
+                    b.Property<Guid>("OpenedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("opened_by");
+
+                    b.Property<decimal>("OpeningFloat")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("opening_float");
+
+                    b.Property<Guid>("RegisterId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("register_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<decimal?>("Variance")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("variance");
+
+                    b.HasKey("Id")
+                        .HasName("pk_shift");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_shift_tenant_id_id");
+
+                    b.HasIndex("TenantId", "OpenedAt")
+                        .HasDatabaseName("ix_shift_tenant_opened_at");
+
+                    b.HasIndex("TenantId", "RegisterId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_shift_tenant_register_open")
+                        .HasFilter("status = 'Open'");
+
+                    b.ToTable("shift", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_shift_status_allowed", "\"status\" IN ('Open', 'Closed')");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.StockDiscrepancy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTimeOffset>("DetectedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("detected_at");
+
+                    b.Property<decimal>("OnHandAfter")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("on_hand_after");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<decimal>("QuantityRequested")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("quantity_requested");
+
+                    b.Property<Guid>("SaleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sale_id");
+
+                    b.Property<Guid>("SaleLineId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sale_line_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_stock_discrepancy");
+
+                    b.HasIndex("TenantId", "DetectedAt")
+                        .HasDatabaseName("ix_stock_discrepancy_tenant_detected");
+
+                    b.HasIndex("TenantId", "ProductId")
+                        .HasDatabaseName("ix_stock_discrepancy_tenant_id_product_id");
+
+                    b.HasIndex("TenantId", "SaleId")
+                        .HasDatabaseName("ix_stock_discrepancy_tenant_id_sale_id");
+
+                    b.HasIndex("TenantId", "SaleLineId")
+                        .HasDatabaseName("ix_stock_discrepancy_tenant_id_sale_line_id");
+
+                    b.ToTable("stock_discrepancy", (string)null);
                 });
 
             modelBuilder.Entity("Pos.Core.Entities.StockItem", b =>
@@ -511,6 +1122,9 @@ namespace Pos.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_stock_movement");
 
+                    b.HasIndex("TenantId", "SaleId")
+                        .HasDatabaseName("ix_stock_movement_tenant_sale");
+
                     b.HasIndex("TenantId", "ProductId", "OccurredAt")
                         .HasDatabaseName("ix_stock_movement_tenant_product_occurred");
 
@@ -596,6 +1210,11 @@ namespace Pos.Data.Migrations
                         .HasColumnType("interval")
                         .HasColumnName("business_day_start_offset");
 
+                    b.Property<decimal>("CashRoundingIncrement")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("cash_rounding_increment");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamptz")
                         .HasColumnName("created_at");
@@ -640,6 +1259,8 @@ namespace Pos.Data.Migrations
 
                     b.ToTable("tenant", null, t =>
                         {
+                            t.HasCheckConstraint("ck_tenant_cash_rounding_increment_range", "cash_rounding_increment >= 0");
+
                             t.HasCheckConstraint("ck_tenant_currency_code_length", "length(\"currency_code\") <= 3");
 
                             t.HasCheckConstraint("ck_tenant_name_length", "length(\"name\") <= 200");
@@ -651,6 +1272,70 @@ namespace Pos.Data.Migrations
                             t.HasCheckConstraint("ck_tenant_tax_mode_allowed", "\"tax_mode\" IN ('Inclusive', 'Exclusive')");
 
                             t.HasCheckConstraint("ck_tenant_time_zone_id_length", "length(\"time_zone_id\") <= 64");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.Tender", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("amount");
+
+                    b.Property<decimal?>("ChangeGiven")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("change_given");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("method");
+
+                    b.Property<string>("Reference")
+                        .HasColumnType("text")
+                        .HasColumnName("reference");
+
+                    b.Property<Guid>("SaleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sale_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_tender");
+
+                    b.HasIndex("TenantId", "SaleId")
+                        .HasDatabaseName("ix_tender_tenant_sale");
+
+                    b.ToTable("tender", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_tender_method_allowed", "\"method\" IN ('Cash', 'External', 'Card', 'Voucher')");
+
+                            t.HasCheckConstraint("ck_tender_reference_length", "length(\"reference\") <= 100");
                         });
                 });
 
@@ -965,6 +1650,17 @@ namespace Pos.Data.Migrations
                         .HasConstraintName("fk_barcode_product");
                 });
 
+            modelBuilder.Entity("Pos.Core.Entities.CashMovement", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Shift", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ShiftId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_cash_movement_shift");
+                });
+
             modelBuilder.Entity("Pos.Core.Entities.Category", b =>
                 {
                     b.HasOne("Pos.Core.Entities.Category", null)
@@ -993,6 +1689,96 @@ namespace Pos.Data.Migrations
                         .HasConstraintName("fk_product_tax_class");
                 });
 
+            modelBuilder.Entity("Pos.Core.Entities.Sale", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OriginalSaleId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_sale_original");
+
+                    b.HasOne("Pos.Core.Entities.Register", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "RegisterId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_sale_register");
+
+                    b.HasOne("Pos.Core.Entities.Shift", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ShiftId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_sale_shift");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.SaleLine", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.SaleLine", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OriginalSaleLineId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_sale_line_original");
+
+                    b.HasOne("Pos.Core.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ProductId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_sale_line_product");
+
+                    b.HasOne("Pos.Core.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SaleId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_sale_line_sale");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.Shift", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Register", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "RegisterId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_shift_register");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.StockDiscrepancy", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ProductId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_discrepancy_product");
+
+                    b.HasOne("Pos.Core.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SaleId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_discrepancy_sale");
+
+                    b.HasOne("Pos.Core.Entities.SaleLine", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SaleLineId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_discrepancy_sale_line");
+                });
+
             modelBuilder.Entity("Pos.Core.Entities.StockItem", b =>
                 {
                     b.HasOne("Pos.Core.Entities.Product", null)
@@ -1013,6 +1799,24 @@ namespace Pos.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_stock_movement_product");
+
+                    b.HasOne("Pos.Core.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SaleId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movement_sale");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.Tender", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SaleId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_tender_sale");
                 });
 
             modelBuilder.Entity("Pos.Data.Identity.ApplicationRoleClaim", b =>

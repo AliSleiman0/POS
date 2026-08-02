@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using Pos.Api.Auth;
 using Pos.Api.Endpoints;
 using Pos.Api.Errors;
+using Pos.Api.Idempotency;
 using Pos.Api.Tenancy;
 using Pos.Core.Auditing;
 using Pos.Data;
@@ -108,6 +109,12 @@ authorization.AddPolicy(DeviceTokenAuthenticationHandler.PolicyName, policy => p
 
 builder.Services.AddScoped<TokenService>();
 
+// One scoped instance behind two registrations: the filter needs the concrete type to call
+// Begin(), the writers need only the interface. Registered as a factory rather than twice, or
+// a request would get two instances and the writer's would have no key.
+builder.Services.AddScoped<IdempotencyContext>();
+builder.Services.AddScoped<IIdempotencyContext>(sp => sp.GetRequiredService<IdempotencyContext>());
+
 builder.Services.AddPosRateLimiting();
 
 builder.Services.AddProblemDetails();
@@ -142,6 +149,27 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// Makes the request body re-readable, which is what lets the idempotency filter fingerprint
+// it. Minimal-API endpoint filters run AFTER model binding, so by the time the filter executes
+// the body has already been consumed — without buffering it would hash zero bytes, every key
+// would look like a match, and a retry would replay a stored response for a request that had
+// nothing in common with it. Silent, and the worst possible failure for this feature.
+//
+// Before routing, because the stream has to be swapped before anything reads it. Scoped to
+// writes under /api/v1 so a large upload elsewhere is never buffered for no reason.
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsPost(context.Request.Method) || HttpMethods.IsPut(context.Request.Method))
+    {
+        if (context.Request.Path.StartsWithSegments("/api/v1", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Request.EnableBuffering();
+        }
+    }
+
+    await next(context);
+});
+
 // Before authentication on purpose: a flood of PIN guesses is turned away without a
 // database lookup and without a deliberately slow hash comparison, which is otherwise a
 // free way to consume the API's threads. Routing has already run — WebApplication inserts
@@ -163,6 +191,8 @@ app.MapTaxClassEndpoints();
 app.MapCategoryEndpoints();
 app.MapProductEndpoints();
 app.MapStockEndpoints();
+app.MapShiftEndpoints();
+app.MapSaleEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.

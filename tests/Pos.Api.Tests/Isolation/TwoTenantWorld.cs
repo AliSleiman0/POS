@@ -12,7 +12,8 @@ public sealed record IsolatedTenant(
     Guid SecondCashierId,
     EnrolledRegister FrontCounter,
     Guid BackCounterId,
-    SeededCatalog Catalog)
+    SeededCatalog Catalog,
+    SeededSales Sales)
 {
     /// <summary>Everything <c>GET /registers</c> must return for this tenant, and nothing else.</summary>
     public IReadOnlyList<Guid> RegisterIds => [FrontCounter.Id, BackCounterId];
@@ -37,6 +38,12 @@ public sealed record IsolatedTenant(
 
     /// <summary>Everything <c>GET /tax-classes</c> must return.</summary>
     public IReadOnlyList<Guid> TaxClassIds => Catalog.TaxClassIds;
+
+    /// <summary>Everything <c>GET /sales</c> must return: completed, voided and refunded alike.</summary>
+    public IReadOnlyList<Guid> SaleIds => Sales.SaleIds;
+
+    /// <summary>Everything <c>GET /stock/discrepancies</c> must return.</summary>
+    public IReadOnlyList<Guid> DiscrepancyIds => Sales.DiscrepancyIds;
 }
 
 /// <summary>
@@ -112,6 +119,12 @@ public sealed class TwoTenantWorld
         // it, so PinEligibleIds is unaffected and the pin-eligible count assertions stand.
         var catalog = await CatalogFixture.WriteAsync(factory, tenant.Id);
 
-        return new IsolatedTenant(tenant.Id, slug, owner.Id, cashier.Id, second.Id, front, back, catalog);
+        // A fixed trading history, so GET /sales and GET /stock/discrepancies have exactly the
+        // same shape in both tenants. Seeded through the DbContext rather than the endpoints
+        // under test, and never written to again — see SalesFixture.
+        var sales = await SalesFixture.WriteAsync(factory, tenant.Id, front.Id, cashier.Id, catalog);
+
+        return new IsolatedTenant(
+            tenant.Id, slug, owner.Id, cashier.Id, second.Id, front, back, catalog, sales);
     }
 }

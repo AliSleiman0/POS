@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Pos.Core.Entities;
+using Pos.Core.Monetary;
 using Pos.Core.Tenancy;
+using Pos.Data.Conversions;
 using Pos.Data.Identity;
 
 namespace Pos.Data;
@@ -91,6 +93,34 @@ public class AppDbContext : IdentityDbContext<
     /// <summary>The append-only ledger. <see cref="StockItem.OnHand"/> is a cache of it.</summary>
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 
+    /// <summary>Oversells, flagged for review rather than silently corrected.</summary>
+    public DbSet<StockDiscrepancy> StockDiscrepancies => Set<StockDiscrepancy>();
+
+    /// <summary>A register's trading period. A sale requires an open one.</summary>
+    public DbSet<Shift> Shifts => Set<Shift>();
+
+    /// <summary>Cash into or out of a drawer other than through a sale.</summary>
+    public DbSet<CashMovement> CashMovements => Set<CashMovement>();
+
+    /// <summary>The financial record. Append-only once completed.</summary>
+    public DbSet<Sale> Sales => Set<Sale>();
+
+    public DbSet<SaleLine> SaleLines => Set<SaleLine>();
+
+    /// <summary>A collection per sale, not a column on one. Split payments are ordinary.</summary>
+    public DbSet<Tender> Tenders => Set<Tender>();
+
+    /// <summary>
+    /// The per-tenant sale-number counter. Read and written by one raw upsert inside the
+    /// sale's transaction; nothing else should touch it.
+    /// </summary>
+    public DbSet<SaleSequence> SaleSequences => Set<SaleSequence>();
+
+    /// <summary>
+    /// Stored responses for money- and stock-moving writes, so a retry replays.
+    /// </summary>
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -101,6 +131,20 @@ public class AppDbContext : IdentityDbContext<
         // which would silently truncate a unit price's 3rd and 4th decimals.
         configurationBuilder.Properties<decimal>().HavePrecision(MoneyPrecision, MoneyScale);
         configurationBuilder.Properties<decimal?>().HavePrecision(MoneyPrecision, MoneyScale);
+
+        // Money is a struct over decimal, so the sweep above does NOT cover it — these
+        // conventions match on the CLR property type, and Money is not decimal. Without
+        // HavePrecision here a money column maps at the provider default of numeric(18,2)
+        // and silently truncates a unit price's 3rd and 4th decimals.
+        // DatabaseSchemaTests.Every_money_and_quantity_column_is_numeric_19_4 is the guard
+        // that catches it, and it sweeps every numeric column in the database precisely so
+        // that a forgotten line here fails rather than ships.
+        configurationBuilder.Properties<Money>()
+            .HaveConversion<MoneyConverter>()
+            .HavePrecision(MoneyPrecision, MoneyScale);
+        configurationBuilder.Properties<Money?>()
+            .HaveConversion<MoneyConverter>()
+            .HavePrecision(MoneyPrecision, MoneyScale);
 
         // UTC everywhere, per invariant 8. timestamptz is Npgsql's default for
         // DateTimeOffset; stating it here makes the intent explicit and covers

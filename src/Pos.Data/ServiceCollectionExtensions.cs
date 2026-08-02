@@ -3,9 +3,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Pos.Core.Auditing;
 using Pos.Core.Inventory;
+using Pos.Core.Sales;
 using Pos.Core.Tenancy;
 using Pos.Data.Interceptors;
 using Pos.Data.Inventory;
+using Pos.Data.Sales;
+using Pos.Data.Shifts;
 
 namespace Pos.Data;
 
@@ -72,6 +75,15 @@ public static class ServiceCollectionExtensions
         // so that a host with no HTTP in it — the seeder, a future maintenance job — gets a
         // working ledger from AddPosData alone.
         services.AddScoped<IStockLedger, StockLedger>();
+
+        // The second port, on the same reasoning: committing a sale is a transaction with a
+        // row lock, a counter and a concurrency token in it, not a save.
+        services.AddScoped<ISaleWriter, SaleWriter>();
+
+        // Not behind a Core port, unlike the two above: there is no rule here Core needs to
+        // own. The arithmetic is already pure in ShiftArithmetic, and what is left is three
+        // queries and a lock.
+        services.AddScoped<ShiftWriter>();
 
         return services;
     }

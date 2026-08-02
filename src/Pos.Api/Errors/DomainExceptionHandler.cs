@@ -101,6 +101,42 @@ public sealed partial class DomainExceptionHandler(
         // to blame. No race is involved: that parent can never be that category's parent.
         CategoryCycleException => (StatusCodes.Status400BadRequest, "Category hierarchy would form a cycle"),
 
+        // 400 and named, for the same reason as the row above: the fallback's title says
+        // nothing about which field to blame. Nothing raced — €12 off a €10 basket is a
+        // statement about the body and would be equally wrong tomorrow.
+        InvalidDiscountException => (StatusCodes.Status400BadRequest, "Discount is not valid"),
+
+        // 409 rather than 400, on the same reasoning as the duplicate-key rows above: the
+        // body is well-formed and would be accepted unchanged with one more note on the
+        // counter. There is no field to blame, so there is no errors map to fill.
+        UnderTenderException => (StatusCodes.Status409Conflict, "Tender does not cover the sale"),
+
+        // 409, and loudly. The alternative — replaying the stored response — would show the
+        // till a sale that succeeded, for a basket the customer never had.
+        IdempotencyKeyReusedException => (StatusCodes.Status409Conflict, "Idempotency key already used"),
+
+        // 409 rather than a field error, because the caller's next move is an action rather
+        // than a correction: open a shift. An *unknown* shift id is the field error, and the
+        // endpoint answers that one 400 before ever reaching the writer.
+        ShiftClosedException => (StatusCodes.Status409Conflict, "Shift is closed"),
+
+        // Also 409: two tills raced to open one drawer and this one lost the filtered unique
+        // index. Re-reading is meaningful — GET /shifts/current returns the winner.
+        ShiftAlreadyOpenException => (StatusCodes.Status409Conflict, "Register already has an open shift"),
+
+        // 409, not 404: the sale exists and the caller can see it. What changed is that
+        // somebody voided it already, and re-voiding would put the goods back twice.
+        SaleAlreadyVoidedException => (StatusCodes.Status409Conflict, "Sale is not voidable"),
+
+        // Also 409, and the caller has a real next move — refund the remainder, or void the
+        // refund first.
+        SaleAlreadyRefundedException => (StatusCodes.Status409Conflict, "Sale has already been refunded"),
+
+        // 409 rather than a field error: the quantity was well-formed and would have been
+        // accepted a moment earlier. What it collides with is another refund, which is a race
+        // the caller resolves by re-reading what remains.
+        RefundExceedsOriginalException => (StatusCodes.Status409Conflict, "Refund exceeds what remains"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }

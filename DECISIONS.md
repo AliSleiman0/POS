@@ -89,6 +89,226 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-02 (during Phase 3.8)
+
+- **The close changes the shift's status in the same statement that locks the row** —
+  `UPDATE shift SET status='Closed' WHERE … AND status='Open' RETURNING id`. There is no window
+  between checking and setting, so a second close finds no `Open` row and gets nothing back.
+
+- **A sale takes `FOR SHARE` on the shift; the close takes the exclusive lock.** Many sales may
+  hold the share lock at once — they do not conflict with each other — and what they conflict
+  with is the close. Either the sale commits before the close reads the drawer, or it blocks,
+  finds the shift closed and is refused 409. **No sale is ever counted-then-refused or
+  committed-but-uncounted**, which is the third outcome
+  `A_sale_committing_while_a_shift_closes_is_either_counted_or_refused` exists to rule out.
+
+- **Voided sales are excluded from expected cash, not netted off.** A void hands the cash
+  straight back, so it never stayed in the drawer. Netting would give the same total while
+  making the report claim takings that did not happen.
+
+- **Expected cash counts `tendered − change given`, not the tendered note.** A €20 note against
+  an €18.45 sale leaves €18.45 in the drawer. Counting the note overstates the day by the change
+  handed back on every sale — falsified, and it reddened three tests.
+
+- **Only `Cash` tenders count toward the drawer.** An `External` terminal's takings reconcile
+  against that terminal, not against this drawer.
+
+- **`ShiftWriter` is not behind a Core port**, unlike `IStockLedger` and `ISaleWriter`. There is
+  no rule here Core needs to own: the arithmetic is already pure in `ShiftArithmetic`, and what
+  remains is three queries and a lock. It is public in `Pos.Data` because `Pos.Api` references
+  that project and its endpoints already use `AppDbContext` directly — a port would exist only
+  to hide a type from a project allowed to see it.
+
+- **Closing is `CanCloseShift`; recording a drop is `CanSell`.** A drop to the safe mid-shift is
+  done by whoever is on the till, often the only person in the shop. A cashier who could close
+  their own drawer could also decide what it was supposed to contain.
+
+- **A cash movement against a closed shift is refused.** Its expected cash is already computed
+  and stored, so a later movement would leave a variance that no longer explains the drawer.
+
+### Resolved 2026-08-02 (during Phase 3.7)
+
+- **A refund is re-priced from the original sale line's snapshots**, never from the catalog.
+  The customer is owed what they paid. Falsified by pricing from `Product.UnitPrice` instead,
+  which refunds today's price and looks entirely correct on the receipt.
+
+- **A line discount comes back in proportion to the quantity returned.** One of three items
+  with €0.60 off the line returns €0.20 of it. The share is computed at full precision and
+  rounded once with everything else — rounding a per-unit figure and multiplying it back up is
+  the per-line rounding bug wearing a different hat.
+
+- **Voided refunds do not count against the remaining refundable quantity.** A voided refund
+  put the goods back on the customer's side of the counter, so counting it would refuse a
+  refund they never received. Falsified.
+
+- **A sale with a live refund against it cannot be voided** — voiding writes compensating
+  movements for every line, and a refund has already returned some of them, so doing both
+  returns the same goods twice. The rule is deliberately type-agnostic, which is what lets a
+  *refund* be voided by the same code path.
+
+- **Two refunds of the same units in one refund cost a cent less than two separate refunds**,
+  and that is correct rather than a bug. Two units in one refund is 2 × 1.2000 = 2.4000 net,
+  +23% = 2.9520 → €2.95; two separate one-unit refunds are €1.48 each → €2.96. Each refund is
+  its own amount a person is handed, rounded once. Asserting €2.96 for the combined case would
+  have been asserting per-line rounding.
+
+- **The original sale is locked `FOR UPDATE` while a refund is computed**, so two concurrent
+  refunds cannot each see the same "two remaining" and each pay out two.
+
+- **A replayed void returns a small acknowledgement, not the whole sale.** The stored body has
+  to be written inside the transaction, before the sale can be read back in its final state, so
+  storing a full snapshot there would risk it disagreeing with the row. An honest small
+  response beats a large one that might be wrong.
+
+- **`No_route_updates_or_deletes_a_sale` enumerates the routing table** rather than grepping.
+  A `PUT`, `PATCH` or `DELETE` under `/sales` would be a way to rewrite a financial record in
+  place, and the test stays true as routes are added.
+
+### Resolved 2026-08-02 (during Phase 3.6)
+
+- **`ISaleWriter` is the second port Core declares, and the precedent stays narrow.** It earns
+  one on the same grounds `IStockLedger` did: committing a sale is a transaction containing a
+  row lock, a counter increment, a concurrency token and a batch append, not a save. The
+  reading endpoints still use `AppDbContext` directly.
+
+- **The sale number comes from a counter row upserted inside the sale's transaction**, not a
+  Postgres sequence and not `MAX()+1`. A sequence advances even when the transaction that drew
+  from it rolls back, so a failed sale would burn a number permanently — and gaps in a
+  financial series look like deleted records to an auditor with no way to prove otherwise.
+  `ON CONFLICT (tenant_id) DO UPDATE … RETURNING` takes a row-level exclusive lock, so a
+  concurrent sale blocks and then reads the committed value. Issued through ADO rather than
+  EF's `SqlQuery`, which composes its argument into a subquery where Postgres will not accept a
+  data-modifying statement. Cost, stated so it is not discovered under load: concurrent sales
+  *within one tenant* serialise on that row for the length of the sale transaction.
+
+- **The cashier is taken from the validated token, not the request.** `SaleCommitRequest` has
+  nowhere to put one. A caller able to supply it could attribute a sale — and a price
+  override — to a colleague, with nothing on the row to say otherwise. Same rule as the
+  ledger's `PerformedBy`.
+
+- **A shift is checked twice, and the second check is not redundant.** The endpoint reads it
+  unlocked to produce a good error message and to draw three distinctions: an unknown or
+  cross-tenant shift is `400` on the field, a shift belonging to another register is `400` on
+  `registerId`, and a genuinely closed one is `409`. The writer then re-checks it under
+  `FOR SHARE` inside the transaction, which is where a shift closing *concurrently* is decided.
+  **Deleting the writer's check left the entire API suite green** — the endpoint masks it under
+  sequential conditions — so `SaleWriterTests` in `Pos.Data.Tests` exists to test the writer's
+  guards with no endpoint in front of them.
+
+- **The idempotency record is enlisted through a callback the writer invokes inside its
+  transaction.** `Pos.Data` cannot reference the API's idempotency types, and a host with no
+  HTTP has no key to record, so the alternative — a Core port for an HTTP concern — would have
+  been worse. `A_failure_inside_the_callback_rolls_the_whole_sale_back` forces the atomicity
+  claim rather than assuming it.
+
+- **A discrepancy is written when the on-hand ends up below zero, not when stock "looked
+  insufficient".** Selling the last three of three lands on zero and is an ordinary sale;
+  flagging it would bury the real oversells in noise. Insufficient stock never blocks a sale —
+  the customer is standing at the counter holding the item.
+
+- **`SalesFixture` moved from 3.9 into 3.6.** `GET /sales` and `GET /stock/discrepancies` are
+  collection endpoints, and the isolation manifest requires `Expected`/`Forbidden` id lists in
+  both tenants the moment they exist. The alternative was a dishonest `Exempt` row.
+
+### Resolved 2026-08-01 (during Phase 3.5)
+
+- **Both `IdempotencyRecord` and `sale.client_transaction_id` exist, because they guarantee
+  different things.** The unique index on the sale is the *domain* guarantee — "exactly one
+  sale for this cart" survives even if the idempotency table were dropped, and it is what
+  Phase 9's outbox reconciles against. `IdempotencyRecord` is the *transport* guarantee: it
+  stores the original status and body so a replay is byte-identical, and it covers the 🔒
+  routes that create no sale at all (stock adjustments, shift open and close, cash movements)
+  plus a void, which mutates a sale rather than inserting one.
+
+- **The uniqueness is on `(tenant_id, key)` and deliberately excludes the endpoint.** Reusing
+  one key on two endpoints is the same client bug as reusing it with two bodies and earns the
+  same 409. The endpoint is inside the request hash instead, which is what makes it a mismatch
+  rather than a silent second success.
+
+- **The fingerprint is over the raw request bytes, not a re-serialised DTO.** A client that
+  changed a field the server currently ignores has still changed the request, and hashing the
+  bound object would call that a replay. It would also make every stored key depend on
+  serializer settings — turning on camelCase would 409 every in-flight retry in every shop.
+
+- **Endpoint filters run after model binding, so the request body must be buffered.** Without
+  `EnableBuffering()` the filter reads zero bytes, every fingerprint matches, and a retry
+  replays a stored response for an unrelated request. The filter therefore *refuses to guess*:
+  it throws when the body is not seekable rather than hashing nothing, which converts a silent
+  catastrophe into an immediate error. Verified by deleting the middleware and watching the
+  suite go red.
+
+- **A concurrent loser asks "is this request already done?", not "which index did I lose on".**
+  The first implementation matched specific constraint names and returned a 500 the moment two
+  *first* receipts of a brand-new product collided on `ux_stock_item_tenant_product` instead —
+  a race neither index in the list covered. The filter now catches any unique violation,
+  re-reads the key, and replays if it is present. One re-read suffices with no retry loop,
+  because the losing INSERT blocks until the winner commits, so the winner's row is already
+  visible when the 23505 arrives.
+
+- **A replay reproduces status and body, not headers.** A replayed `201` carries no `Location`.
+  Storing arbitrary headers to reproduce one value that a retrying client already holds would
+  be a column nothing reads.
+
+- **A missing or malformed `Idempotency-Key` is a `400` with a field error, not a `428`.**
+  Every other malformed request in this API answers that way, and a client that must branch on
+  428 for one endpoint is a client that will not.
+
+### Resolved 2026-08-01 (during Phase 3.1)
+
+- **`Money` is an EF-mapped value type on entities, and stays out of API DTOs.** A
+  `readonly record struct Money(decimal Amount)` in `Pos.Core`, mapped model-wide by a value
+  converter, so `Product.UnitPrice` and every Phase 3 amount column is typed `Money` rather
+  than `decimal`. Request and response DTOs stay `decimal`, so the JSON contract and Phase 4's
+  generated TypeScript client are untouched by the change.
+
+  The enforcement this buys is specific: there is **no `operator +(Money, decimal)`**, so
+  `total + 1.005m` does not compile and raw decimal arithmetic on a price has to be written as
+  an explicit cast that shows up in a diff. That is CLAUDE.md invariant 3 moved from review
+  discipline into the compiler. Converting the two `Product` columns immediately surfaced
+  every boundary in the codebase as a compile error — which is the mechanism working, not a
+  cost of it.
+
+- **The namespace is `Pos.Core.Monetary`, not `Pos.Core.Money`.** The phase doc says
+  `Pos.Core/Money/Money.cs`, and that does not compile for consumers. A namespace `Pos.Core.Money`
+  makes `Money` a *member of `Pos.Core`*, and enclosing-namespace members outrank types imported
+  by a `using` — so every file under `Pos.Core.*` writing `Money` gets **CS0118: 'Money' is a
+  namespace but is used like a type**, which is the whole domain layer. Verified by trying it.
+  The alternatives were qualifying every usage as `Money.Money` or dropping the type into the
+  `Pos.Core` root and breaking the folder↔namespace convention every other folder follows.
+  Renaming the folder is the cheapest of the three and costs nothing at the call site.
+
+- **The `Money` value converter does not round.** Rounding on write would put a rounding rule
+  in a layer nobody reads. Writers call `RoundToStorage()` explicitly before `SaveChanges`, so
+  the decision is visible where it is taken. Postgres would silently round a fifth decimal
+  place anyway; keeping the converter dumb is what makes `CatalogRules.IsStorable*` the thing
+  that prevents it rather than a second line of defence nobody can see.
+
+- **Recorded cost: EF cannot aggregate over a value-converted property.**
+  `db.Tenders.SumAsync(t => t.Amount.Amount)` does not translate, so 3.8's shift arithmetic
+  reads its aggregates through `db.Database.SqlQuery<decimal>` — one statement per component,
+  with the `tenant_id` predicate written **explicitly** because the query filter does not
+  compose over raw SQL, and RLS underneath as the second layer. This is the strongest argument
+  available against typing entity amounts as `Money`, so it is written down rather than
+  discovered. Pinned by `MoneyMappingTests.Summing_money_in_the_database_is_not_translatable`,
+  which fails if a future EF version gains the ability — at which point the workaround can go.
+
+- **`CatalogRules` was kept, not folded into `Money`.** It validates a tax *rate* and a signed
+  *quantity*, and neither of those is money — folding them in would make a kilogram a currency.
+  What they now share is the `Rounding` primitive, so the repository holds exactly one
+  `MidpointRounding` constant and one `decimal.Round` call site. `CatalogRulesTests` passed
+  **unedited** through the extraction, which is what makes "behaviour-preserving" a claim
+  somebody checked rather than asserted.
+
+- **`ArchitectureTests.Core_does_not_read_the_ambient_clock` is a real Mono.Cecil IL scan.**
+  The placeholder's own comment named Phase 3, and 3.1 is where Core first gained logic whose
+  determinism is the product. `Mono.Cecil` is referenced by `tests/Pos.Core.Tests` only, so the
+  two checks that Core declares and compiles against nothing outside the BCL are unaffected.
+  `TimeProvider.System` is on the forbidden list alongside `DateTime.UtcNow` and friends —
+  reaching the clock *through* `TimeProvider` is the same sin and merely looks compliant.
+  Falsified in both directions before being trusted: a planted `DateTime.UtcNow` and a planted
+  `TimeProvider.System` **inside a lambda** were both caught, the second proving the walk into
+  compiler-generated nested types is load-bearing.
+
 ### Resolved 2026-08-01 (during Phase 2.3 and 2.4)
 
 - **One primary barcode per product is *not* enforced.** `Barcode.IsPrimary` is advisory: a

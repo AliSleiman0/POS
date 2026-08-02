@@ -46,21 +46,83 @@ internal sealed class StockLedger(
         {
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-            var stock = await db.StockItems
-                .FirstOrDefaultAsync(s => s.ProductId == request.ProductId, cancellationToken);
+            var written = await AppendAsync([request], occurredAt, performedBy, cancellationToken);
 
-            if (stock is null)
+            await transaction.CommitAsync(cancellationToken);
+
+            result = written[0];
+        });
+
+        return result!;
+    }
+
+    public async Task<IReadOnlyList<StockMovementResult>> RecordBatchAsync(
+        IReadOnlyList<StockMovementRequest> requests,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+
+        // The guard is the whole point of this method existing separately. Its value over
+        // RecordAsync is that the writes live and die with the caller's transaction, so
+        // running without one is not a degraded mode to tolerate — it is a caller who will
+        // discover the mistake when a half-written sale survives a failure.
+        if (db.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(RecordBatchAsync)} must be called inside a transaction the caller owns. "
+                + $"Use {nameof(RecordAsync)} for a standalone movement.");
+        }
+
+        return await AppendAsync(
+            requests,
+            timeProvider.GetUtcNow(),
+            actor.UserId,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// The rule itself: append the movements and move the cached totals with them, in one save.
+    /// </summary>
+    /// <remarks>
+    /// Written once and reached through two entry points that differ only in who owns the
+    /// transaction. A second copy for the batch case would be a second chance to get "the
+    /// movement and the total move together" subtly different, which is the exact failure this
+    /// class exists to prevent.
+    /// </remarks>
+    private async Task<IReadOnlyList<StockMovementResult>> AppendAsync(
+        IReadOnlyList<StockMovementRequest> requests,
+        DateTimeOffset occurredAt,
+        Guid? performedBy,
+        CancellationToken cancellationToken)
+    {
+        var productIds = requests.Select(r => r.ProductId).Distinct().ToArray();
+
+        var stockItems = await db.StockItems
+            .Where(s => productIds.Contains(s.ProductId))
+            .ToDictionaryAsync(s => s.ProductId, cancellationToken);
+
+        var movements = new StockMovement[requests.Count];
+
+        for (var index = 0; index < requests.Count; index++)
+        {
+            var request = requests[index];
+
+            if (!stockItems.TryGetValue(request.ProductId, out var stock))
             {
                 // The first receipt of a new product is the ordinary way a stock row comes
                 // into existence. Refusing it would make "receive stock" fail on exactly the
                 // products a shop had just added.
                 stock = new StockItem { ProductId = request.ProductId, OnHand = 0m };
                 db.StockItems.Add(stock);
+                stockItems[request.ProductId] = stock;
             }
 
+            // Two requests for one product resolve to the same tracked row, so the on-hand
+            // moves once by the net amount while both movements are still written. An item
+            // scanned twice is two honest ledger rows.
             stock.OnHand += request.Quantity;
 
-            var movement = new StockMovement
+            movements[index] = new StockMovement
             {
                 ProductId = request.ProductId,
                 Type = request.Type,
@@ -71,31 +133,30 @@ internal sealed class StockLedger(
                 OccurredAt = occurredAt,
             };
 
-            db.StockMovements.Add(movement);
+            db.StockMovements.Add(movements[index]);
+        }
 
-            try
-            {
-                // One save, so the movement and the total are one statement batch inside one
-                // transaction. Two saves would still be atomic here, but would leave a window
-                // in which the invariant is false to anything reading in the same context.
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            catch (DbUpdateConcurrencyException exception)
-            {
-                // StockItem.RowVersion is Postgres' xmin, so this is the database reporting
-                // that another writer changed the row between the read above and the write —
-                // not a guess. Not retried here: see the exception's remarks.
-                throw new ConcurrentStockUpdateException(
-                    "Another change to this product's stock landed first. Re-read it and try again.",
-                    exception);
-            }
+        try
+        {
+            // One save, so the movements and the totals are one statement batch. Two saves
+            // would still be atomic inside the transaction, but would leave a window in which
+            // the invariant is false to anything reading through the same context.
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            // StockItem.RowVersion is Postgres' xmin, so this is the database reporting that
+            // another writer changed the row between the read above and the write — not a
+            // guess. Not retried here: see the exception's remarks.
+            throw new ConcurrentStockUpdateException(
+                "Another change to this product's stock landed first. Re-read it and try again.",
+                exception);
+        }
 
-            await transaction.CommitAsync(cancellationToken);
-
-            result = new StockMovementResult(movement.Id, stock.OnHand, movement.OccurredAt);
-        });
-
-        return result!;
+        return [.. movements.Select(m => new StockMovementResult(
+            m.Id,
+            stockItems[m.ProductId].OnHand,
+            m.OccurredAt))];
     }
 
     public async Task<decimal> RebuildOnHandAsync(Guid productId, CancellationToken cancellationToken)

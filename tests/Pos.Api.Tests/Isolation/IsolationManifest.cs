@@ -3,9 +3,11 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Pos.Api.Tests.Infrastructure;
+using Pos.Core.Entities;
 using Pos.Core.Security;
 using Pos.Data;
 using Pos.Data.Identity;
+using Pos.Core.Monetary;
 
 namespace Pos.Api.Tests.Isolation;
 
@@ -98,6 +100,23 @@ public sealed record IsolationCase
     /// exists to record decisions, not to infer them.
     /// </remarks>
     public bool Paginated { get; init; }
+
+    /// <summary>
+    /// Whether this route requires an <c>Idempotency-Key</c> — the 🔒 in docs/API.md.
+    /// </summary>
+    /// <remarks>
+    /// Declared rather than inferred, and then <b>checked against the routing table</b> by
+    /// <c>EndpointCoverageTests</c>, so the manifest cannot drift from which endpoints
+    /// actually carry the filter.
+    /// <para>
+    /// It has to be here at all because the filter runs before authorization reaches the
+    /// handler and before any route parameter is looked at: without a key, a 🔒 route answers
+    /// 400 on the header. A by-id theory expecting 404 would then go red for entirely the
+    /// wrong reason — the same structural trap <c>UrlFor</c>'s arity check closed in 2.3,
+    /// where a test passed having proven nothing.
+    /// </para>
+    /// </remarks>
+    public bool Idempotent { get; init; }
 
     /// <summary>Required when <see cref="Kind"/> is <see cref="IsolationKind.Exempt"/>.</summary>
     public string? Exemption { get; init; }
@@ -268,6 +287,144 @@ public static class IsolationManifest
             // is the assertion that fails if the endpoint stops filtering.
             Expected = w => w.B.StockedProductIds,
             Forbidden = w => w.A.StockedProductIds,
+        },
+
+        // ---- Phase 3.6: sales and shifts ----
+
+        new()
+        {
+            Key = "GET api/v1/sales",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+
+            // A Cashier: CanSell, because looking up the sale you just rang through is
+            // something that happens at the till with a customer standing there.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // All four, voided and refunded included. A history that hid them would still
+            // pass a "returns only my tenant's rows" test while being wrong about what a
+            // history is for.
+            Expected = w => w.B.SaleIds,
+            Forbidden = w => w.A.SaleIds,
+        },
+        new()
+        {
+            Key = "GET api/v1/sales/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+        },
+        new()
+        {
+            Key = "GET api/v1/stock/discrepancies",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Expected = w => w.B.DiscrepancyIds,
+            Forbidden = w => w.A.DiscrepancyIds,
+        },
+        new()
+        {
+            Key = "POST api/v1/sales",
+            Kind = IsolationKind.Exempt,
+            Idempotent = true,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "A write with no id in the URL, so neither shape fits. Every id it "
+                      + "carries — products, register, shift — is a body field answered 400 "
+                      + "rather than 404, identically whether it is unknown or another "
+                      + "tenant's, so none of them is an existence oracle. Covered by "
+                      + "SaleCommitTests.A_cross_tenant_product_is_refused_and_commits_nothing "
+                      + "and A_cross_tenant_shift_is_refused, both of which also assert the "
+                      + "victim tenant gained no sale.",
+        },
+        new()
+        {
+            Key = "POST api/v1/sales/{id:guid}/void",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+            Body = _ => new { reason = "Attempt" },
+            AssertUntouched = AssertTenantAsFirstSaleIsStillCompleted,
+        },
+        new()
+        {
+            Key = "POST api/v1/sales/{id:guid}/refund",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+            Body = w => new
+            {
+                clientTransactionId = Guid.CreateVersion7(),
+                registerId = w.B.FrontCounter.Id,
+                shiftId = w.B.Sales.OpenShiftId,
+                reason = "Attempt",
+            },
+            AssertUntouched = AssertNeitherTenantGainedARefund,
+        },
+        new()
+        {
+            Key = "POST api/v1/sales/quote",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "Writes nothing and has no id in the URL. A cross-tenant productId is "
+                      + "answered 400 on the field, the same as POST /sales, because both "
+                      + "build their cart through one shared function. Covered by "
+                      + "SaleQuoteTests.A_cross_tenant_product_is_refused.",
+        },
+        new()
+        {
+            Key = "POST api/v1/shifts",
+            Kind = IsolationKind.Exempt,
+            Idempotent = true,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "A write with no id in the URL. The registerId travels in the body and "
+                      + "another tenant's is answered 400 on the field, identically to an "
+                      + "unknown one. Covered by "
+                      + "ShiftLifecycleTests.A_cross_tenant_register_cannot_have_a_shift_opened_on_it, "
+                      + "which also asserts the victim tenant gained no shift.",
+        },
+        new()
+        {
+            Key = "POST api/v1/shifts/{id:guid}/close",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.OpenShiftId,
+            Body = _ => new { countedCash = 500m },
+            AssertUntouched = AssertTenantAsOpenShiftIsStillOpen,
+        },
+        new()
+        {
+            Key = "POST api/v1/shifts/{id:guid}/cash-movements",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+
+            // A Cashier, because CanSell: a drop to the safe is done by whoever is on the
+            // till, often the only person in the shop.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.OpenShiftId,
+            Body = _ => new { type = "Drop", amount = -50m, reason = "Attempt" },
+            AssertUntouched = AssertNeitherTenantGainedACashMovement,
+        },
+        new()
+        {
+            Key = "GET api/v1/shifts/current",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "The register is a query parameter rather than a route parameter, so "
+                      + "the by-id shape does not fit, and the response is a single object "
+                      + "rather than a list. Asking for another tenant's register answers 404 "
+                      + "— the same as a register with no open shift. Covered by "
+                      + "ShiftLifecycleTests.Another_tenants_register_has_no_current_shift.",
         },
 
         // ---- By id ------------------------------------------------------------------
@@ -481,6 +638,7 @@ public static class IsolationManifest
         {
             Key = "POST api/v1/stock/adjustments",
             Kind = IsolationKind.Exempt,
+            Idempotent = true,
             Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
             Exemption = "The subject id travels in the body, so there is no URL to attack and "
                       + "neither shape fits. Naming another tenant's product is answered 400 on "
@@ -658,8 +816,8 @@ public static class IsolationManifest
 
             Assert.Equal(CatalogFixture.WaterSku, product.Sku);
             Assert.Equal(CatalogFixture.WaterName, product.Name);
-            Assert.Equal(1.2000m, product.UnitPrice);
-            Assert.Equal(CatalogFixture.WaterCostPrice, product.CostPrice);
+            Assert.Equal(1.2000m, product.UnitPrice.ToDecimal());
+            Assert.Equal(CatalogFixture.WaterCostPrice, product.CostPrice?.ToDecimal());
             Assert.True(product.IsActive);
         });
 
@@ -677,6 +835,99 @@ public static class IsolationManifest
     /// not there, and only reading B notices that.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The victim's sale is still exactly as it was: completed, with every amount and its
+    /// number untouched.
+    /// </summary>
+    /// <remarks>
+    /// A void is the one operation that legitimately updates a completed sale, so a 404 alone
+    /// would not prove the attempt did nothing — a handler that voided first and checked
+    /// afterwards would answer 404 and still have reversed somebody else's takings.
+    /// </remarks>
+    private static Task AssertTenantAsFirstSaleIsStillCompleted(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var sale = await db.Sales.FirstAsync(s => s.Id == world.A.Sales.FirstSaleId);
+
+            Assert.Equal(SaleStatus.Completed, sale.Status);
+            Assert.Null(sale.VoidedAt);
+            Assert.Null(sale.VoidedBy);
+            Assert.Null(sale.VoidReason);
+            Assert.Equal(1, sale.SaleNumber);
+        });
+
+    /// <summary>
+    /// The victim's open shift is still open and still uncounted.
+    /// </summary>
+    /// <remarks>
+    /// A 404 alone would not prove the attempt did nothing: closing legitimately updates a
+    /// shift, so a handler that closed first and checked afterwards would answer 404 and still
+    /// have reconciled somebody else's drawer — and written a variance nobody can explain.
+    /// </remarks>
+    private static Task AssertTenantAsOpenShiftIsStillOpen(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var shift = await db.Shifts.FirstAsync(s => s.Id == world.A.Sales.OpenShiftId);
+
+            Assert.Equal(ShiftStatus.Open, shift.Status);
+            Assert.Null(shift.ClosedAt);
+            Assert.Null(shift.CountedCash);
+            Assert.Null(shift.Variance);
+        });
+
+    /// <summary>Neither tenant gained a cash movement — the victim's, and the caller's own.</summary>
+    private static async Task AssertNeitherTenantGainedACashMovement(
+        PosApiFactory factory,
+        TwoTenantWorld world)
+    {
+        await AssertNoCashMovementsAsync(factory, world.A);
+        await AssertNoCashMovementsAsync(factory, world.B);
+    }
+
+    private static Task AssertNoCashMovementsAsync(PosApiFactory factory, IsolatedTenant tenant) =>
+        factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            // SalesFixture seeds none, so any at all means the attempt wrote one — in the
+            // victim's tenant, or in the caller's own before it noticed.
+            Assert.Empty(await db.CashMovements.ToListAsync());
+        });
+
+    /// <summary>
+    /// Neither tenant gained a refund — the victim's, and the caller's own.
+    /// </summary>
+    /// <remarks>
+    /// Reads <b>both</b>, per the rule 2.2's falsification pass established: the failure mode
+    /// that is genuinely reachable is a handler writing into the caller's own tenant before it
+    /// discovers the target is not there, and only reading B notices that.
+    /// </remarks>
+    private static async Task AssertNeitherTenantGainedARefund(
+        PosApiFactory factory,
+        TwoTenantWorld world)
+    {
+        await AssertRefundsAreTheSeededOnes(factory, world.A);
+        await AssertRefundsAreTheSeededOnes(factory, world.B);
+    }
+
+    private static Task AssertRefundsAreTheSeededOnes(PosApiFactory factory, IsolatedTenant tenant) =>
+        factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            // Exactly the one SalesFixture seeded, and it still points where it did.
+            var refund = Assert.Single(await db.Sales.Where(s => s.Type == SaleType.Refund).ToListAsync());
+
+            Assert.Equal(tenant.Sales.RefundSaleId, refund.Id);
+            Assert.Equal(tenant.Sales.SecondSaleId, refund.OriginalSaleId);
+        });
+
     private static async Task AssertNeitherTenantsWaterGainedACode(
         PosApiFactory factory,
         TwoTenantWorld world)
@@ -714,7 +965,7 @@ public static class IsolationManifest
             var product = await db.Products.FirstAsync(p => p.Id == world.A.Catalog.CoffeeProductId);
 
             Assert.Equal(CatalogFixture.CoffeeSku, product.Sku);
-            Assert.Equal(CatalogFixture.CoffeeCostPrice, product.CostPrice);
+            Assert.Equal(CatalogFixture.CoffeeCostPrice, product.CostPrice?.ToDecimal());
             Assert.True(product.IsActive);
         });
 

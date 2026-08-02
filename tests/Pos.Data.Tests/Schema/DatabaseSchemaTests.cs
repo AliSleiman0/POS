@@ -49,6 +49,72 @@ public sealed class DatabaseSchemaTests(PostgresFixture postgres)
             false,
             ["tenant_id", "product_id", "occurred_at"]
         },
+
+        // Phase 3.3. The two unique indexes on sale are the load-bearing ones.
+        //
+        // ux_sale_tenant_client_transaction_id IS the idempotency guarantee — not a check in
+        // the write path, which two concurrent submissions of one cart would both pass before
+        // either inserted. If this stopped being unique, a double-tapped sale would charge a
+        // customer twice and every test of the replay path would still be green, because they
+        // exercise the sequential case.
+        {
+            "sale",
+            "ux_sale_tenant_client_transaction_id",
+            true,
+            ["tenant_id", "client_transaction_id"]
+        },
+
+        // The human reference an auditor quotes. Unique per tenant; the counter row is what
+        // keeps it gapless, and this index is what proves the counter did its job.
+        { "sale", "ux_sale_tenant_sale_number", true, ["tenant_id", "sale_number"] },
+
+        { "sale", "ix_sale_tenant_completed_at", false, ["tenant_id", "completed_at"] },
+        { "sale", "ix_sale_tenant_shift", false, ["tenant_id", "shift_id"] },
+        { "sale", "ix_sale_tenant_original", false, ["tenant_id", "original_sale_id"] },
+
+        // Two lines of one sale sharing a line number is a genuine ambiguity: it is what a
+        // receipt prints and what a partial refund names.
+        {
+            "sale_line",
+            "ux_sale_line_tenant_sale_line_number",
+            true,
+            ["tenant_id", "sale_id", "line_number"]
+        },
+        { "sale_line", "ix_sale_line_tenant_sale", false, ["tenant_id", "sale_id"] },
+
+        // "How much of this line has already been refunded?", summed on every refund. Without
+        // OriginalSaleLineId the only alternative is matching on product id, which breaks the
+        // moment one sale has the same product on two lines.
+        {
+            "sale_line",
+            "ix_sale_line_tenant_original",
+            false,
+            ["tenant_id", "original_sale_line_id"]
+        },
+
+        { "tender", "ix_tender_tenant_sale", false, ["tenant_id", "sale_id"] },
+
+        // On (tenant_id) alone, deliberately. The sale writer's
+        // INSERT ... ON CONFLICT (tenant_id) DO UPDATE resolves its conflict target against a
+        // unique constraint on exactly these columns; the usual (tenant_id, id) composite
+        // would not match and the statement would fail.
+        { "sale_sequence", "ux_sale_sequence_tenant", true, ["tenant_id"] },
+
+        // Filtered on status = 'Open', so a register may have many closed shifts and at most
+        // one open one. A plain unique index here would make a second shift impossible ever.
+        { "shift", "ux_shift_tenant_register_open", true, ["tenant_id", "register_id"] },
+        { "shift", "ix_shift_tenant_opened_at", false, ["tenant_id", "opened_at"] },
+
+        {
+            "stock_discrepancy",
+            "ix_stock_discrepancy_tenant_detected",
+            false,
+            ["tenant_id", "detected_at"]
+        },
+
+        // "Which movements did this sale write?" — what a void reads in order to compensate
+        // them. Added in 3.3 alongside stock_movement.sale_id finally getting a foreign key.
+        { "stock_movement", "ix_stock_movement_tenant_sale", false, ["tenant_id", "sale_id"] },
     };
 
     [Theory]
