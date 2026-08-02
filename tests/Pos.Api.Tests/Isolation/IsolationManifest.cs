@@ -392,6 +392,31 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "POST api/v1/shifts/{id:guid}/close",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.OpenShiftId,
+            Body = _ => new { countedCash = 500m },
+            AssertUntouched = AssertTenantAsOpenShiftIsStillOpen,
+        },
+        new()
+        {
+            Key = "POST api/v1/shifts/{id:guid}/cash-movements",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+
+            // A Cashier, because CanSell: a drop to the safe is done by whoever is on the
+            // till, often the only person in the shop.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.OpenShiftId,
+            Body = _ => new { type = "Drop", amount = -50m, reason = "Attempt" },
+            AssertUntouched = AssertNeitherTenantGainedACashMovement,
+        },
+        new()
+        {
             Key = "GET api/v1/shifts/current",
             Kind = IsolationKind.Exempt,
             Refused = [Actor.Anonymous, Actor.DeviceOfB],
@@ -832,6 +857,47 @@ public static class IsolationManifest
             Assert.Null(sale.VoidedBy);
             Assert.Null(sale.VoidReason);
             Assert.Equal(1, sale.SaleNumber);
+        });
+
+    /// <summary>
+    /// The victim's open shift is still open and still uncounted.
+    /// </summary>
+    /// <remarks>
+    /// A 404 alone would not prove the attempt did nothing: closing legitimately updates a
+    /// shift, so a handler that closed first and checked afterwards would answer 404 and still
+    /// have reconciled somebody else's drawer — and written a variance nobody can explain.
+    /// </remarks>
+    private static Task AssertTenantAsOpenShiftIsStillOpen(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var shift = await db.Shifts.FirstAsync(s => s.Id == world.A.Sales.OpenShiftId);
+
+            Assert.Equal(ShiftStatus.Open, shift.Status);
+            Assert.Null(shift.ClosedAt);
+            Assert.Null(shift.CountedCash);
+            Assert.Null(shift.Variance);
+        });
+
+    /// <summary>Neither tenant gained a cash movement — the victim's, and the caller's own.</summary>
+    private static async Task AssertNeitherTenantGainedACashMovement(
+        PosApiFactory factory,
+        TwoTenantWorld world)
+    {
+        await AssertNoCashMovementsAsync(factory, world.A);
+        await AssertNoCashMovementsAsync(factory, world.B);
+    }
+
+    private static Task AssertNoCashMovementsAsync(PosApiFactory factory, IsolatedTenant tenant) =>
+        factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            // SalesFixture seeds none, so any at all means the attempt wrote one — in the
+            // victim's tenant, or in the caller's own before it noticed.
+            Assert.Empty(await db.CashMovements.ToListAsync());
         });
 
     /// <summary>

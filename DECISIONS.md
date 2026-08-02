@@ -89,6 +89,43 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 
+### Resolved 2026-08-02 (during Phase 3.8)
+
+- **The close changes the shift's status in the same statement that locks the row** —
+  `UPDATE shift SET status='Closed' WHERE … AND status='Open' RETURNING id`. There is no window
+  between checking and setting, so a second close finds no `Open` row and gets nothing back.
+
+- **A sale takes `FOR SHARE` on the shift; the close takes the exclusive lock.** Many sales may
+  hold the share lock at once — they do not conflict with each other — and what they conflict
+  with is the close. Either the sale commits before the close reads the drawer, or it blocks,
+  finds the shift closed and is refused 409. **No sale is ever counted-then-refused or
+  committed-but-uncounted**, which is the third outcome
+  `A_sale_committing_while_a_shift_closes_is_either_counted_or_refused` exists to rule out.
+
+- **Voided sales are excluded from expected cash, not netted off.** A void hands the cash
+  straight back, so it never stayed in the drawer. Netting would give the same total while
+  making the report claim takings that did not happen.
+
+- **Expected cash counts `tendered − change given`, not the tendered note.** A €20 note against
+  an €18.45 sale leaves €18.45 in the drawer. Counting the note overstates the day by the change
+  handed back on every sale — falsified, and it reddened three tests.
+
+- **Only `Cash` tenders count toward the drawer.** An `External` terminal's takings reconcile
+  against that terminal, not against this drawer.
+
+- **`ShiftWriter` is not behind a Core port**, unlike `IStockLedger` and `ISaleWriter`. There is
+  no rule here Core needs to own: the arithmetic is already pure in `ShiftArithmetic`, and what
+  remains is three queries and a lock. It is public in `Pos.Data` because `Pos.Api` references
+  that project and its endpoints already use `AppDbContext` directly — a port would exist only
+  to hide a type from a project allowed to see it.
+
+- **Closing is `CanCloseShift`; recording a drop is `CanSell`.** A drop to the safe mid-shift is
+  done by whoever is on the till, often the only person in the shop. A cashier who could close
+  their own drawer could also decide what it was supposed to contain.
+
+- **A cash movement against a closed shift is refused.** Its expected cash is already computed
+  and stored, so a later movement would leave a variance that no longer explains the drawer.
+
 ### Resolved 2026-08-02 (during Phase 3.7)
 
 - **A refund is re-priced from the original sale line's snapshots**, never from the catalog.

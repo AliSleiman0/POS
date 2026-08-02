@@ -8,6 +8,7 @@ using Pos.Core.Tenancy;
 using Pos.Data.Interceptors;
 using Pos.Data.Inventory;
 using Pos.Data.Sales;
+using Pos.Data.Shifts;
 
 namespace Pos.Data;
 
@@ -78,6 +79,11 @@ public static class ServiceCollectionExtensions
         // The second port, on the same reasoning: committing a sale is a transaction with a
         // row lock, a counter and a concurrency token in it, not a save.
         services.AddScoped<ISaleWriter, SaleWriter>();
+
+        // Not behind a Core port, unlike the two above: there is no rule here Core needs to
+        // own. The arithmetic is already pure in ShiftArithmetic, and what is left is three
+        // queries and a lock.
+        services.AddScoped<ShiftWriter>();
 
         return services;
     }
