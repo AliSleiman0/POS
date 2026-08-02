@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
-import { LoadingState } from '@/components/states'
+import { ErrorState, LoadingState } from '@/components/states'
 import { useAuth } from './authContext'
 import { ReauthOverlay } from './ReauthOverlay'
 import type { Policy } from './policies'
@@ -12,13 +12,26 @@ import type { Policy } from './policies'
  * and `expired` does not. Losing a session you never had costs nothing; losing
  * one mid-transaction would take the screen's state with it. See
  * `ReauthOverlay`.
+ *
+ * `unreachable` is the third case and it navigates nowhere either: the token was
+ * never rejected, so a login form would be both a lie and a way to lose it.
  */
 export function RequireAuth() {
-  const { status } = useAuth()
+  const { status, retrySession } = useAuth()
   const location = useLocation()
 
   if (status === 'loading') {
     return <LoadingState label="Restoring your session…" />
+  }
+
+  if (status === 'unreachable') {
+    return (
+      <ErrorState
+        title="Could not reach the shop's server."
+        error={new Error('You are still signed in. Check the connection and try again.')}
+        onRetry={retrySession}
+      />
+    )
   }
 
   if (status === 'anonymous') {
