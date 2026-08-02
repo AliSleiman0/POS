@@ -111,12 +111,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // it, because `Date.now() + '900' * 1000` is NaN and the session would
       // then look permanently expired.
       setTokens({ ...tokens, expiresIn: Number(tokens.expiresIn) })
+
       // Drop everything the previous user could see before the next screen
       // paints. A PIN swap changes who is looking at the till, and a Cashier
       // must not inherit an Owner's cached cost prices.
-      queryClient.clear()
+      //
+      // Everything *except* the session query. `clear()` would remove that one
+      // too, and a query that no longer exists cannot be refetched — the
+      // provider would sit holding the previous user's `me` result, so a swap
+      // to a cashier would leave an owner's name and an owner's navigation on
+      // screen with a cashier's token behind it.
+      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'auth' })
+
       setStatus('authenticated')
-      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+
+      // Refetch rather than invalidate: this must have *finished* before the
+      // caller navigates, or the next screen renders against the old identity.
+      await queryClient.refetchQueries({ queryKey: ['auth', 'me'] })
     },
     [queryClient],
   )

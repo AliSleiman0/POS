@@ -129,8 +129,7 @@ public static class AuthEndpoints
 
         await users.ResetAccessFailedCountAsync(user);
 
-        user.LastLoginAt = timeProvider.GetUtcNow();
-        await users.UpdateAsync(user);
+        await RecordLoginAsync(db, user, timeProvider.GetUtcNow(), cancellationToken);
 
         return TypedResults.Ok(await BuildAuthResponseAsync(tokens, user, registerId: null, cancellationToken));
     }
@@ -185,17 +184,15 @@ public static class AuthEndpoints
         await users.ResetAccessFailedCountAsync(user);
 
         var now = timeProvider.GetUtcNow();
-        user.LastLoginAt = now;
-        await users.UpdateAsync(user);
 
-        var register = await db.Registers.FirstOrDefaultAsync(r => r.Id == registerId, cancellationToken);
+        await RecordLoginAsync(db, user, now, cancellationToken);
 
-        if (register is not null)
-        {
-            // Answers "is that lost tablet still being used?" without a write on every request.
-            register.LastSeenAt = now;
-            await db.SaveChangesAsync(cancellationToken);
-        }
+        // Answers "is that lost tablet still being used?" without a write on every request.
+        // Set-based for the same reason as the line above: two cashiers swapping in on one
+        // till at the same moment must not collide.
+        await db.Registers
+            .Where(r => r.Id == registerId)
+            .ExecuteUpdateAsync(r => r.SetProperty(x => x.LastSeenAt, now), cancellationToken);
 
         return TypedResults.Ok(await BuildAuthResponseAsync(tokens, user, registerId, cancellationToken));
     }
@@ -299,6 +296,45 @@ public static class AuthEndpoints
                 tenant.TimeZoneId,
                 tenant.TaxMode.ToString())));
     }
+
+    /// <summary>
+    /// Stamps <c>LastLoginAt</c> without going through the change tracker.
+    /// </summary>
+    /// <remarks>
+    /// Set-based, and that is the whole point. The obvious version —
+    /// <c>user.LastLoginAt = now; await users.UpdateAsync(user);</c> — is broken under
+    /// concurrency in a way that is invisible until two sessions start at the same instant:
+    /// <para>
+    /// <c>ApplicationUser</c> carries Identity's <c>ConcurrencyStamp</c>. Two simultaneous
+    /// logins as the same account both load the row at stamp <i>S</i>. The first update wins
+    /// and moves it to <i>S′</i>. The second matches nothing, and
+    /// <c>UserManager.UpdateAsync</c> <b>does not throw</b> — it returns a failed
+    /// <c>IdentityResult</c> that nothing was checking. The entity is then left in the
+    /// tracker still <c>Modified</c>, so the very next <c>SaveChangesAsync</c> — the one in
+    /// <c>TokenService.IssueForFamilyAsync</c> that only meant to insert a refresh token —
+    /// retries it and throws <c>DbUpdateConcurrencyException</c>. The login fails with a 500,
+    /// having already checked the password successfully.
+    /// </para>
+    /// <para>
+    /// Found by the Phase 4 Playwright suite, which logs in from several workers at once.
+    /// Two tills sharing an owner account, or one person double-clicking Sign in, would have
+    /// reproduced it in a shop. <c>ConcurrentLoginTests</c> pins it.
+    /// </para>
+    /// <para>
+    /// A last-login timestamp is a convenience. It must never be able to fail a login, so it
+    /// is written as an UPDATE that names the row and carries no concurrency token. The
+    /// tenant query filter still applies, and RLS covers it underneath.
+    /// </para>
+    /// </remarks>
+    /// <returns>Rows updated. Ignored by both callers — see the remarks.</returns>
+    private static Task<int> RecordLoginAsync(
+        AppDbContext db,
+        ApplicationUser user,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        db.Users
+            .Where(u => u.Id == user.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.LastLoginAt, now), cancellationToken);
 
     private static async Task<AuthResponse> BuildAuthResponseAsync(
         TokenService tokens,

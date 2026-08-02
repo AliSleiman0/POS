@@ -1,191 +1,149 @@
 # Session Handoff
 
-**Written:** 2026-08-02 · **Branch:** `phase-3/checkout-sales` · **Phase 3 complete — start Phase 4.1**
+**Written:** 2026-08-02 · **Branch:** `phase-4/web-shell-catalog` · **Phase 4 complete — start Phase 5.1**
 
-> A sale can be priced, tendered in cash, and committed exactly once, with numbers that reconcile against the drawer. **846 tests green locally** — 261 Core, 106 Data, 479 Api. Release build warning-free with `$env:CI="true"`. The whole path was driven by hand against the dev database, and the shift's expected cash matched an independent hand computation. **CI has not run: the branch is unpushed and there is no PR.** Do that first, and do not call Phase 3 done until the runner agrees.
+> A real user logs in through a browser and manages their catalog. **854 .NET tests, 66 Vitest, 11 Playwright** — the last against a real API and a real Postgres in a dedicated `pos_e2e` database, not mocks. Release build warning-free with `$env:CI="true"`; `pnpm lint`, `format:check`, `build` and `test` all clean.
+>
+> **Generating the API client found two contract gaps and the E2E suite found two real bugs.** None of the four was visible from the backend, and all four are now pinned by tests. They are the most useful thing in this document — see [What the client and the browser found](#what-the-client-and-the-browser-found).
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
 ## Read first
 
-1. [`DECISIONS.md`](../DECISIONS.md) → the four **"Resolved 2026-08-01/02 (during Phase 3.x)"** sections. Roughly thirty decisions; the ones Phase 4 inherits are listed under [What Phase 4 inherits](#what-phase-4-inherits).
-2. [`docs/phases/PHASE-4-web-shell-catalog.md`](phases/PHASE-4-web-shell-catalog.md) → **§4.1**, the next milestone.
-3. [`docs/API.md`](API.md) → the sales and shifts contracts, now written up in full.
-4. [`CLAUDE.md`](../CLAUDE.md) — the 10 invariants.
+1. [`DECISIONS.md`](../DECISIONS.md) → **"Resolved 2026-08-02 (during Phase 4)"**. Eight decisions; the ones Phase 5 inherits are under [What Phase 5 inherits](#what-phase-5-inherits).
+2. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) → **§5.1**, the next milestone.
+3. [`CLAUDE.md`](../CLAUDE.md) — the 10 invariants.
 
 ## State
 
-Eight commits on `phase-3/checkout-sales`, none pushed:
+Two commits on `phase-4/web-shell-catalog`, branched from `phase-3/checkout-sales`:
 
 ```
-ab99f4e  3.1  a Money value type, rounded once and away from zero
-ba90685  3.2  the pricing engine, inclusive and exclusive tax modes
-5e87163  3.3  sale, shift and tender entities with snapshotted line prices
-c8caf56  3.4  cash tender, change due, and under-tender refused
-ba82661  3.5  idempotent submit, one mechanism for sales, refunds, shifts and adjustments
-bfaf7fc  3.6  one transaction for the sale, its stock and its number
-2a262e3  3.7  voids and refunds as new linked rows, never an edit
-525ea83  3.8  register shifts, expected cash and variance
+d373824  4.1–4.3  app shell, generated client, auth flow and catalog UI
+<next>   4.4      tests, CI jobs, and the two bugs the suite found
 ```
 
-Three migrations: `MoneyType`, `Sales`, `Idempotency`. The dev database is migrated and seeded.
+**Phase 3's CI was already green** — PR #8, both the push and pull_request runs. The previous handoff's "CI has not run" was stale by the time this session started.
+
+**PR #8 is still open against `main`, and this branch is stacked on it.** Merge order matters.
+
+No new migrations. `pos_e2e` is created and migrated by the Playwright run itself.
 
 ---
 
-## What Phase 4 inherits
+## What the client and the browser found
 
-The web app is a client of all of this, so these are the ones that shape it:
+The interesting part of the phase. Each of these compiled, passed every existing test, and was wrong.
 
-1. **API DTOs are `decimal`, not `Money`.** The JSON contract is plain numbers, and
-   `SaleContractTests.No_endpoint_dto_declares_a_money_property` fails the build if that ever
-   slips. So the generated TypeScript client sees `number` everywhere — and per CLAUDE.md,
-   **money is never a JS `number` in a calculation**: the server computes every total, the
-   client displays it.
-2. **`POST /sales/quote` exists so the register never prices anything itself.** It takes the
-   same cart as `POST /sales`, needs no register, shift, tenders or idempotency key, and is
-   guaranteed to agree with the sale because both build their `Cart` through one function.
-3. **Every 🔒 endpoint needs `Idempotency-Key`**, generated *before the first attempt* and
-   reused on retry. Missing or malformed is a `400` with the header named in `errors`. This is
-   the mechanism Phase 5.5's double-submit safety uses — **a disabled button is not it**.
-4. **A sale needs an open shift**, so the register's first screen after login is "open a
-   drawer". `GET /shifts/current?registerId=` answers `404` when there is none.
-5. **A replay returns the original status and body byte-for-byte, with `Idempotent-Replay:
-   true`** — but *not* other headers. A replayed `201` carries no `Location`.
+### 1. Five `/auth` endpoints had no response schema
+
+They returned `Task<IResult>`. OpenAPI infers the response schema from the declared return type, so the document described them as having **no response content at all**, and `openapi-typescript` typed the login and `/me` bodies as `never` — the two calls every client makes first.
+
+Nothing on the backend noticed, because the endpoints returned exactly the right JSON. It surfaces only as a frontend that cannot name what it is receiving, at which point the pressure is to hand-write the DTO — which CLAUDE.md forbids for precisely this reason.
+
+Fixed by giving them `Results<…>` unions. `ResponseSchemaContractTests` now checks **every** endpoint.
+
+### 2. `Idempotency-Key` was enforced but undocumented
+
+Read by an endpoint filter rather than bound as a parameter, so nothing told OpenAPI it existed. `openapi-fetch` types `params.header` as `undefined` for an operation declaring no headers — so the generated client had **no typed way to send the one header that makes a retry safe** on six money- and stock-moving endpoints.
+
+Fixed by an operation transformer driven off the same `IdempotentEndpointMetadata` marker `RequireIdempotency` attaches, so the document cannot claim the header where it is not enforced or omit it where it is. `IdempotencyDocumentTests` asserts both directions.
+
+### 3. Concurrent logins for one account returned 500
+
+`LoginAsync` stamped `LastLoginAt` via `UserManager.UpdateAsync`, which checks Identity's `ConcurrencyStamp` and — this is what made it invisible — **returns a failed `IdentityResult` rather than throwing**. Nothing checked the result. The user entity stayed `Modified` in the tracker, so the next `SaveChangesAsync` (inserting the refresh token) retried it and threw `DbUpdateConcurrencyException`. The caller was refused *after* their password had been verified.
+
+Two tills sharing an owner login, or one person double-clicking Sign in, would have reproduced it in a shop. Found by Playwright running its workers in parallel; no sequential test could have caught it. Fixed with `ExecuteUpdateAsync`, pinned by `ConcurrentLoginTests`, and falsified (both tests go red on the old code).
+
+### 4. `String(undefined)` in the product form
+
+`costPrice` is **omitted** from the response for a caller without `CanViewMargins` — invariant 7, not nulled — so it arrives as `undefined`. The form seeded `String(product.costPrice)`, which is the literal six letters `"undefined"`, and saving then failed validation on a field nobody had touched.
+
+The lesson generalises: **every `JsonIgnore(WhenWritingNull)` field arrives as `undefined`, not `null`.** `??`, never `=== null`.
+
+## What Phase 5 inherits
+
+The register screen is a client of all of this. These shape it:
+
+1. **`unwrap(api.GET(...))` throws a `ProblemError`.** Branch on `.is(ErrorType.x)`, never on `detail` — the backend documents `detail` as reworderable prose. `.fieldErrors` is total and returns `{}` on a non-validation problem, so a form can render it unconditionally.
+2. **`newIdempotencyKey()` is minted per *operation*, not per attempt.** `StockAdjustmentDialog` holds it in `useState` for the life of the dialog; a cart must do the same from first tender. A key generated inside the fetch makes the header decorative.
+3. **Session expiry does not unmount the route tree.** `RequireAuth` renders `<Outlet/>` plus `<ReauthOverlay/>` on status `expired`, and only navigates on `anonymous`. **The cart is safe as long as it lives inside that tree** — put it in React state under the layout, not in a route that remounts.
+4. **`LIVE_QUERY_OPTIONS`** (`staleTime: 0`, `refetchOnMount: 'always'`) is the tier for anything with a cash consequence. Spread it into shift and stock queries; the 60s default is for catalog reads.
+5. **Money is `number | string` in `schema.d.ts`**, because .NET describes a `decimal` as `type: ["number","string"]`. `lib/money.ts` is the only place that resolves it — `formatMoney`, `formatQuantity`, `formatRate`, `parseServerDecimal`. Nothing else touches the raw union.
+6. **`deviceApi` cannot attach a bearer token.** `POST /auth/pin` and `GET /employees/pin-eligible` are authenticated by the DeviceToken *scheme*; sending `Authorization` instead would be evaluated by the JWT scheme and the second factor would silently vanish. Keeping them on a separate client makes that mistake unavailable.
+7. **A sale needs an open shift.** `GET /shifts/current?registerId=` answers 404 when there is none — `AppLayout`'s indicator already reads it, and `getEnrolledRegisterId()` is where the register id comes from.
 
 ## Things that will bite you
 
-New in Phase 3 (1–12); the rest carried forward and still true.
+New in Phase 4 (1–13); the rest carried forward and still true.
 
-1. **A namespace may not share a name with a type inside it.** `Pos.Core.Money` makes `Money` a
-   member of `Pos.Core`, and enclosing-namespace members outrank `using`-imported types — so
-   every unqualified `Money` under `Pos.Core.*` is **CS0118**. The namespace is `Pos.Core.Monetary`.
-2. **EF cannot aggregate a value-converted property.** `SumAsync` over a `Money` column does not
-   translate. Shift arithmetic reads its sums with `db.Database.SqlQuery<decimal>`, writing the
-   `tenant_id` predicate **by hand** because the query filter does not compose over raw SQL.
-3. **`Properties<decimal>()` does not cover `Money`.** It matches the CLR property type. A
-   `Money` property with no `HavePrecision` maps at `numeric(18,2)` and silently truncates.
-4. **Minimal-API endpoint filters run *after* model binding**, so the body is already consumed.
-   `Program.cs` calls `EnableBuffering()` before routing; the idempotency filter throws rather
-   than hashing zero bytes if that is ever removed.
-5. **EF's `SqlQuery` composes its argument into a subquery**, and Postgres will not accept a
-   data-modifying statement there. The sale-number upsert goes through raw ADO, enlisted in the
-   ambient transaction explicitly.
-6. **`ON CONFLICT (tenant_id)` needs a unique constraint on `(tenant_id)` alone.** That is why
-   `ux_sale_sequence_tenant` is not the usual `(tenant_id, id)` composite.
-7. **A `SqlQuery<T>` result column must be aliased `"Value"`.** Every raw query here does.
-8. **`CatalogFixture` seeds stock rows with no matching movements**, so `OnHand == SUM(movements)`
-   is *false* in the Api test fixture. Assert `openingBalance + ledger` there. `CatalogGraph`
-   (Data tests) does write the opening receipt, so the invariant holds outright.
-9. **The endpoint's shift check masks the writer's.** Deleting the writer's `FOR SHARE` check
-   left the whole Api suite green; `SaleWriterTests` in `Pos.Data.Tests` exists to test the
-   writer's guards with no endpoint in front of them.
-10. **Two units in one refund cost a cent less than two separate one-unit refunds** (2.95 vs
-    2.96). That is round-once working, not a bug.
-11. **`Subtotal` is derived, not summed.** If someone "simplifies" it back to a fourth
-    independent sum, only the property test over random carts notices.
-12. **A migration class named after a type collides with it.** `migrations add Money` produced
-    `Pos.Data.Migrations.Money`, ambiguous with `Pos.Core.Monetary.Money`. It is `MoneyType`.
-13. **A model change touches four files** — configuration, migration, `.Designer.cs` and
-    `AppDbContextModelSnapshot.cs`. A partial edit fails the *whole* Data and Api suite at
-    fixture init with `PendingModelChangesWarning`, on an error unrelated to what you did.
-14. **An applied migration does not re-run**, so a migration adding a tenant table must call
-    `ApplyTenantRowLevelSecurity()` — and in `Down` call **`Apply`, not `Remove`**.
-15. **A retrying execution strategy refuses a user-initiated transaction.** Wrap the unit in
-    `db.Database.CreateExecutionStrategy().ExecuteAsync(...)`.
-16. **There are no navigation properties, so there is no FK fixup.** Save principals before
-    dependents. `SaleWriter` saves the sale, then its lines, then the movements.
-17. **A stale build can make a correct migration emit wrong SQL.** `Remove-Item -Recurse
-    src/Pos.Data/obj, src/Pos.Data/bin` before debugging generated SQL.
-18. **xUnit here is 2.9.3**, so there is no `TestContext.Current`.
-19. **`InvariantGlobalization` is on**, so `CultureInfo.GetCultureInfo("fr-FR")` *throws*. Build a
-    `NumberFormatInfo` by hand if a test needs a non-invariant separator.
-20. **A shared `WebApplicationFactory` has no reset between tests.** `TwoTenantWorld` is
-    read-only; `CatalogSandboxAsync()` asserts *contains*, never counts; anything asserting an
-    exact count uses `factory.TradingTenantAsync()`, which makes its own tenant.
-21. **`problem+json` carries a per-request `traceId`.** Compare `type`/`title`/`status`.
-22. **`GetProperty("errors")` throws `KeyNotFoundException`** when the response is not a
-    validation problem — which reads as an unrelated failure. Assert the status first.
-23. **`[CallerFilePath]` is a lie under CI.** `$env:CI="true"` reproduces CI-only behaviour.
-24. **`dotnet run` uses `launchSettings.json` and ignores `ASPNETCORE_URLS`.** Port 5013.
-25. **`dotnet ef database update` needs the owner connection string passed explicitly.**
-26. **Kill stray `Pos.Api` processes before rebuilding** — `Stop-Process`, not `pkill`.
-27. **A superuser bypasses RLS unconditionally.** Isolation assertions run on `pos_app`.
-28. **`GET /registers` is a bare array, not a cursor page.** So are the other two un-paginated
-    endpoints.
-
-## What the falsification pass found
-
-**Fifteen deliberate breaks. Thirteen went red immediately; two caught nothing and both gaps
-are now closed.**
-
-The two that mattered:
-
-- **Per-line rounding in the pricing engine was caught by nothing.** Accumulating
-  `lineTotal.Round()` instead of `lineTotal` passed every worked example *and* the invariant-1
-  property, because `Subtotal` is derived from the same wrong number. Closed by three tests,
-  one per rounded column — `TaxTotal` got its own because it is the figure that reaches a tax
-  authority.
-- **Deleting `SaleWriter`'s shift check left the entire Api suite green**, because the
-  endpoint's own check masks it under sequential conditions. Closed by `SaleWriterTests` in
-  `Pos.Data.Tests`, which exercises the writer with no endpoint in front of it.
-
-The thirteen that went red as expected: RLS omitted from a migration; `DateTime.UtcNow` in Core;
-`TimeProvider.System` inside a lambda; tax on the gross; `Subtotal` independently summed;
-`MAX()+1` sale numbering; the discrepancy boundary at `<= 0`; a refund priced from the catalog;
-voided refunds counted toward the remaining quantity; voiding a refunded sale; voided sales
-counted in expected cash; the tendered note counted instead of tendered-less-change; and the
-status guard dropped from the closing `UPDATE`.
+1. **Playwright starts `webServer` entries BEFORE `globalSetup`.** The migration is therefore chained into the API's own command in `playwright.config.ts`, not done in setup — a migration in `globalSetup` runs after the API has already failed its readiness check against a database that does not exist.
+2. **`playwright install --with-deps` hangs on Windows.** It is a Linux-only flag. Locally: `pnpm exec playwright install chromium`. CI keeps `--with-deps`.
+3. **`describe.configure({ mode: 'serial' })` shares the worker, not storage.** Every test gets a fresh browser context, so `localStorage` does not carry between them. `enrolDevice(page)` in `e2e/fixtures/actors.ts` is how a spec arranges a device token.
+4. **A failed PIN burns one of that user's five lockout attempts.** The wrong-PIN spec deliberately uses Sam Cole, not Robin Vale, because Robin Vale is who the authorization specs sign in as and CI runs with `retries: 2`.
+5. **`tsc -b` covers `e2e/` through its own project** (`tsconfig.e2e.json`). It is deliberately *not* in `tsconfig.app.json`: app code must not have `process` or `node:fs` in scope, since reaching for them there compiles and then fails in a browser.
+6. **`schema.d.ts` is generated and committed, and CI fails on drift.** Change a DTO → run the API → `pnpm --dir src/Pos.Web generate:api` → commit. The generate script runs Prettier so the diff is byte-stable.
+7. **The generate script needs the API running** on 5013 with the `http` profile. The `https` profile also binds 7091, which switches `UseHttpsRedirection` on and 307s the Vite proxy out of the proxy.
+8. **The Vite dev proxy pointed at 5199 from Phase 0.5 until this branch.** The API is on 5013. Nothing but the health probe had used it.
+9. **`.NET` describes every numeric as `number | string`** in OpenAPI, including `int32`. `expiresIn` is coerced in `refresh.ts`, because `Date.now() + '900' * 1000` is `NaN` and the session then looks permanently expired.
+10. **`queryClient.clear()` removes the `/auth/me` query too**, and a query that no longer exists cannot be refetched — a PIN swap then left an owner's name on screen with a cashier's token behind it. `AuthProvider` uses `removeQueries` with a predicate excluding `['auth']`, then `refetchQueries`.
+11. **A component file that also exports a hook breaks Fast Refresh.** `useAuth` and `useToast` live in `authContext.ts` / `toastContext.ts` for that reason; the `.tsx` files export components only.
+12. **oxlint's `exhaustive-deps` was right about `policies`.** `me.data?.user.policies ?? []` allocates a new array every render, so the context value was new every render and re-rendered every screen reading it. It is memoised.
+13. **`base-ui` has no `asChild`.** It uses a `render` prop. For a link styled as a button, use `buttonVariants({ ... })` as a `className` on the `<Link>`.
+14. **A namespace may not share a name with a type inside it.** The namespace is `Pos.Core.Monetary`.
+15. **EF cannot aggregate a value-converted property.** Shift arithmetic reads its sums with `db.Database.SqlQuery<decimal>`, writing the `tenant_id` predicate by hand.
+16. **`Properties<decimal>()` does not cover `Money`.** A `Money` property with no `HavePrecision` maps at `numeric(18,2)` and silently truncates.
+17. **Minimal-API endpoint filters run *after* model binding.** `Program.cs` calls `EnableBuffering()` before routing.
+18. **EF's `SqlQuery` composes into a subquery**, and Postgres will not accept a data-modifying statement there. The sale-number upsert goes through raw ADO.
+19. **`ON CONFLICT (tenant_id)` needs a unique constraint on `(tenant_id)` alone.**
+20. **A `SqlQuery<T>` result column must be aliased `"Value"`.**
+21. **`CatalogFixture` seeds stock rows with no matching movements**, so `OnHand == SUM(movements)` is false in the Api test fixture. Assert `openingBalance + ledger` there.
+22. **A model change touches four files** — configuration, migration, `.Designer.cs` and `AppDbContextModelSnapshot.cs`. A partial edit fails the whole Data and Api suite at fixture init.
+23. **An applied migration does not re-run**, so a migration adding a tenant table must call `ApplyTenantRowLevelSecurity()` — and in `Down` call **`Apply`, not `Remove`**.
+24. **A retrying execution strategy refuses a user-initiated transaction.** Wrap it in `CreateExecutionStrategy().ExecuteAsync(...)`.
+25. **There are no navigation properties, so there is no FK fixup.** Save principals before dependents.
+26. **A stale build can make a correct migration emit wrong SQL.** Remove `obj`/`bin` before debugging generated SQL.
+27. **xUnit here is 2.9.3**, so there is no `TestContext.Current`.
+28. **`InvariantGlobalization` is on**, so `CultureInfo.GetCultureInfo("fr-FR")` throws.
+29. **A shared `WebApplicationFactory` has no reset between tests.** Anything asserting an exact count uses `factory.TradingTenantAsync()`.
+30. **`problem+json` carries a per-request `traceId`.** Compare `type`/`title`/`status`.
+31. **`[CallerFilePath]` is a lie under CI.** `$env:CI="true"` reproduces CI-only behaviour.
+32. **`dotnet ef database update` needs the owner connection string passed explicitly.**
+33. **Kill stray `Pos.Api` processes before rebuilding** — `Stop-Process`, not `pkill`. This bites on every rebuild while the API is running.
+34. **A superuser bypasses RLS unconditionally.** Isolation assertions run on `pos_app`.
 
 ## Verified by hand
 
-- **The arithmetic, on paper.** An inclusive-tax cart with two rates and a cart discount that
-  does not divide evenly was computed independently and then asserted:
-  `HandCheckedCartTests`. Total 12.97, tax 2.02, discount 4.22, derived subtotal 15.17, shares
-  4.1653 + 0.8347 = 5.0000 exactly. An exclusive control gives 15.46, so the mode is not being
-  ignored.
-- **The whole path, against the dev database and a real API**: open shift → quote → sell →
-  replay the key (one sale, not two) → stock 48 → 46 → oversell to −3 and see the discrepancy
-  listed → refund a line → close the shift. Expected cash `100 + 2.40 + 11.85 − 1.20 = 113.05`
-  matched the endpoint exactly.
-- **Invariant 1 on real rows**: all three sales in the dev database satisfy
-  `Total == Subtotal − DiscountTotal + TaxTotal + RoundingAdjustment`.
+Everything below was driven in a real browser, because jsdom does not paint.
+
+- **The full owner flow**: log in → create a tax class, category and product → two barcodes → search → edit the price → adjust stock with a reason → the movement in the ledger. This is also `e2e/catalog.spec.ts`.
+- **A Cashier** sees no catalog navigation, is refused in place at `/catalog`, and has no cost-price field.
+- **Device enrolment and PIN swap** — paste the seeder's token at `/settings/device`, then swap to Robin Vale with PIN `4821`. The navigation changes without a reload.
+- **Killing the API mid-session** surfaces as a readable toast and an `unreachable` badge in the footer, never a blank screen.
 
 ## Outstanding / deferred
 
-- **CI has not run on this work.** Push the branch and open the PR; that is the first thing.
-- **Existing dev databases carry stock drift.** `tools/Pos.Seed` used to write stock rows with
-  an opening balance and no matching movement, so `OnHand != SUM(movements)` on any database
-  seeded before this commit. Fixed for *fresh* seeds; an existing one needs the opening
-  receipts adding by hand. **Do not "fix" it with `RebuildOnHand`** — that would set on-hand to
-  the movement sum and discard the seeded opening stock.
-- **No audit log.** Phase 7.2. Price overrides are authorized and recorded on the sale line
-  (`IsPriceOverridden`, `OverriddenBy`), but API.md's older claim that "the attempt is audited"
-  is not yet true — the line is the whole trail.
-- **`GET /settings` and `PUT /settings` are not built**, so `TaxMode` and
-  `CashRoundingIncrement` are settable only by SQL or the seeder, and "taxMode is rejected once
-  sales exist" is enforced nowhere. `Sale.TaxMode` is snapshotted for exactly this reason.
-- **`GET /sales/{id}/receipt` and `GET /shifts/{id}/report` are documented and unbuilt** —
-  Phase 6.1 and 6.3.
-- **`?from=`/`?to=` on `GET /sales` are not implemented.** Date-range reporting is Phase 6.
-- **`CursorPaging` is still ascending-only**, so `GET /sales` pages oldest-first. Phase 6 has
-  the screen to argue from.
-- **Percentage discounts do not exist.** Absolute amounts only; a percentage is a client
-  computation.
-- **`Tender.Method` accepts `Cash` only.** `External`, `Card` and `Voucher` are declared so the
-  discriminator claim holds, and refused at the endpoint.
+- **CI has not run on this branch yet.** Push and open the PR; the two new jobs (`contract`, `e2e`) have only ever run locally. Do that before calling Phase 4 done.
+- **The `e2e` CI job creates the `pos_app` role in a step**, because a service container cannot run `docker/postgres-init/01-app-role.sh` — that needs a mounted entrypoint directory.
+- **`auth/policies.ts` is a hand-written list** and can drift from `PolicyCatalog`. Nothing in the type system catches it; the Playwright authorization specs do, which is stated in the file.
+- **Existing dev databases carry stock drift.** `tools/Pos.Seed` used to write stock rows with an opening balance and no matching movement. Fixed for fresh seeds; an existing one needs the opening receipts adding by hand. **Do not "fix" it with `RebuildOnHand`** — that discards the seeded opening stock. E2E sidesteps it with a fresh `pos_e2e`.
+- **No audit log.** Phase 7.2. Price overrides are recorded on the sale line; a *rejected* attempt is recorded nowhere. `docs/API.md` now says so.
+- **`GET /settings` and `PUT /settings` are not built**, so `TaxMode` and `CashRoundingIncrement` are settable only by SQL or the seeder.
+- **`GET /sales/{id}/receipt` and `GET /shifts/{id}/report` are documented and unbuilt** — Phase 6.1 and 6.3.
+- **`?from=`/`?to=` on `GET /sales` are not implemented.** Phase 6.
+- **`CursorPaging` is ascending-only**, so `GET /sales` pages oldest-first. Phase 6 has the screen to argue from.
+- **Percentage discounts do not exist.** Absolute amounts only.
+- **`Tender.Method` accepts `Cash` only.**
 - **`RebuildOnHand` still has no route.**
-- **`TaxClass` has no deactivate and no `IsActive`.**
-- **`limit=abc` returns a bare 400 with no `problem+json` body.** A global `UseStatusCodePages`
-  would fix every bare body at once and belongs in its own commit.
-- **`dotnet dev-certs https --trust`** still not run.
-- **Playwright browsers not installed** — Phase 4.
+- **`TaxClass` has no deactivate and no `IsActive`** — the UI reflects that rather than offering a button that would 404.
+- **`limit=abc` returns a bare 400 with no `problem+json` body.** `toProblem` handles it on the client; a global `UseStatusCodePages` would fix every bare body at once and belongs in its own commit.
+- **`dotnet dev-certs https --trust`** still not run. Use the `http` profile.
 - **Production `pos_app` password** — Phase 8.2.
-- **A validly signed token is trusted for whatever tenant it names** — accepted and pinned by
-  `ForgedTenancyTests`.
+- **A validly signed token is trusted for whatever tenant it names** — accepted and pinned by `ForgedTenancyTests`.
 - **CI actions emit a Node 20 deprecation warning.**
 - **`Microsoft.OpenApi` pinned to 2.11.0** for GHSA-v5pm-xwqc-g5wc.
+- **`openapi-typescript` warns about its TypeScript peer** (wants ^5, the repo is on 6). It works; the warning is noise.
 
 ## Still genuinely open
 
-**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing
-until Phase 10, but must be settled before quoting a price.
+**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing until Phase 10, but must be settled before quoting a price.

@@ -12,6 +12,15 @@ dist
 dist-ssr
 *.local
 
+# Playwright. `e2e/.seed.json` holds a device token issued by the seeder for the
+# throwaway e2e database — regenerated on every run, and never a secret worth
+# keeping, but there is no reason for a credential to be in git at all.
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/e2e/.seed.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

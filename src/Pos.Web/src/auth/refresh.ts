@@ -12,18 +12,18 @@
  * One promise, therefore, shared by all of them.
  */
 
+import type { components } from '@/api/schema'
 import { clearTokens, getRefreshToken, setTokens } from './tokenStore'
 
-/** Shape of `AuthResponse`. Not imported from the generated schema: this module
- * is below the generated client in the dependency order — the client's 401
- * middleware calls into here, so importing the client back would be a cycle.
- * Only the three fields this function needs are read, and a Vitest test pins
- * them against the real response body. */
-interface RefreshResult {
-  accessToken: string
-  refreshToken: string
-  expiresIn: number
-}
+/**
+ * The generated `AuthResponse`, not a hand-written copy.
+ *
+ * Importing it is safe despite this module sitting *below* the client in the
+ * dependency order — the client's 401 middleware calls in here, so importing
+ * `client.ts` back would be a cycle. `schema.d.ts` is types only and imports
+ * nothing, so there is no cycle and no runtime import at all.
+ */
+type RefreshResult = components['schemas']['AuthResponse']
 
 /**
  * The one in-flight refresh, or `null` when none is running.
@@ -99,16 +99,26 @@ async function runRefresh(): Promise<boolean> {
     return false
   }
 
-  if (
-    typeof body.accessToken !== 'string' ||
-    typeof body.refreshToken !== 'string' ||
-    typeof body.expiresIn !== 'number'
-  ) {
+  // A 200 carrying something else — a captive portal or a proxy's login page is
+  // the realistic case. Adopting it would store `undefined` as the access token
+  // and every request afterwards would fail with nothing to point at.
+  if (typeof body.accessToken !== 'string' || typeof body.refreshToken !== 'string') {
     clearTokens()
     return false
   }
 
-  setTokens(body)
+  // `expiresIn` is typed `number | string`: .NET's OpenAPI describes every
+  // numeric that way. Coerced rather than trusted, because
+  // `Date.now() + '900' * 1000` is NaN and the session would then look
+  // permanently expired.
+  const expiresIn = Number(body.expiresIn)
+
+  if (!Number.isFinite(expiresIn) || expiresIn <= 0) {
+    clearTokens()
+    return false
+  }
+
+  setTokens({ ...body, expiresIn })
   return true
 }
 

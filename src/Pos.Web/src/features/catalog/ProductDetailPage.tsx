@@ -70,8 +70,14 @@ export function ProductDetailPage() {
       categoryId: product.categoryId ?? '',
       taxClassId: product.taxClassId,
       unitPrice: String(product.unitPrice),
-      // Absent for a caller without CanViewMargins — see below.
-      costPrice: product.costPrice === null ? '' : String(product.costPrice),
+
+      // `?? ''` **inside** the String(), and the nullish coalesce has to cover
+      // undefined as well as null. `costPrice` is *omitted* from the JSON for a
+      // caller without CanViewMargins — invariant 7, on the grounds that
+      // anything reaching the browser is readable — so an absent field arrives
+      // as `undefined`, and `String(undefined)` is the literal text "undefined",
+      // which then fails the price validator on a form nobody had touched.
+      costPrice: String(product.costPrice ?? ''),
       unit: product.unit,
       trackStock: product.trackStock,
     })
