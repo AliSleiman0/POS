@@ -1,70 +1,84 @@
 import { NavLink, Outlet } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import { api, unwrap } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { ErrorBoundary } from './ErrorBoundary'
-import { LIVE_QUERY_OPTIONS } from './queryClient'
 import { useAuth } from '@/auth/authContext'
-import { getEnrolledRegisterId } from '@/auth/deviceToken'
 import { IfPolicy } from '@/auth/guards'
+import { CartProvider } from '@/features/register/CartProvider'
+import { useCurrentShift } from '@/features/register/queries'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 
 /**
  * The authenticated chrome: navigation, who is signed in, and the drawer state.
+ *
+ * Hosts the `CartProvider`, deliberately. The cart has to outlive a route change
+ * — a cashier checking a price in the catalog must come back to the same six
+ * items — and it has to outlive a session expiring, which `RequireAuth` handles
+ * by rendering a prompt *over* this tree rather than navigating away from it. A
+ * cart inside the register screen would be thrown away by both.
  */
 export function AppLayout() {
   const { user, tenant, logout } = useAuth()
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-6 border-b border-border px-4 py-2">
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-semibold text-foreground">
-            {tenant?.name ?? 'POS'}
-          </span>
-          <span className="truncate text-xs text-muted-foreground">{tenant?.slug}</span>
-        </div>
-
-        <nav className="flex flex-1 items-center gap-1">
-          <NavItem to="/">Overview</NavItem>
-          <IfPolicy policy="CanManageCatalog">
-            <NavItem to="/catalog">Catalog</NavItem>
-            <NavItem to="/catalog/categories">Categories</NavItem>
-            <NavItem to="/catalog/tax-classes">Tax</NavItem>
-            <NavItem to="/stock">Stock</NavItem>
-          </IfPolicy>
-        </nav>
-
-        <ShiftIndicator />
-
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col items-end">
-            <span className="text-sm font-medium text-foreground">{user?.displayName}</span>
-            <span className="text-xs text-muted-foreground">{user?.role}</span>
+    <CartProvider>
+      <div className="flex h-full flex-col">
+        <header className="flex items-center gap-6 border-b border-border px-4 py-2">
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-semibold text-foreground">
+              {tenant?.name ?? 'POS'}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">{tenant?.slug}</span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void logout()
-            }}
-          >
-            Sign out
-          </Button>
-        </div>
-      </header>
 
-      {/* Inside the layout, so a crash on one screen leaves the navigation
-          usable instead of blanking the whole application. */}
-      <main className="min-h-0 flex-1 overflow-y-auto p-6">
-        <ErrorBoundary>
-          <Outlet />
-        </ErrorBoundary>
-      </main>
+          <nav className="flex flex-1 items-center gap-1">
+            <NavItem to="/">Overview</NavItem>
+            <IfPolicy policy="CanSell">
+              <NavItem to="/register">Register</NavItem>
+            </IfPolicy>
+            <IfPolicy policy="CanManageCatalog">
+              <NavItem to="/catalog">Catalog</NavItem>
+              <NavItem to="/catalog/categories">Categories</NavItem>
+              <NavItem to="/catalog/tax-classes">Tax</NavItem>
+              <NavItem to="/stock">Stock</NavItem>
+            </IfPolicy>
+          </nav>
 
-      <ApiFooter />
-    </div>
+          <ShiftIndicator />
+
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col items-end">
+              <span className="text-sm font-medium text-foreground">{user?.displayName}</span>
+              <span className="text-xs text-muted-foreground">{user?.role}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void logout()
+              }}
+            >
+              Sign out
+            </Button>
+          </div>
+        </header>
+
+        {/* Inside the layout, so a crash on one screen leaves the navigation
+          usable instead of blanking the whole application.
+
+          No padding here: the register runs edge to edge, and every other page
+          brings its own. A layout that special-cased one route's padding would
+          have to know which route it was rendering. */}
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
+        </main>
+
+        <ApiFooter />
+      </div>
+    </CartProvider>
   )
 }
 
@@ -92,28 +106,16 @@ function NavItem({ to, children }: { to: string; children: string }) {
  * A sale needs an open shift, so this is the first thing anyone standing at a
  * register needs to know. `GET /shifts/current` answers 404 when there is none,
  * which `unwrap` turns into a `ProblemError` — hence `isError` meaning "no
- * shift" rather than "broken". Phase 5 makes this actionable; here it reports.
+ * shift" rather than "broken".
+ *
+ * Shares `useCurrentShift` with the register screen, so opening a drawer there
+ * updates this without a second query key to keep in step.
  */
 function ShiftIndicator() {
   const { tenant } = useAuth()
-  const registerId = getEnrolledRegisterId()
+  const shift = useCurrentShift()
 
-  const shift = useQuery({
-    queryKey: ['shifts', 'current', registerId],
-    queryFn: () =>
-      unwrap(
-        api.GET('/api/v1/shifts/current', {
-          params: { query: { registerId: registerId ?? undefined } },
-        }),
-      ),
-    // A drawer's state is never allowed to be stale — see queryClient.ts.
-    ...LIVE_QUERY_OPTIONS,
-    enabled: registerId !== null,
-    // A 404 here is the answer "no open shift", not a failure worth retrying.
-    retry: false,
-  })
-
-  if (registerId === null) {
+  if (shift.registerId === null) {
     return <span className="text-xs text-muted-foreground">Not a register</span>
   }
 

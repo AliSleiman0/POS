@@ -14,7 +14,7 @@ export function OverviewPage() {
   const { user, tenant, policies } = useAuth()
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-8">
+    <div className="mx-auto flex max-w-3xl flex-col gap-8 p-6">
       <header>
         <h1 className="text-2xl font-semibold text-foreground">{tenant?.name ?? 'Your shop'}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -24,16 +24,19 @@ export function OverviewPage() {
         </p>
       </header>
 
-      <IfPolicy
-        policy="CanManageCatalog"
-        otherwise={
-          <p className="text-sm text-muted-foreground">
-            The register screen arrives in Phase 5. There is nothing for a cashier to do here yet.
-          </p>
-        }
-      >
+      <IfPolicy policy="CanSell">
+        <section>
+          {/* First, and biggest. For a cashier it is the only thing on this
+              screen they will ever tap. */}
+          <Link to="/register" className={buttonVariants({ size: 'lg' })}>
+            Open the register
+          </Link>
+        </section>
+      </IfPolicy>
+
+      <IfPolicy policy="CanManageCatalog">
         <section className="flex flex-wrap gap-2">
-          <Link to="/catalog" className={buttonVariants({ size: 'lg' })}>
+          <Link to="/catalog" className={buttonVariants({ variant: 'outline', size: 'lg' })}>
             Manage catalog
           </Link>
           <Link to="/stock" className={buttonVariants({ variant: 'outline', size: 'lg' })}>

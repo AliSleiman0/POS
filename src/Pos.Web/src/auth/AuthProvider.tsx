@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, deviceApi, unwrap } from '@/api/client'
+import { isProblemError } from '@/api/problem'
 import { refreshSession } from './refresh'
 import {
   accessTokenExpiresAt,
@@ -36,7 +37,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const statusRef = useRef(status)
   statusRef.current = status
 
-  const enabled = status === 'loading' || status === 'authenticated' || status === 'expired'
+  // Everything except `anonymous`, so a retry from the `unreachable` state can
+  // actually run — a disabled query cannot be refetched.
+  const enabled = status !== 'anonymous'
 
   const me = useQuery({
     queryKey: ['auth', 'me'],
@@ -45,16 +48,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // The session is not something to be stale about, but it also does not
     // change on its own — refetching is driven by login/logout, not a timer.
     staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
+    // Retry is left to the shared policy in `queryClient.ts`, which already
+    // declines to retry a 4xx and does retry a transport failure. A blanket
+    // `retry: false` here would turn one dropped packet into a failed restore.
   })
 
-  // A `me` that fails despite a token means the token is not usable. The client
-  // middleware has already tried to refresh by this point.
+  /**
+   * What a failed restore means.
+   *
+   * **A dropped connection is not a rejected credential.** `refresh.ts` makes
+   * exactly this distinction one layer down — a `fetch` that throws keeps the
+   * token — and it has to hold here too, because the failure mode is a till
+   * reloading on a flaky shop connection and landing on a login screen with a
+   * customer waiting. Only an answer that actually refused the credential ends
+   * the session; anything else keeps the tokens and offers a retry.
+   *
+   * The client middleware has already tried to refresh by the time we get here,
+   * so a 401 at this point is final.
+   */
   useEffect(() => {
-    if (me.isError && statusRef.current === 'loading') {
-      clearTokens()
+    if (!me.isError || statusRef.current !== 'loading') {
+      return
     }
-  }, [me.isError])
+
+    if (isProblemError(me.error) && me.error.status === 401) {
+      clearTokens()
+      return
+    }
+
+    setStatus('unreachable')
+  }, [me.isError, me.error])
 
   useEffect(() => {
     if (me.isSuccess && statusRef.current !== 'authenticated') {
@@ -151,6 +174,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [adoptSession],
   )
 
+  /**
+   * Another go at a restore that could not reach the server.
+   *
+   * Back to `loading` first, so the retry shows as one and a second failure
+   * runs through the same branch rather than being swallowed by the guard on
+   * `statusRef` above.
+   */
+  const retrySession = useCallback(() => {
+    setStatus('loading')
+    void me.refetch()
+  }, [me])
+
   const logout = useCallback(async () => {
     const refreshToken = getRefreshToken()
 
@@ -185,8 +220,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       pinLogin,
       logout,
+      retrySession,
     }),
-    [status, me.data, policies, login, pinLogin, logout],
+    [status, me.data, policies, login, pinLogin, logout, retrySession],
   )
 
   return <AuthContext value={value}>{children}</AuthContext>

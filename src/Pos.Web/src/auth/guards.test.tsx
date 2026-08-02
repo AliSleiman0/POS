@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { AuthContext, type AuthContextValue } from './authContext'
 import { IfPolicy, RequireAuth, RequirePolicy } from './guards'
@@ -29,6 +30,7 @@ function session(overrides: Partial<AuthContextValue>): AuthContextValue {
     login: async () => undefined,
     pinLogin: async () => undefined,
     logout: async () => undefined,
+    retrySession: () => undefined,
     ...overrides,
   }
 }
@@ -81,6 +83,19 @@ describe('RequireAuth', () => {
     renderWith(session({ status: 'authenticated', policies: CASHIER }))
 
     expect(screen.getByText('Catalog screen')).toBeInTheDocument()
+  })
+
+  it('offers a retry rather than a login form when nothing answered', async () => {
+    const retrySession = vi.fn()
+    renderWith(session({ status: 'unreachable', retrySession }))
+
+    // The token was never rejected. Sending someone to /login here is how a
+    // ten-second broadband drop becomes a lost cart.
+    expect(screen.queryByText('Sign in')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not reach')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(retrySession).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the screen mounted when the session expires, and prompts over it', () => {

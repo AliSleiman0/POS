@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 4 complete — 854 .NET + 66 Vitest + 11 Playwright green |
-| **Next up** | Phase 5.1, the register screen. It inherits the generated client, the single-flight refresh, the idempotency helper and a re-auth flow that does not unmount the route tree. |
+| **Current phase** | Phase 5 in progress — 5.1 and 5.2 done. 854 .NET + 101 Vitest + 18 Playwright green |
+| **Next up** | Phase 5.3, cart interactions: line discount, price override, manager override. The cart, the quote and the keyboard map are already there to build on. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-08-02 |
 
@@ -25,7 +25,7 @@
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ✅ Done |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ✅ Done |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ✅ Done |
-| 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ⬜ Not started |
+| 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | 🔨 5.1–5.2 done |
 | 6 | [Receipts & reporting](phases/PHASE-6-receipts-reporting.md) | Receipt render/print, Z-report, sale history | ⬜ Not started |
 | 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log | ⬜ Not started |
 | 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ⬜ Not started |
@@ -98,8 +98,8 @@ Detail: [phases/PHASE-4-web-shell-catalog.md](phases/PHASE-4-web-shell-catalog.m
 
 The screen that decides whether the product is usable. Detail: [phases/PHASE-5-web-register.md](phases/PHASE-5-web-register.md)
 
-- [ ] **5.1 Register layout** — cart pane + keypad + product grid; dense, touch-first, fully keyboard-operable.
-- [ ] **5.2 Scan input** — global keystroke capture that works with no field focused and does not fight manual entry.
+- [x] **5.1 Register layout** — cart pane + total/keypad + product grid at `/register`, inside `AppLayout` so the cart (held in a `CartProvider` above the router's outlet) survives a route change and a re-auth. Open-shift prompt on the screen rather than in a menu. `POST /sales/quote` pulled forward from 5.3 so the headline number is the server's, with an integer minor-unit subtotal marked provisional until it lands.
+- [x] **5.2 Scan input** — global keystroke capture that stands down for focused fields, told from human typing by a **budget over the whole burst** rather than a per-gap threshold: one stalled frame used to split a code and look up its tail. Double-fire suppressed within 300ms of the previous scan starting. Unknown code is an in-page banner; feedback is a WebAudio beep plus a line flash, mutable.
 - [ ] **5.3 Cart interactions** — qty, line discount, line void, cart void, price override (permission-gated).
 - [ ] **5.4 Cash payment** — tender screen, quick-cash buttons, change due legible across a counter.
 - [ ] **5.5 Double-submit safety** — reuses the 3.5 idempotency key; a disabled button is not the mechanism.

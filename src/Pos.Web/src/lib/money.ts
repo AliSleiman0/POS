@@ -89,6 +89,19 @@ export function formatRate(rate: ServerDecimal, locale?: string): string {
   }).format(parseServerDecimal(rate))
 }
 
+/**
+ * A server decimal as integer minor units, **for a provisional display only**.
+ *
+ * The catalog stores four decimal places — a paper bag is `0.1650` — so this is
+ * lossy by construction, and that is exactly why nothing it produces may reach a
+ * customer. It exists so the cart can show a running subtotal in the ~100ms
+ * before `POST /sales/quote` answers, marked as not authoritative. The number a
+ * person pays is always the server's.
+ */
+export function toMinorUnits(amount: ServerDecimal): MinorUnits {
+  return Math.round(parseServerDecimal(amount) * 100)
+}
+
 /** Formats an integer minor-unit amount. Use for provisional client-side subtotals. */
 export function formatMinorUnits(amount: MinorUnits, currency: string, locale?: string): string {
   if (!Number.isInteger(amount)) {
