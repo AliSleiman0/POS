@@ -199,6 +199,24 @@ jobs:
         run: dotnet tool restore
         working-directory: ${{ github.workspace }}
 
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Restored and built up front, not left to the first `dotnet run` inside
+      # Playwright's webServer. Two reasons: a compile error there is reported as
+      # "Process from config.webServer was not able to start", which says nothing
+      # about what is actually wrong; and the API has to be listening inside the
+      # readiness timeout, which a cold restore-and-build can eat on its own.
+      # Debug, matching what `dotnet run` and `dotnet ef` use by default — a
+      # Release build here would be discarded and paid for twice.
+      - name: Restore and build
+        run: dotnet build --configuration Debug
+        working-directory: ${{ github.workspace }}
+
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile
 
