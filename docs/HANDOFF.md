@@ -123,14 +123,36 @@ New in Phase 4 (1–13); the rest carried forward and still true.
 33. **Kill stray `Pos.Api` processes before rebuilding** — `Stop-Process`, not `pkill`. This bites on every rebuild while the API is running.
 34. **A superuser bypasses RLS unconditionally.** Isolation assertions run on `pos_app`.
 
-## Verified by hand
+## Verified in a browser
 
-Everything below was driven in a real browser, because jsdom does not paint.
+**Driven by Playwright, and separately *looked at*.** Those are different things and the
+distinction matters: Playwright asserts on the accessibility tree and on text, so a screen could
+render with white-on-white text, a zero-height container or overlapping panels and all eleven
+specs would still pass. So twelve screenshots were captured at 1280×900 and at tablet width and
+reviewed by eye.
 
-- **The full owner flow**: log in → create a tax class, category and product → two barcodes → search → edit the price → adjust stock with a reason → the movement in the ledger. This is also `e2e/catalog.spec.ts`.
-- **A Cashier** sees no catalog navigation, is refused in place at `/catalog`, and has no cost-price field.
-- **Device enrolment and PIN swap** — paste the seeder's token at `/settings/device`, then swap to Robin Vale with PIN `4821`. The navigation changes without a reload.
-- **Killing the API mid-session** surfaces as a readable toast and an `unreachable` badge in the footer, never a blank screen.
+Driven end to end by `e2e/`:
+
+- **The full owner flow** — log in → tax class, category and product → two barcodes → search →
+  edit the price → adjust stock with a reason → the movement in the ledger.
+- **A Cashier** sees no catalog navigation, is refused in place at `/catalog`, and has no
+  cost-price field.
+- **Device enrolment and PIN swap** — paste the seeder's token at `/settings/device`, then swap
+  to Robin Vale with PIN `4821`. The navigation changes without a reload.
+
+Confirmed by eye: login (empty, and with the error state), the catalog list, product detail with
+barcodes, stock, the adjustment dialog including both validation errors at once, tax classes,
+categories, the Cashier's overview, and login at tablet width. All render correctly.
+
+### Not verified
+
+- **Failure states have never been seen rendered.** The API being killed mid-session, a mutation
+  failing, and the re-auth overlay appearing over a populated screen are all covered by unit or
+  component tests, but nobody has watched them happen in a browser. The re-auth overlay in
+  particular is the one Phase 5 depends on, and `guards.test.tsx` proves the route stays mounted
+  — not that the modal looks right on top of a real screen.
+- **Nobody who has worked a till has used any of it.** Phase 5's doc asks for that and it is the
+  right bar; the catalog screens have not had it either.
 
 ## Outstanding / deferred
 
