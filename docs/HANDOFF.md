@@ -1,124 +1,191 @@
 # Session Handoff
 
-**Written:** 2026-08-01 · **Branch:** `phase-2/barcode-lookup` · **Phase 2 complete — start Phase 3.1**
+**Written:** 2026-08-02 · **Branch:** `phase-3/checkout-sales` · **Phase 3 complete — start Phase 4.1**
 
-> The catalog is behind the API, scannable, and stock is a ledger. **569 tests green locally** — 119 Core, 77 Data, 373 Api. Release build warning-free with `$env:CI="true"`, `pnpm build` clean. **CI has not run yet: the branch is unpushed and there is no PR.** Do that first, and do not call Phase 2 done until the runner agrees.
+> A sale can be priced, tendered in cash, and committed exactly once, with numbers that reconcile against the drawer. **846 tests green locally** — 261 Core, 106 Data, 479 Api. Release build warning-free with `$env:CI="true"`. The whole path was driven by hand against the dev database, and the shift's expected cash matched an independent hand computation. **CI has not run: the branch is unpushed and there is no PR.** Do that first, and do not call Phase 3 done until the runner agrees.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
 ## Read first
 
-1. [`docs/phases/PHASE-3-checkout-sales.md`](phases/PHASE-3-checkout-sales.md) → **§3.1**, the next milestone. Phase 2's exit criteria are all ticked with what proves each.
-2. [`DECISIONS.md`](../DECISIONS.md) → **"Resolved 2026-08-01 (during Phase 2.3 and 2.4)"** — nine decisions, three of which Phase 3 inherits directly.
-3. [`docs/API.md`](API.md#stock--stock) — the stock contracts, including two endpoints that are documented and deliberately unbuilt.
+1. [`DECISIONS.md`](../DECISIONS.md) → the four **"Resolved 2026-08-01/02 (during Phase 3.x)"** sections. Roughly thirty decisions; the ones Phase 4 inherits are listed under [What Phase 4 inherits](#what-phase-4-inherits).
+2. [`docs/phases/PHASE-4-web-shell-catalog.md`](phases/PHASE-4-web-shell-catalog.md) → **§4.1**, the next milestone.
+3. [`docs/API.md`](API.md) → the sales and shifts contracts, now written up in full.
 4. [`CLAUDE.md`](../CLAUDE.md) — the 10 invariants.
 
 ## State
 
-**569 tests green locally.** Three commits on `phase-2/barcode-lookup`, none pushed:
+Eight commits on `phase-3/checkout-sales`, none pushed:
 
-- `c09d954` Phase 2.3 — barcode lookup, and the manifest arity check
-- `49f036d` Phase 2.4 — the stock movement ledger and `IStockLedger`
-- `6250bcf` Phase 2.4 — the stock endpoints
+```
+ab99f4e  3.1  a Money value type, rounded once and away from zero
+ba90685  3.2  the pricing engine, inclusive and exclusive tax modes
+5e87163  3.3  sale, shift and tender entities with snapshotted line prices
+c8caf56  3.4  cash tender, change due, and under-tender refused
+ba82661  3.5  idempotent submit, one mechanism for sales, refunds, shifts and adjustments
+bfaf7fc  3.6  one transaction for the sale, its stock and its number
+2a262e3  3.7  voids and refunds as new linked rows, never an edit
+525ea83  3.8  register shifts, expected cash and variance
+```
 
-The dev database is migrated (`StockLedger`) and seeded. The phase doc's whole verification path was run against it by hand, outside the test host — tax class → category → product → two barcodes → scan each → receive → waste → read the ledger → confirm `OnHand == SUM(quantity)`. It holds. Scalar was also **looked at in a browser** this time, which closes 2.2's outstanding item: it renders, it navigates, and the Products and Stock groups list all ten and all three operations with their summaries.
-
----
-
-## What 3.1 is
-
-The `Money` type: `decimal` over `numeric(19,4)`, `MidpointRounding.AwayFromZero`, **rounded once** when producing an amount a person pays. Contracts in [`ROADMAP.md`](ROADMAP.md#phase-3--checkout-sales-cash).
-
-### Three things worth knowing before you start
-
-1. **`CatalogRules` is `Money`'s validation-only predecessor and says so in its own remarks.** It answers "would the column hold this exactly?" and owns no arithmetic. When `Money` lands, decide explicitly whether `CatalogRules` delegates to it or stays separate — it is called from three endpoints' validation paths, and quietly having two rounding rules is exactly the failure invariant 3 exists to prevent.
-2. **`CatalogRules.IsStorableSignedAmount` was added in 2.4** for signed ledger quantities, with `IsStorableAmount` now defined in terms of it. A quantity is not money, and `Money` should not swallow it.
-3. **`IStockLedger` is the port 3.6 has to join.** A sale writes its lines, its tender and its stock movements in one transaction; `StockLedger.RecordAsync` currently opens its own. Extending the port to accept an ambient transaction — or moving the sale to call it inside one — is a design decision 3.6 should take deliberately, not discover.
-
-### What 2.3 and 2.4 give you to build on
-
-- **`IStockLedger`** (`Pos.Core/Inventory/`) — `RecordAsync`, `RebuildOnHandAsync`, `RebuildAllOnHandAsync`. Registered by `AddPosData`, so a host with no HTTP gets a working ledger. It owns `OccurredAt` and `PerformedBy`; callers cannot supply them.
-- **`StockRules`** — signed-quantity storability, sign-vs-type consistency, and which types a human may write. Pure and tested without a database.
-- **`ConcurrentStockUpdateException` → 409**, raised from `StockItem`'s `xmin` token. The mechanism 3.6's last-unit-sale detection is built on, already proven under two contexts.
-- **`IsolationCase.VictimPath`** — for a route with more than one parameter, or one that is not a `Guid`. `UrlFor` throws on an arity mismatch.
-- **`CatalogFixture`** now writes barcodes (water gets two, coffee one, the bag none) and stock rows (coffee is below its reorder point on purpose). `SeededCatalog` gained `WaterBarcodeIds` and `StockedProductIds`.
+Three migrations: `MoneyType`, `Sales`, `Idempotency`. The dev database is migrated and seeded.
 
 ---
+
+## What Phase 4 inherits
+
+The web app is a client of all of this, so these are the ones that shape it:
+
+1. **API DTOs are `decimal`, not `Money`.** The JSON contract is plain numbers, and
+   `SaleContractTests.No_endpoint_dto_declares_a_money_property` fails the build if that ever
+   slips. So the generated TypeScript client sees `number` everywhere — and per CLAUDE.md,
+   **money is never a JS `number` in a calculation**: the server computes every total, the
+   client displays it.
+2. **`POST /sales/quote` exists so the register never prices anything itself.** It takes the
+   same cart as `POST /sales`, needs no register, shift, tenders or idempotency key, and is
+   guaranteed to agree with the sale because both build their `Cart` through one function.
+3. **Every 🔒 endpoint needs `Idempotency-Key`**, generated *before the first attempt* and
+   reused on retry. Missing or malformed is a `400` with the header named in `errors`. This is
+   the mechanism Phase 5.5's double-submit safety uses — **a disabled button is not it**.
+4. **A sale needs an open shift**, so the register's first screen after login is "open a
+   drawer". `GET /shifts/current?registerId=` answers `404` when there is none.
+5. **A replay returns the original status and body byte-for-byte, with `Idempotent-Replay:
+   true`** — but *not* other headers. A replayed `201` carries no `Location`.
 
 ## Things that will bite you
 
-New in 2.3/2.4 (1–6); the rest carried forward and still true.
+New in Phase 3 (1–12); the rest carried forward and still true.
 
-1. **EF renders a tenant query filter on a joined entity as an uncorrelated derived table.** The barcode lookup's SQL therefore contains **three** `SELECT`s for one round trip, and a test counting them asserts the shape of the query filter rather than the cost of the read. Count `FROM <driving table>` and `INNER JOIN` instead — and while you are there, assert the tenant predicate appears once per table, because a join is the one place a tenant-scoped read quietly widens.
-2. **A test that only reads the victim tenant cannot see collateral damage in the caller's own.** Carried forward from 2.2's falsification pass and now acted on: `AssertNeitherTenantsWaterGainedACode` reads **both** tenants. New `AssertUntouched` helpers should do the same.
-3. **`ScopedDbContext.ForTenant` takes an optional actor id.** Without it `ICurrentActor` is `SystemActor` and `PerformedBy` is null — which looks like a bug in the ledger rather than in the fixture.
-4. **xUnit here is 2.9.3, so there is no `TestContext.Current`.** Pass `CancellationToken.None` explicitly where a method demands a token; the EF calls in this suite pass none at all.
-5. **A rebuild test is insensitive to the write path being broken.** Deliberately breaking `OnHand +=` failed four tests and left both `RebuildOnHand` tests green — correctly, since a rebuild repairs drift. They protect the repair, not the write.
-6. **`Assert.Equal(expected, actual.Order())` needs both sides ordered.** Generated codes go in in whatever order their GUIDs fall.
-7. **A stale build can make a correct migration emit wrong SQL.** `Remove-Item -Recurse src/Pos.Data/obj, src/Pos.Data/bin` before debugging generated SQL that disagrees with source you have read.
-8. **A model change touches four files** — the configuration, the migration, its `.Designer.cs` and `AppDbContextModelSnapshot.cs`. A partial edit fails the *whole* Data and Api suite at fixture init with `PendingModelChangesWarning`, on an error unrelated to what you were doing.
-9. **A retrying execution strategy refuses a user-initiated transaction.** Wrap the unit in `db.Database.CreateExecutionStrategy().ExecuteAsync(...)`. `StockLedger.RecordAsync` and `TaxClassEndpoints.SaveWithDefaultAsync` are the two worked examples.
-10. **`EF.Functions.GreaterThan(ITuple, ITuple)` is the only way to express a keyset over a `Guid` tiebreaker**, and `CursorPaging` is ascending-only because of it.
-11. **`Assert.DoesNotContain('x', someString, StringComparison)` does not compile** — pass a string.
-12. **Two `HasIndex` calls on the same properties configure the *same* index.** Use the named overload.
-13. **`git checkout -- <tracked> <untracked>` reverts nothing.**
-14. **`HasPrincipalKey` must be called before `HasForeignKey`.**
-15. **There are no navigation properties, so there is no FK fixup.** Save principals before dependents. `CatalogFixture` is now four passes.
-16. **EF blocks a delete client-side when the dependent is loaded in the same context.** A test proving the *database* restricts must use a second scope.
-17. **`HasDefaultValue(true)` on a bool legitimately inserted as `false` needs `HasSentinel`.**
-18. **An applied migration does not re-run.** A migration adding a tenant table calls `ApplyTenantRowLevelSecurity()`; in `Down` call **`Apply`, not `Remove`**.
-19. **`UseXminAsConcurrencyToken()` does not exist in Npgsql 10**, and the scaffolded migration lists an `xmin` column the generated SQL does not contain. Both are correct.
-20. **Health-check endpoints have no HTTP method metadata**, so they appear as `ANY health/live`.
-21. **A test that asserts 404 passes when it reaches nothing.** `UrlFor` now throws rather than building an unfillable URL — but the trap is structural, not gone.
-22. **A shared `WebApplicationFactory` has no reset between tests.** `TwoTenantWorld` is read-only; `CatalogSandboxAsync()` is writable but its tests must assert *contains*, never counts.
-23. **A superuser bypasses RLS unconditionally.** Isolation assertions run on `pos_app`.
-24. **A reset Postgres session variable reads as `''`, not NULL.**
-25. **`dotnet run` uses `launchSettings.json` and ignores `ASPNETCORE_URLS`.** Port 5013.
-26. **An authorization policy that does not name its scheme evaluates the default one.**
-27. **A request can carry both a JWT and a device token.** `AmbientTenantContext.Resolve` refuses to switch tenants.
-28. **`WebApplicationFactory.ConfigureAppConfiguration` is applied at `Build()`.** Use `builder.UseSetting(...)`.
-29. **Never run the test host in `Development`** — it loads user secrets pointing at local Docker.
-30. **`problem+json` carries a per-request `traceId`.** Compare `type`/`title`/`status`, never raw strings.
-31. **EF names tables from the `DbSet` property name**, so every configuration calls `ToTable()`.
-32. **`[CallerFilePath]` is a lie under CI.** `$env:CI="true"` reproduces CI-only behaviour locally.
-33. **`dotnet ef database update` needs the owner connection string passed explicitly.**
-34. **Kill stray `Pos.Api` processes before rebuilding** — `Stop-Process`, not `pkill`.
-35. **Adding shadcn components may reintroduce the two-React-copies error.**
-36. **Test fixtures must not contain the strings a test proves absent.**
+1. **A namespace may not share a name with a type inside it.** `Pos.Core.Money` makes `Money` a
+   member of `Pos.Core`, and enclosing-namespace members outrank `using`-imported types — so
+   every unqualified `Money` under `Pos.Core.*` is **CS0118**. The namespace is `Pos.Core.Monetary`.
+2. **EF cannot aggregate a value-converted property.** `SumAsync` over a `Money` column does not
+   translate. Shift arithmetic reads its sums with `db.Database.SqlQuery<decimal>`, writing the
+   `tenant_id` predicate **by hand** because the query filter does not compose over raw SQL.
+3. **`Properties<decimal>()` does not cover `Money`.** It matches the CLR property type. A
+   `Money` property with no `HavePrecision` maps at `numeric(18,2)` and silently truncates.
+4. **Minimal-API endpoint filters run *after* model binding**, so the body is already consumed.
+   `Program.cs` calls `EnableBuffering()` before routing; the idempotency filter throws rather
+   than hashing zero bytes if that is ever removed.
+5. **EF's `SqlQuery` composes its argument into a subquery**, and Postgres will not accept a
+   data-modifying statement there. The sale-number upsert goes through raw ADO, enlisted in the
+   ambient transaction explicitly.
+6. **`ON CONFLICT (tenant_id)` needs a unique constraint on `(tenant_id)` alone.** That is why
+   `ux_sale_sequence_tenant` is not the usual `(tenant_id, id)` composite.
+7. **A `SqlQuery<T>` result column must be aliased `"Value"`.** Every raw query here does.
+8. **`CatalogFixture` seeds stock rows with no matching movements**, so `OnHand == SUM(movements)`
+   is *false* in the Api test fixture. Assert `openingBalance + ledger` there. `CatalogGraph`
+   (Data tests) does write the opening receipt, so the invariant holds outright.
+9. **The endpoint's shift check masks the writer's.** Deleting the writer's `FOR SHARE` check
+   left the whole Api suite green; `SaleWriterTests` in `Pos.Data.Tests` exists to test the
+   writer's guards with no endpoint in front of them.
+10. **Two units in one refund cost a cent less than two separate one-unit refunds** (2.95 vs
+    2.96). That is round-once working, not a bug.
+11. **`Subtotal` is derived, not summed.** If someone "simplifies" it back to a fourth
+    independent sum, only the property test over random carts notices.
+12. **A migration class named after a type collides with it.** `migrations add Money` produced
+    `Pos.Data.Migrations.Money`, ambiguous with `Pos.Core.Monetary.Money`. It is `MoneyType`.
+13. **A model change touches four files** — configuration, migration, `.Designer.cs` and
+    `AppDbContextModelSnapshot.cs`. A partial edit fails the *whole* Data and Api suite at
+    fixture init with `PendingModelChangesWarning`, on an error unrelated to what you did.
+14. **An applied migration does not re-run**, so a migration adding a tenant table must call
+    `ApplyTenantRowLevelSecurity()` — and in `Down` call **`Apply`, not `Remove`**.
+15. **A retrying execution strategy refuses a user-initiated transaction.** Wrap the unit in
+    `db.Database.CreateExecutionStrategy().ExecuteAsync(...)`.
+16. **There are no navigation properties, so there is no FK fixup.** Save principals before
+    dependents. `SaleWriter` saves the sale, then its lines, then the movements.
+17. **A stale build can make a correct migration emit wrong SQL.** `Remove-Item -Recurse
+    src/Pos.Data/obj, src/Pos.Data/bin` before debugging generated SQL.
+18. **xUnit here is 2.9.3**, so there is no `TestContext.Current`.
+19. **`InvariantGlobalization` is on**, so `CultureInfo.GetCultureInfo("fr-FR")` *throws*. Build a
+    `NumberFormatInfo` by hand if a test needs a non-invariant separator.
+20. **A shared `WebApplicationFactory` has no reset between tests.** `TwoTenantWorld` is
+    read-only; `CatalogSandboxAsync()` asserts *contains*, never counts; anything asserting an
+    exact count uses `factory.TradingTenantAsync()`, which makes its own tenant.
+21. **`problem+json` carries a per-request `traceId`.** Compare `type`/`title`/`status`.
+22. **`GetProperty("errors")` throws `KeyNotFoundException`** when the response is not a
+    validation problem — which reads as an unrelated failure. Assert the status first.
+23. **`[CallerFilePath]` is a lie under CI.** `$env:CI="true"` reproduces CI-only behaviour.
+24. **`dotnet run` uses `launchSettings.json` and ignores `ASPNETCORE_URLS`.** Port 5013.
+25. **`dotnet ef database update` needs the owner connection string passed explicitly.**
+26. **Kill stray `Pos.Api` processes before rebuilding** — `Stop-Process`, not `pkill`.
+27. **A superuser bypasses RLS unconditionally.** Isolation assertions run on `pos_app`.
+28. **`GET /registers` is a bare array, not a cursor page.** So are the other two un-paginated
+    endpoints.
 
 ## What the falsification pass found
 
-Six deliberate breaks, six caught. Two were informative:
+**Fifteen deliberate breaks. Thirteen went red immediately; two caught nothing and both gaps
+are now closed.**
 
-- **The by-id isolation row on `GET /stock/{productId}/movements` is not vacuous.** Removing the product-exists check failed its own test *and* the isolation theory: without the check a cross-tenant request answers 200 with an empty ledger rather than 404. Contrast 2.2's finding that the *collection* rows cannot be made to leak — they are protected by RLS underneath — so these two shapes are not equally strong, and it is worth knowing which is which.
-- **Breaking the ledger write left both rebuild tests green**, correctly. See trap 5.
+The two that mattered:
 
-The rest went red where expected: dropping the `TrackStock` filter (caught by its own test *and* the collection theory, since the expected ids are the stocked products), serving the scan from the cost-bearing projection (three tests including the SQL one), matching a barcode delete on the barcode id alone, and letting a receipt carry a negative quantity (caught in Core *and* at the endpoint).
+- **Per-line rounding in the pricing engine was caught by nothing.** Accumulating
+  `lineTotal.Round()` instead of `lineTotal` passed every worked example *and* the invariant-1
+  property, because `Subtotal` is derived from the same wrong number. Closed by three tests,
+  one per rounded column — `TaxTotal` got its own because it is the figure that reaches a tax
+  authority.
+- **Deleting `SaleWriter`'s shift check left the entire Api suite green**, because the
+  endpoint's own check masks it under sequential conditions. Closed by `SaleWriterTests` in
+  `Pos.Data.Tests`, which exercises the writer with no endpoint in front of it.
+
+The thirteen that went red as expected: RLS omitted from a migration; `DateTime.UtcNow` in Core;
+`TimeProvider.System` inside a lambda; tax on the gross; `Subtotal` independently summed;
+`MAX()+1` sale numbering; the discrepancy boundary at `<= 0`; a refund priced from the catalog;
+voided refunds counted toward the remaining quantity; voiding a refunded sale; voided sales
+counted in expected cash; the tendered note counted instead of tendered-less-change; and the
+status guard dropped from the closing `UPDATE`.
+
+## Verified by hand
+
+- **The arithmetic, on paper.** An inclusive-tax cart with two rates and a cart discount that
+  does not divide evenly was computed independently and then asserted:
+  `HandCheckedCartTests`. Total 12.97, tax 2.02, discount 4.22, derived subtotal 15.17, shares
+  4.1653 + 0.8347 = 5.0000 exactly. An exclusive control gives 15.46, so the mode is not being
+  ignored.
+- **The whole path, against the dev database and a real API**: open shift → quote → sell →
+  replay the key (one sale, not two) → stock 48 → 46 → oversell to −3 and see the discrepancy
+  listed → refund a line → close the shift. Expected cash `100 + 2.40 + 11.85 − 1.20 = 113.05`
+  matched the endpoint exactly.
+- **Invariant 1 on real rows**: all three sales in the dev database satisfy
+  `Total == Subtotal − DiscountTotal + TaxTotal + RoundingAdjustment`.
 
 ## Outstanding / deferred
 
-- **CI has not run on this work.** Push the branch and open the PR; that is the first thing to do.
-- **`POST /stock/adjustments` is not idempotent.** Deferred to 3.5 by decision, with the 🔒 removed from `API.md` until then. `StockAdjustmentTests.A_resubmitted_adjustment_writes_a_second_movement` pins today's behaviour and **should be the test 3.5 breaks**.
-- **`GET /stock/discrepancies` is documented and unbuilt.** Phase 3.6 creates the flag it would report.
-- **`RebuildOnHand` has no route** and no way to run it in production. If Phase 8 wants one, it needs a decision about who may run it.
-- **`TaxClass` has no deactivate and no `IsActive`.** A retired legislated rate stays in the picker forever.
-- **`GET /registers`, `GET /employees/pin-eligible` and `GET /products/{id}/barcodes` are the un-paginated endpoints.** The third is deliberate (a bounded sub-resource); Phase 6 should decide about the first two.
-- **`limit=abc` returns a bare 400 with no `problem+json` body** — minimal-API `int?` binding fails before the handler. A global `UseStatusCodePages` would fix every bare body at once and belongs in its own commit.
+- **CI has not run on this work.** Push the branch and open the PR; that is the first thing.
+- **Existing dev databases carry stock drift.** `tools/Pos.Seed` used to write stock rows with
+  an opening balance and no matching movement, so `OnHand != SUM(movements)` on any database
+  seeded before this commit. Fixed for *fresh* seeds; an existing one needs the opening
+  receipts adding by hand. **Do not "fix" it with `RebuildOnHand`** — that would set on-hand to
+  the movement sum and discard the seeded opening stock.
+- **No audit log.** Phase 7.2. Price overrides are authorized and recorded on the sale line
+  (`IsPriceOverridden`, `OverriddenBy`), but API.md's older claim that "the attempt is audited"
+  is not yet true — the line is the whole trail.
+- **`GET /settings` and `PUT /settings` are not built**, so `TaxMode` and
+  `CashRoundingIncrement` are settable only by SQL or the seeder, and "taxMode is rejected once
+  sales exist" is enforced nowhere. `Sale.TaxMode` is snapshotted for exactly this reason.
+- **`GET /sales/{id}/receipt` and `GET /shifts/{id}/report` are documented and unbuilt** —
+  Phase 6.1 and 6.3.
+- **`?from=`/`?to=` on `GET /sales` are not implemented.** Date-range reporting is Phase 6.
+- **`CursorPaging` is still ascending-only**, so `GET /sales` pages oldest-first. Phase 6 has
+  the screen to argue from.
+- **Percentage discounts do not exist.** Absolute amounts only; a percentage is a client
+  computation.
+- **`Tender.Method` accepts `Cash` only.** `External`, `Card` and `Voucher` are declared so the
+  discriminator claim holds, and refused at the endpoint.
+- **`RebuildOnHand` still has no route.**
+- **`TaxClass` has no deactivate and no `IsActive`.**
+- **`limit=abc` returns a bare 400 with no `problem+json` body.** A global `UseStatusCodePages`
+  would fix every bare body at once and belongs in its own commit.
 - **`dotnet dev-certs https --trust`** still not run.
 - **Playwright browsers not installed** — Phase 4.
 - **Production `pos_app` password** — Phase 8.2.
-- **A validly signed token is trusted for whatever tenant it names** — accepted and pinned by `ForgedTenancyTests`.
+- **A validly signed token is trusted for whatever tenant it names** — accepted and pinned by
+  `ForgedTenancyTests`.
 - **CI actions emit a Node 20 deprecation warning.**
 - **`Microsoft.OpenApi` pinned to 2.11.0** for GHSA-v5pm-xwqc-g5wc.
 
-## Decided recently
-
-See `DECISIONS.md` → "Resolved 2026-08-01 (during Phase 2.3 and 2.4)" for all nine. The three that reach into Phase 3:
-
-- **Idempotency is built once, in 3.5, for sales, voids, refunds and adjustments together.** The stock endpoint is knowingly missing it until then.
-- **A lost stock race is a 409 and is never retried inside the ledger**, because re-applying a delta the caller may already have applied is indistinguishable, from inside, from the same request arriving twice. 3.5's keys are what make an automatic retry safe.
-- **`IStockLedger` is a narrow precedent, not a repository pattern.** Endpoints still use `AppDbContext` directly.
-
 ## Still genuinely open
 
-**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing until Phase 10, but must be settled before quoting a price.
+**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing
+until Phase 10, but must be settled before quoting a price.

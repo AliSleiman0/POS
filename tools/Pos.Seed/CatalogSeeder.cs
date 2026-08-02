@@ -99,7 +99,7 @@ internal sealed class CatalogSeeder(IServiceProvider services)
 
         foreach (var seed in Products)
         {
-            await EnsureProductAsync(db, seed);
+            await EnsureProductAsync(db, seed, services.GetRequiredService<TimeProvider>());
         }
 
         // Counted after the fact rather than tallied as we go: these are the numbers a
@@ -159,7 +159,10 @@ internal sealed class CatalogSeeder(IServiceProvider services)
         return category;
     }
 
-    private static async Task EnsureProductAsync(AppDbContext db, ProductSeed seed)
+    private static async Task EnsureProductAsync(
+        AppDbContext db,
+        ProductSeed seed,
+        TimeProvider timeProvider)
     {
         var sku = Product.NormalizeSku(seed.Sku)!;
         var product = await db.Products.FirstOrDefaultAsync(p => p.Sku == sku);
@@ -211,6 +214,29 @@ internal sealed class CatalogSeeder(IServiceProvider services)
                 OnHand = onHand,
                 ReorderPoint = seed.ReorderPoint,
             });
+
+            // The receipt that explains the figure above.
+            //
+            // Without it a freshly seeded database violates the invariant every part of Phase
+            // 3 rests on — StockItem.OnHand == SUM(StockMovement.Quantity) — from the moment
+            // it is created. Nothing would fail immediately, which is the problem: the first
+            // person to run a rebuild would watch their dev stock drop to zero and go looking
+            // for a bug in the ledger rather than in the seeder.
+            //
+            // Written directly rather than through IStockLedger because the stock row above is
+            // being inserted in the same SaveChanges; the ledger would open its own
+            // transaction and read a row that is not there yet.
+            if (onHand != 0m)
+            {
+                db.StockMovements.Add(new StockMovement
+                {
+                    ProductId = product.Id,
+                    Type = StockMovementType.Receive,
+                    Quantity = onHand,
+                    Reason = "Opening stock",
+                    OccurredAt = timeProvider.GetUtcNow(),
+                });
+            }
         }
 
         await db.SaveChangesAsync();

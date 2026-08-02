@@ -178,12 +178,16 @@ The endpoint that must not get this wrong.
 | Method | Route | Auth | Notes |
 |---|---|---|---|
 | POST 🔒 | `/sales` | `CanSell` | Create a completed sale |
-| GET | `/sales` | `CanSell` | `?from=&to=&registerId=&shiftId=&cashierId=`, paginated |
+| GET | `/sales` | `CanSell` | `?registerId=&shiftId=&cashierId=`, paginated on `completedAt` |
 | GET | `/sales/{id}` | `CanSell` | Full detail with lines and tenders |
-| GET | `/sales/{id}/receipt` | `CanSell` | Render payload for print/reprint |
+| GET | `/sales/{id}/receipt` | `CanSell` | Render payload for print/reprint. **Not built** — Phase 6.1 |
 | POST 🔒 | `/sales/{id}/void` | `CanVoidSale` | `{ reason }`. Status flag + compensating stock movements |
 | POST 🔒 | `/sales/{id}/refund` | `CanRefund` | Creates a **new** linked `Refund` sale |
 | POST | `/sales/quote` | `CanSell` | Price a cart without committing |
+
+`GET /sales` returns **every** sale regardless of type or status — voids and refunds included. A history that quietly hid them is how a manager fails to find the transaction they are looking for and concludes the system lost it. `?from=`/`?to=` are not implemented; date-range reporting is Phase 6.
+
+`POST /sales/quote` needs no register, shift, tenders or `Idempotency-Key`: it writes nothing, and a register showing a running total has not chosen a shift or taken money yet.
 
 ### `POST /sales`
 
@@ -213,11 +217,26 @@ The endpoint that must not get this wrong.
 
 Semantics:
 
-- **The server computes every amount.** Client-sent totals are ignored, not trusted. A price sent by the client is a price a customer can edit.
-- `unitPriceOverride` requires `CanOverridePrice`; `discountAmount`/`cartDiscountAmount` require `CanApplyDiscount`. A Cashier sending them gets `403`, and the attempt is audited.
-- Sale insert, stock movements and sale-number assignment happen in **one transaction**. Either all of it lands or none.
+- **The server computes every amount.** There is nowhere to put a total: the request has no such field. A price a client can send is a price a customer can edit.
+- `unitPriceOverride` requires `CanOverridePrice`; `discountAmount`/`cartDiscountAmount` require `CanApplyDiscount`. A Cashier sending them gets `403` — **refused, not ignored**, unlike an unreadable `costPrice`, because this changes what the customer pays. The override is recorded on the sale line as `isPriceOverridden` + `overriddenBy`; **there is no audit log yet** (Phase 7.2), so API.md's older claim that "the attempt is audited" is not yet true.
+- Sale insert, lines, tenders, stock movements, discrepancies and the sale-number assignment happen in **one transaction**. Either all of it lands or none.
 - **Insufficient stock does not block the sale.** The customer is standing there holding the item; refusing to sell it is the wrong behaviour. The sale completes, stock goes negative, and a discrepancy is flagged for review (per `DECISIONS.md`).
-- Replaying the same `Idempotency-Key` returns `200` with the **original** sale, not a second one.
+- The **cashier is taken from the token**, never the body. A caller able to supply it could attribute a sale — and a price override — to a colleague.
+- `shiftId` unknown or another tenant's → `400` on the field. Belonging to a different register → `400` on `registerId`. Real but **closed** → `409` `.../shift-closed`.
+- Tenders are validated against the methods the MVP accepts: **`Cash` only**. A `Card` tender no processor ever saw would sit in the takings reconciling against nothing.
+- Under-tender is `409` `.../under-tender`; over-tender is ordinary and the excess comes back as `changeGiven`.
+- Replaying the same `Idempotency-Key` returns the **original** sale, byte for byte, not a second one.
+
+### `POST /sales/{id}/void` and `/refund`
+
+A **void** sets `status = Voided` plus `voidedBy`/`voidedAt`/`voidReason` and writes compensating `Refund`-type stock movements carrying the sale's id. The original movements are not deleted, so the ledger still explains where the goods went and came back. It is the only operation that ever updates a completed sale, and it touches nothing else — the amounts and the sale number are left exactly as they were.
+
+A **refund** creates a new `Sale` with `type: Refund`, its own sale number, `originalSaleId` set and negative amounts. It is re-priced from the original line's **snapshots**, never the catalog, and a line discount comes back in proportion to the quantity returned. Omitting `lines` refunds everything still owing. The cash leaves the **current** open shift's drawer, not the original's.
+
+- A sale with a live refund against it **cannot be voided** (`409 .../sale-already-refunded`) — voiding writes compensating movements for every line, and a refund has already returned some of them. Voiding the *refund* makes that quantity refundable again.
+- Over-refunding is `409 .../refund-exceeds-original`, computed with the original sale locked so two concurrent refunds cannot both pass.
+- Double-void is `409 .../sale-already-voided`; a *replayed* void (same key) returns the original response.
+- **There is no `PUT` or `DELETE` under `/sales`**, and a test enumerates the routing table to keep it that way.
 
 `POST /sales/quote` takes the same body minus tenders and returns the computed totals. It exists so the register can show an authoritative total without a second pricing implementation on the client — two implementations of tax and discount rules will disagree, and the disagreement will surface at a till.
 
@@ -225,13 +244,24 @@ Semantics:
 
 | Method | Route | Auth | Notes |
 |---|---|---|---|
-| GET | `/shifts/current` | `CanSell` | Open shift for this register, or `404` |
+| GET | `/shifts/current?registerId=` | `CanSell` | Open shift for that register, or `404` |
 | POST 🔒 | `/shifts` | `CanSell` | `{ registerId, openingFloat }`. `409` if one is already open |
 | POST 🔒 | `/shifts/{id}/close` | `CanCloseShift` | `{ countedCash }` → returns expected, counted, variance |
-| POST 🔒 | `/shifts/{id}/cash-movements` | `CanSell` | Drop / payout / petty cash, `reason` required |
-| GET | `/shifts/{id}/report` | `CanCloseShift` | The Z-report |
+| POST 🔒 | `/shifts/{id}/cash-movements` | `CanSell` | Drop / payout / petty cash / correction, `reason` required |
+| GET | `/shifts/{id}/report` | `CanCloseShift` | The Z-report. **Not built** — Phase 6.3 |
 
 A sale requires an open shift. Without one there is nothing to reconcile the drawer against, and "we're £12 short" becomes unanswerable.
+
+**At most one open shift per register**, enforced by a filtered unique index rather than a pre-check — two tills opening at once would both pass a check and both insert. The loser gets `409` with `type: .../shift-already-open`. Closed shifts do not occupy the slot, so a register trades every day.
+
+**`ExpectedCash = openingFloat + Σ(cash tendered − change given) + Σ cashMovements`**, over that shift's **non-voided** sales and refunds, counting `Cash` tenders only. `Variance = countedCash − expectedCash`; negative means short. Both are **stored** on the shift, not recomputed on read — recomputing later would silently change a historical variance whenever anything about the underlying sales changed.
+
+- **A voided sale is excluded, not netted off.** A void hands the cash straight back, so it never stayed in the drawer.
+- **A refund's tenders are negative**, so returns subtract with no special case.
+- **`cash-movements.amount` is signed and its sign is checked against `type`.** Drop, payout and petty cash are negative; a correction may go either way but may not be zero. No check constraint can express that — both directions are valid numbers for the column — and a drop entered as a positive leaves the drawer wrong by twice the amount.
+- **A cash movement against a closed shift is `409`.** Its expected cash is already computed and stored.
+
+**Closing races with a sale in flight, deterministically.** The close changes the status in the same statement that locks the shift row; `POST /sales` takes a share lock on it before writing anything. So either the sale commits before the close counts it, or it blocks, finds the shift closed and is refused `409`. A sale is never counted-then-refused, and never committed-but-uncounted.
 
 ## Reports — `/reports`
 

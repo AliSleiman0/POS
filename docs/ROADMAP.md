@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 2 complete — 569 tests green |
-| **Next up** | Phase 3.1, the `Money` type. `CatalogRules` is the validation-only predecessor and says so; 3.1 owns arithmetic and rounding. |
+| **Current phase** | Phase 3 complete — 846 tests green |
+| **Next up** | Phase 4.1, the web app shell. The API client is generated from OpenAPI, so DTOs cannot drift. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
-| **Last updated** | 2026-08-01 |
+| **Last updated** | 2026-08-02 |
 
 ## Phase overview
 
@@ -23,7 +23,7 @@
 | 0 | [Foundation & environment](phases/PHASE-0-foundation.md) | Tooling, solution scaffold, docs, CI | ✅ Done |
 | 1 | [Multi-tenancy & auth spine](phases/PHASE-1-tenancy-auth.md) | Tenant isolation, Identity, JWT, RBAC, PIN login | ✅ Done |
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ✅ Done |
-| 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ⬜ Not started |
+| 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ✅ Done |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ⬜ Not started |
 | 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ⬜ Not started |
 | 6 | [Receipts & reporting](phases/PHASE-6-receipts-reporting.md) | Receipt render/print, Z-report, sale history | ⬜ Not started |
@@ -75,15 +75,15 @@ Detail: [phases/PHASE-2-catalog-inventory.md](phases/PHASE-2-catalog-inventory.m
 
 The money phase. All rules live in `Pos.Core` as pure, DB-free logic. Detail: [phases/PHASE-3-checkout-sales.md](phases/PHASE-3-checkout-sales.md)
 
-- [ ] **3.1 Money type** — `decimal` over `numeric(19,4)`, `MidpointRounding.AwayFromZero`, rounded once at the total. Never `float`/`double`.
-- [ ] **3.2 Pricing engine** — deterministic pipeline: line subtotal → line discount → cart discount → tax → total. Per-tenant `TaxMode` (`Inclusive`/`Exclusive`) decided here because it is not retrofittable.
-- [ ] **3.3 Price snapshotting** — each `SaleLine` stores unit price, tax rate and discount as of sale time; reports never join to current `Product.Price`.
-- [ ] **3.4 Cash tender** — multiple tender lines, change due, over/under-tender rules, `Method` discriminator so card is additive later.
-- [ ] **3.5 Idempotent submit** — client-generated `ClientTransactionId` (GUID) unique per tenant; a replay returns the original sale. The primitive Phase 9 depends on — built now, not bolted on.
-- [ ] **3.6 Atomic commit** — sale + stock movements + sale number in one transaction; optimistic concurrency on `StockItem`; oversell allowed but **flagged for review**, never silently corrected.
-- [ ] **3.7 Append-only ledger** — completed sales are never mutated or deleted; voids and refunds are new linked rows.
-- [ ] **3.8 Register shifts** — open with float → cash movements → close with counted cash and computed variance.
-- [ ] **3.9 Tests** — exhaustive pricing/rounding/tender unit tests; integration tests for replay, concurrent last-unit sale, refund.
+- [x] **3.1 Money type** — `Money` as a `readonly record struct` over `decimal`, EF-mapped model-wide so entity amounts are `Money` while API DTOs stay `decimal`. No `operator +(Money, decimal)`, so raw decimal arithmetic on a price does not compile. `Tenant.CashRoundingIncrement` added; `CatalogRules` kept but now shares one `Rounding` primitive, and its tests passed unedited. `ArchitectureTests`' clock check became a real Mono.Cecil IL scan.
+- [x] **3.2 Pricing engine** — pure pipeline, both tax modes, cart discount apportioned with the remainder to the largest line. `Subtotal` is **derived** so invariant 1 holds exactly on stored two-decimal values. A hand-computed inclusive mixed-rate discounted cart is pinned by `HandCheckedCartTests`. Property tests over 500 seeded random carts.
+- [x] **3.3 Entities + price snapshotting** — `Sale`, `SaleLine`, `Tender`, `Shift`, `CashMovement`, `StockDiscrepancy`, `SaleSequence`. `Sale.TaxMode` and `SaleLine.OriginalSaleLineId` added beyond DATA-MODEL. `stock_movement.sale_id` finally got its composite FK.
+- [x] **3.4 Cash tender** — multiple tenders, change due, under-tender as `409`, `Cash` the only accepted method. `Adding_a_method_needs_no_sale_schema_change` turns the discriminator claim into an assertion.
+- [x] **3.5 Idempotent submit** — `RequestFingerprint` over raw body bytes, `IdempotencyRecord`, an endpoint filter plus a writer callback so the key lands in the same transaction as the work. Retrofitted onto `POST /stock/adjustments`, breaking the test 2.4 left for it.
+- [x] **3.6 Atomic commit** — `ISaleWriter`, sale-number counter upserted in-transaction, shift `FOR SHARE`, `StockDiscrepancy` on a negative on-hand, `GET /stock/discrepancies`. Shift open/current landed here because sales depend on them.
+- [x] **3.7 Append-only ledger** — void as a status flag plus compensating movements; refund as a new linked `Refund` sale re-priced from snapshots with a proportional discount share. `No_route_updates_or_deletes_a_sale` enumerates the routing table.
+- [x] **3.8 Register shifts** — open/close lifecycle, cash movements with a sign rule, expected cash and stored variance. The close's exclusive lock and the sale's share lock make a concurrent sale deterministic.
+- [x] **3.9 Tests** — `SalesFixture`, `TradingTenant`, 9 new isolation manifest rows, `No_endpoint_dto_declares_a_money_property`, and the randomised sale/void/refund ledger property. Falsification: 15 deliberate breaks across the phase, and the two that caught nothing were closed with new tests.
 
 ## Phase 4 — Web: shell, auth, catalog
 
