@@ -12,6 +12,18 @@ import { useOverride } from './overrideContext'
 
 const DEVICE_TOKEN_KEY = 'pos.deviceToken'
 
+/*
+ * Stand-ins, deliberately not shaped like the real thing.
+ *
+ * A device token and a grant are both `base64url(tenantId).base64url(32 bytes)`,
+ * and a literal of that shape in a committed file is what a secret scanner is
+ * for — it cannot tell a fixture from a leak, and it is right not to try. These
+ * are never parsed: `fetchMock` returns canned responses, and the assertion
+ * below only needs a string distinctive enough to search storage for.
+ */
+const FAKE_DEVICE_TOKEN = 'test-device-token-not-a-credential'
+const FAKE_GRANT = 'test-grant-not-a-credential'
+
 /**
  * Holding a manager's authorisation.
  *
@@ -34,7 +46,7 @@ describe('OverrideProvider', () => {
 
     // The device token is the second factor. Without it the dialog says so
     // instead of offering a PIN pad.
-    localStorage.setItem(DEVICE_TOKEN_KEY, 'dGVuYW50.c2VjcmV0')
+    localStorage.setItem(DEVICE_TOKEN_KEY, FAKE_DEVICE_TOKEN)
   })
 
   afterEach(() => {
@@ -115,7 +127,7 @@ describe('OverrideProvider', () => {
   it('holds a grant a manager gave, and never writes it to storage', async () => {
     respond(() =>
       Response.json({
-        grant: 'dGVuYW50.Z3JhbnQtc2VjcmV0',
+        grant: FAKE_GRANT,
         expiresIn: 300,
         authorizedById: 'u-manager',
         authorizedByName: 'Sam Cole',
@@ -144,7 +156,7 @@ describe('OverrideProvider', () => {
       expect(screen.getByTestId('held')).toHaveTextContent('Sam Cole')
     })
 
-    expect(granted).toBe('dGVuYW50.Z3JhbnQtc2VjcmV0')
+    expect(granted).toBe(FAKE_GRANT)
 
     /*
      * The assertion this file exists for.
@@ -157,7 +169,7 @@ describe('OverrideProvider', () => {
      */
     const stored = [...Object.values(sessionStorage), ...Object.values(localStorage)].join(' ')
 
-    expect(stored).not.toContain('Z3JhbnQtc2VjcmV0')
+    expect(stored).not.toContain(FAKE_GRANT)
   })
 
   it('changes nothing when the manager declines', async () => {
@@ -214,7 +226,7 @@ describe('OverrideProvider', () => {
   it('forgets the authorisation when the cart empties, so it cannot reach the next customer', async () => {
     respond(() =>
       Response.json({
-        grant: 'dGVuYW50.Z3JhbnQtc2VjcmV0',
+        grant: FAKE_GRANT,
         expiresIn: 300,
         authorizedById: 'u-manager',
         authorizedByName: 'Sam Cole',
