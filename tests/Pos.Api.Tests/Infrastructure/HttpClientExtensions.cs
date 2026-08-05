@@ -73,7 +73,8 @@ public static class HttpClientExtensions
         this HttpClient client,
         string url,
         object body,
-        Guid? idempotencyKey = null)
+        Guid? idempotencyKey = null,
+        string? overrideGrant = null)
     {
         ArgumentNullException.ThrowIfNull(client);
 
@@ -85,6 +86,37 @@ public static class HttpClientExtensions
         request.Headers.Add(
             IdempotencyFilter.HeaderName,
             (idempotencyKey ?? Guid.CreateVersion7()).ToString());
+
+        if (overrideGrant is not null)
+        {
+            request.Headers.Add(OverrideGrantService.HeaderName, overrideGrant);
+        }
+
+        return client.SendAsync(request);
+    }
+
+    /// <summary>
+    /// POSTs presenting a manager's override grant, as the register does.
+    /// </summary>
+    /// <remarks>
+    /// Per request rather than on <c>DefaultRequestHeaders</c>, for the same reason the
+    /// idempotency key is: a grant is spent by the one call it authorises, and a client-wide
+    /// default would silently present it to every request afterwards.
+    /// </remarks>
+    public static Task<HttpResponseMessage> PostWithGrantAsync(
+        this HttpClient client,
+        string url,
+        object body,
+        string grant)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(body),
+        };
+
+        request.Headers.Add(OverrideGrantService.HeaderName, grant);
 
         return client.SendAsync(request);
     }

@@ -84,6 +84,55 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/auth/override': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Manager PIN authorising one privileged action, without swapping the session */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['OverrideRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OverrideGrantResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/auth/refresh': {
     parameters: {
       query?: never
@@ -1729,6 +1778,7 @@ export interface paths {
       parameters: {
         query?: never
         header: {
+          'X-Override-Authorization'?: string
           /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
           'Idempotency-Key': string
         }
@@ -1825,7 +1875,9 @@ export interface paths {
     post: {
       parameters: {
         query?: never
-        header?: never
+        header?: {
+          'X-Override-Authorization'?: string
+        }
         path?: never
         cookie?: never
       }
@@ -2199,6 +2251,21 @@ export interface components {
       registerId: null | string
       /** Format: double */
       openingFloat: null | number | string
+    }
+    OverrideGrantResponse: {
+      grant: string
+      /** Format: int32 */
+      expiresIn: number | string
+      /** Format: uuid */
+      authorizedById: string
+      authorizedByName: string
+      policies: string[]
+    }
+    OverrideRequest: {
+      /** Format: uuid */
+      userId: string
+      pin: string
+      policies: string[]
     }
     PinEligibleEmployee: {
       /** Format: uuid */

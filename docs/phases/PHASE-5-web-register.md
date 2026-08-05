@@ -64,12 +64,38 @@ A barcode wedge scanner types the code and presses Enter — it is indistinguish
 Where a running subtotal must appear before the quote returns, it is computed in **integer minor units** and clearly non-authoritative. `0.1 + 0.2 !== 0.3` in JavaScript, and that is not acceptable on a till display.
 
 **Exit criteria**
-- [ ] Qty, void, discount, override all work
-- [ ] Decimal quantities for `Kilogram`/`Litre` products
-- [ ] Discount/override controls absent without the policy, and rejected by the API if forced
-- [ ] Manager override authorises one action without a session swap
-- [ ] No `alert()`, `confirm()` or `prompt()` anywhere in the register
-- [ ] Displayed total always matches the server's quote
+- [x] Qty, void, discount, override all work — line discount, cart discount and price override, each re-quoting through `POST /sales/quote`
+- [x] Decimal quantities for `Kilogram`/`Litre` products — unchanged from 5.1, and re-pinned after the cart signature grew three fields
+- [x] **No control applies a discount on the caller's own authority without the policy**, and the API refuses the cart if forced (`403 override-required`) — see the re-wording below
+- [x] Manager override authorises one action without a session swap — `POST /auth/override`, single-use, consumed inside the sale's transaction
+- [x] No `alert()`, `confirm()` or `prompt()` anywhere in the register — pinned by `noBlockingDialogs.test.ts` rather than by review
+- [x] Displayed total always matches the server's quote — the quote now enforces the same policies, so the till cannot show a figure the sale would refuse
+
+> **One exit criterion was re-worded rather than ticked as written.** It said "discount/override
+> controls **absent** without the policy". Taken literally a Cashier would have no way to *start*
+> the manager-override flow, which is the flow's entire purpose — the control has to be reachable
+> for a manager to be called over to it. What is built instead: a Cashier has **no control that
+> discounts on their own authority.** Pressing Discount goes to the manager's PIN first, every
+> time, and if the manager declines or cannot authorise it, nothing changes and the amount field
+> is never reached. An e2e test asserts exactly that. The server refuses the cart regardless, so
+> the UI path is the courteous route to the same answer rather than the enforcement.
+
+**What this milestone decided, worth not relitigating:**
+
+1. **The manager override needed a backend half, and there was no third option.** `POST /sales`
+   takes the cashier from the token, so authorising with the manager's *session* attributes the
+   sale to them and reconciles the wrong drawer. The grant is what lets the approval and the
+   attribution be different people. Rationale and the two rejected alternatives are in
+   [`DECISIONS.md`](../../DECISIONS.md).
+2. **The grant is single-use, not short-lived.** An expiry alone would let one PIN discount every
+   sale in its window — the exact fraud the flow exists to prevent.
+3. **The quote enforces the policies too.** It did not before, so a client could have shown a
+   discounted total the sale would refuse: the cashier reads it out, the customer counts out the
+   money, and only then does it come back `403`. The quote validates a grant without spending it,
+   because the register re-quotes on every keystroke.
+4. **The grant lives beside the cart, never in it.** 5.5 adds `sessionStorage` persistence to
+   `CartProvider`; a grant in the cart reducer would be written to a shared tablet's disk as a
+   silent side effect of that. A Vitest case fails if it ever reaches storage.
 
 ## 5.4 Cash payment
 

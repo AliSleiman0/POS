@@ -83,22 +83,31 @@ export function useOpenShift(idempotencyKey: string) {
  * different line changes the object but not the money, and re-pricing on a
  * cursor move would put a spinner over the total every time a cashier looked at
  * a line.
+ *
+ * A held manager grant is presented on every quote. The server validates it
+ * without spending it — the register re-quotes on every keystroke, and a
+ * single-use grant consumed by the first of those would leave nothing for the
+ * sale it was minted for.
  */
-export function useQuote(cart: Cart) {
+export function useQuote(cart: Cart, grant: string | null) {
   const signature = cartSignature(cart)
   const lines = toSaleLines(cart)
 
   return useQuery({
+    // The grant is not in the key. Two carts priced identically are the same
+    // question whoever authorised them, and keying on a credential would put
+    // one in the query cache.
     queryKey: registerKeys.quote(signature),
     queryFn: () =>
       unwrap(
         api.POST('/api/v1/sales/quote', {
+          params: grant === null ? {} : { header: { 'X-Override-Authorization': grant } },
           body: {
             clientTransactionId: null,
             registerId: null,
             shiftId: null,
             lines,
-            cartDiscountAmount: null,
+            cartDiscountAmount: cart.cartDiscountAmount,
             tenders: null,
           },
         }),

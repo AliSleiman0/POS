@@ -715,6 +715,16 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "POST api/v1/auth/override",
+            Kind = IsolationKind.Exempt,
+            Exemption = "Covered by OverrideGrantTests.A_grant_from_another_tenant_authorises_nothing, "
+                      + "which mints against one tenant's till and spends it against the other's sale. "
+                      + "Kept out of the theories for the same reason POST /auth/pin is: it verifies a "
+                      + "PIN, so every probe spends one of a real user's lockout attempts and one of "
+                      + "the till's ten rate-limited requests a minute.",
+        },
+        new()
+        {
             Key = "POST api/v1/auth/logout",
             Kind = IsolationKind.Exempt,
             Exemption = "Answers 204 whatever it is given, on purpose, so its status code proves "

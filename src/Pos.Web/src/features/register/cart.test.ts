@@ -5,6 +5,7 @@ import {
   EMPTY_CART,
   MAX_LINE_QUANTITY,
   provisionalLineMinor,
+  requiredPolicies,
   toSaleLines,
   type Cart,
   type CartProduct,
@@ -207,5 +208,158 @@ describe('provisionalLineMinor', () => {
 
     expect(provisionalLineMinor(cart.lines[0]!)).toBe(51)
     expect(Number.isInteger(provisionalLineMinor(cart.lines[0]!))).toBe(true)
+  })
+})
+
+/**
+ * Discounts and price overrides.
+ *
+ * These are the first fields the cart carries that change what a customer pays,
+ * and every one of them is a value a *person typed* rather than one the client
+ * worked out — which is why holding them here does not breach invariant 3.
+ */
+describe('discounts and price overrides', () => {
+  const water: CartProduct = {
+    productId: 'p-water',
+    name: 'Still Water 500ml',
+    sku: 'SKU-1001',
+    unit: 'Each',
+    unitPrice: 1.2,
+  }
+
+  function withWater(quantity = 1): Cart {
+    return cartReducer(EMPTY_CART, { type: 'add', product: water, quantity })
+  }
+
+  it('sends what was typed on the line, through the one function the sale also uses', () => {
+    const cart = withWater(2)
+    const key = cart.lines[0]!.key
+
+    const discounted = cartReducer(cart, { type: 'setLineDiscount', key, amount: 0.5 })
+    const overridden = cartReducer(discounted, { type: 'setPriceOverride', key, unitPrice: 0.99 })
+
+    expect(toSaleLines(overridden)[0]).toEqual({
+      productId: 'p-water',
+      quantity: 2,
+      unitPriceOverride: 0.99,
+      discountAmount: 0.5,
+    })
+  })
+
+  it('treats an empty discount as no discount rather than a discount of nothing', () => {
+    // A line reading "−£0.00" looks like a keystroke that failed to register,
+    // and the server would price it identically anyway.
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+
+    expect(
+      cartReducer(cart, { type: 'setLineDiscount', key, amount: 0 }).lines[0]!.discountAmount,
+    ).toBeNull()
+    expect(cartReducer(cart, { type: 'setCartDiscount', amount: 0 }).cartDiscountAmount).toBeNull()
+  })
+
+  it('keeps a price override of zero, because "this one is free" is a real decision', () => {
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+
+    expect(
+      cartReducer(cart, { type: 'setPriceOverride', key, unitPrice: 0 }).lines[0]!
+        .unitPriceOverride,
+    ).toBe(0)
+  })
+
+  it('rounds an amount to the four decimals the column stores', () => {
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+
+    const rounded = cartReducer(cart, { type: 'setLineDiscount', key, amount: 0.123_456 })
+
+    expect(rounded.lines[0]!.discountAmount).toBe(0.1235)
+  })
+
+  it('names the policies pricing the cart will need', () => {
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+
+    expect(requiredPolicies(cart)).toEqual([])
+    expect(requiredPolicies(cartReducer(cart, { type: 'setCartDiscount', amount: 1 }))).toEqual([
+      'CanApplyDiscount',
+    ])
+    expect(
+      requiredPolicies(cartReducer(cart, { type: 'setLineDiscount', key, amount: 1 })),
+    ).toEqual(['CanApplyDiscount'])
+    expect(
+      requiredPolicies(cartReducer(cart, { type: 'setPriceOverride', key, unitPrice: 1 })),
+    ).toEqual(['CanOverridePrice'])
+  })
+
+  it('prices the provisional line off the override, less the discount', () => {
+    const cart = withWater(2)
+    const key = cart.lines[0]!.key
+
+    // 2 × £1.20 = £2.40 provisionally.
+    expect(provisionalLineMinor(cart.lines[0]!)).toBe(240)
+
+    const overridden = cartReducer(cart, { type: 'setPriceOverride', key, unitPrice: 1 })
+    expect(provisionalLineMinor(overridden.lines[0]!)).toBe(200)
+
+    const discounted = cartReducer(overridden, { type: 'setLineDiscount', key, amount: 0.5 })
+    expect(provisionalLineMinor(discounted.lines[0]!)).toBe(150)
+  })
+
+  it('never shows a negative line, however large the discount', () => {
+    // The server refuses a discount bigger than its line outright. On the way to
+    // that refusal the till must not suggest it is willing to pay the customer.
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+
+    const absurd = cartReducer(cart, { type: 'setLineDiscount', key, amount: 99 })
+
+    expect(provisionalLineMinor(absurd.lines[0]!)).toBe(0)
+  })
+
+  it('changes the signature, so the quote is asked again', () => {
+    /*
+     * The one that matters most, and the one a future change is most likely to
+     * break. The quote is cached on this string: an adjustment missing from it
+     * leaves the previous total on screen looking authoritative. Not a missing
+     * number — a wrong one.
+     */
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+    const base = cartSignature(cart)
+
+    expect(
+      cartSignature(cartReducer(cart, { type: 'setLineDiscount', key, amount: 0.5 })),
+    ).not.toBe(base)
+    expect(
+      cartSignature(cartReducer(cart, { type: 'setPriceOverride', key, unitPrice: 0.5 })),
+    ).not.toBe(base)
+    expect(cartSignature(cartReducer(cart, { type: 'setCartDiscount', amount: 0.5 }))).not.toBe(
+      base,
+    )
+  })
+
+  it('distinguishes a line discount from a cart discount of the same amount', () => {
+    // They price differently: a cart discount is apportioned across every line,
+    // so the tax split differs. One signature for both would serve a stale total.
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+
+    expect(
+      cartSignature(cartReducer(cart, { type: 'setLineDiscount', key, amount: 0.5 })),
+    ).not.toBe(cartSignature(cartReducer(cart, { type: 'setCartDiscount', amount: 0.5 })))
+  })
+
+  it('forgets everything when the cart is voided', () => {
+    const cart = withWater()
+    const key = cart.lines[0]!.key
+
+    const adjusted = cartReducer(cartReducer(cart, { type: 'setLineDiscount', key, amount: 0.5 }), {
+      type: 'setCartDiscount',
+      amount: 1,
+    })
+
+    expect(cartReducer(adjusted, { type: 'clear' })).toEqual(EMPTY_CART)
   })
 })

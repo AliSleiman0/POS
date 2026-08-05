@@ -248,6 +248,32 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
   override — to a colleague, with nothing on the row to say otherwise. Same rule as the
   ledger's `PerformedBy`.
 
+- **A manager authorises one action with a single-use grant, not a session swap** (Phase 5.3).
+  A cashier cannot discount a line, and the two obvious ways to let a manager permit it are both
+  wrong. Swapping the session makes the sale the manager's, so the drawer's Z-report reconciles
+  the wrong person; granting the role temporarily is a standing permission with no defined end.
+  Instead `POST /auth/override` takes the manager's PIN at the enrolled till and returns an
+  opaque grant, stored hashed in `override_grant`, that `POST /sales` presents once and consumes
+  inside the sale's transaction. The cashier stays signed in, the sale stays theirs, and
+  `SaleLine.OverriddenBy` names the manager.
+
+  Two alternatives were weighed and rejected. A **short-lived signed JWT** with a policy claim
+  needs no table and half the code — but it authorises a *window* rather than an action, so one
+  PIN would discount every sale in the next two minutes, which is precisely the fraud the flow
+  exists to prevent. A **manager PIN session held in memory** for the one call needs no backend
+  change at all, and mis-attributes the sale as above.
+
+  Consumption is deliberately placed *inside* the writer's transaction rather than before or
+  after it: before, a sale that then failed validation would leave the cashier needing the
+  manager back for a second PIN; after, a crash in between would leave the grant spendable again.
+
+- **`override-not-permitted` reveals that somebody is not a manager, and that is the better
+  trade.** `GET /employees/pin-eligible` deliberately withholds roles so a list readable from a
+  counter does not become the shop's org chart, and this `403` weakens that. It only does so for
+  a caller who has **already typed that person's correct PIN**, so it is not an oracle anyone at
+  the counter can query. The alternative — answering `invalid-credentials` — tells a manager
+  their own correct PIN is wrong, and they retry until the account locks.
+
 - **A shift is checked twice, and the second check is not redundant.** The endpoint reads it
   unlocked to produce a good error message and to draw three distinctions: an unknown or
   cross-tenant shift is `400` on the field, a shift belonging to another register is `400` on
@@ -558,10 +584,11 @@ Called out because they are cheap now and expensive-to-impossible later:
 
 ## Current State
 
-**Phases 0–4 are complete.** The backend prices, tenders and commits a cash sale exactly once
-behind three layers of tenant isolation, and a real user can now log in through a browser and
-manage their catalog. 854 .NET tests, 66 Vitest and 11 Playwright specs — the last against a
+**Phases 0–4 are complete, and Phase 5 is through 5.3.** The backend prices, tenders and commits
+a cash sale exactly once behind three layers of tenant isolation; a cashier can open the drawer,
+scan, adjust and discount a cart the server prices, with a manager's PIN authorising what they
+cannot approve alone. 871 .NET tests, 116 Vitest and 24 Playwright specs — the last against a
 real API and a real Postgres, not mocks.
 
-Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 5, the register screen, and read
+Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 5.4, cash payment, and read
 [`docs/HANDOFF.md`](docs/HANDOFF.md) first for session state.

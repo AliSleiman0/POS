@@ -78,6 +78,9 @@ public class AppDbContext : IdentityDbContext<
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
+    /// <summary>A manager's single-use authorisation for a privileged action on someone else's session.</summary>
+    public DbSet<OverrideGrant> OverrideGrants => Set<OverrideGrant>();
+
     public DbSet<Register> Registers => Set<Register>();
 
     public DbSet<Category> Categories => Set<Category>();

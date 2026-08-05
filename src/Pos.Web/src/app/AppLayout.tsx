@@ -5,6 +5,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { useAuth } from '@/auth/authContext'
 import { IfPolicy } from '@/auth/guards'
 import { CartProvider } from '@/features/register/CartProvider'
+import { OverrideProvider } from '@/features/register/OverrideProvider'
 import { useCurrentShift } from '@/features/register/queries'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
@@ -17,67 +18,73 @@ import { cn } from '@/lib/utils'
  * items — and it has to outlive a session expiring, which `RequireAuth` handles
  * by rendering a prompt *over* this tree rather than navigating away from it. A
  * cart inside the register screen would be thrown away by both.
+ *
+ * `OverrideProvider` sits inside it and holds any manager authorisation for the
+ * same cart. Beside the cart rather than in it, so that 5.5's `sessionStorage`
+ * persistence cannot write a live credential to disk as a side effect.
  */
 export function AppLayout() {
   const { user, tenant, logout } = useAuth()
 
   return (
     <CartProvider>
-      <div className="flex h-full flex-col">
-        <header className="flex items-center gap-6 border-b border-border px-4 py-2">
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-semibold text-foreground">
-              {tenant?.name ?? 'POS'}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">{tenant?.slug}</span>
-          </div>
-
-          <nav className="flex flex-1 items-center gap-1">
-            <NavItem to="/">Overview</NavItem>
-            <IfPolicy policy="CanSell">
-              <NavItem to="/register">Register</NavItem>
-            </IfPolicy>
-            <IfPolicy policy="CanManageCatalog">
-              <NavItem to="/catalog">Catalog</NavItem>
-              <NavItem to="/catalog/categories">Categories</NavItem>
-              <NavItem to="/catalog/tax-classes">Tax</NavItem>
-              <NavItem to="/stock">Stock</NavItem>
-            </IfPolicy>
-          </nav>
-
-          <ShiftIndicator />
-
-          <div className="flex items-center gap-3">
-            <div className="flex flex-col items-end">
-              <span className="text-sm font-medium text-foreground">{user?.displayName}</span>
-              <span className="text-xs text-muted-foreground">{user?.role}</span>
+      <OverrideProvider>
+        <div className="flex h-full flex-col">
+          <header className="flex items-center gap-6 border-b border-border px-4 py-2">
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-semibold text-foreground">
+                {tenant?.name ?? 'POS'}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">{tenant?.slug}</span>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void logout()
-              }}
-            >
-              Sign out
-            </Button>
-          </div>
-        </header>
 
-        {/* Inside the layout, so a crash on one screen leaves the navigation
+            <nav className="flex flex-1 items-center gap-1">
+              <NavItem to="/">Overview</NavItem>
+              <IfPolicy policy="CanSell">
+                <NavItem to="/register">Register</NavItem>
+              </IfPolicy>
+              <IfPolicy policy="CanManageCatalog">
+                <NavItem to="/catalog">Catalog</NavItem>
+                <NavItem to="/catalog/categories">Categories</NavItem>
+                <NavItem to="/catalog/tax-classes">Tax</NavItem>
+                <NavItem to="/stock">Stock</NavItem>
+              </IfPolicy>
+            </nav>
+
+            <ShiftIndicator />
+
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end">
+                <span className="text-sm font-medium text-foreground">{user?.displayName}</span>
+                <span className="text-xs text-muted-foreground">{user?.role}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void logout()
+                }}
+              >
+                Sign out
+              </Button>
+            </div>
+          </header>
+
+          {/* Inside the layout, so a crash on one screen leaves the navigation
           usable instead of blanking the whole application.
 
           No padding here: the register runs edge to edge, and every other page
           brings its own. A layout that special-cased one route's padding would
           have to know which route it was rendering. */}
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <ErrorBoundary>
-            <Outlet />
-          </ErrorBoundary>
-        </main>
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
+          </main>
 
-        <ApiFooter />
-      </div>
+          <ApiFooter />
+        </div>
+      </OverrideProvider>
     </CartProvider>
   )
 }

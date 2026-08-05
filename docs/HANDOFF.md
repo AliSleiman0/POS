@@ -1,83 +1,137 @@
 # Session Handoff
 
-**Written:** 2026-08-02 · **Branch:** `phase-5/web-register`, open as **PR #11** · **Phase 5.1 and 5.2 done — start 5.3**
+**Written:** 2026-08-05 · **Branch:** `phase-5/cart-interactions` · **Phase 5.3 done — start 5.4**
 
-> A cashier can open the drawer, scan items with a wedge scanner, build a cart the server prices, and drive the whole screen from the keyboard. **854 .NET · 101 Vitest · 18 Playwright**, all four CI jobs green on the PR.
+> A cashier can discount a line, discount the sale and change a price — with a **manager's PIN
+> authorising it and the session never changing hands**. **871 .NET · 120 Vitest · 24 Playwright**,
+> all green locally.
 >
-> The open defect the last session flagged — a network blip signing the till out — **is fixed and verified in a browser.**
+> This milestone has a **backend half**: a new endpoint, a new table and a migration. It is the
+> first API change since Phase 4, so the client-drift CI job is live again.
 
-> This file is session state, not durable truth. Overwrite it when you finish. Durable decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
+> This file is session state, not durable truth. Overwrite it when you finish. Durable decisions
+> belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
 ## Before anything else
 
-**PR #11 is green and unmerged.** Two commits: the auth fix on its own (it stands alone and is worth bisecting to), then the phase. Merge it before building on 5.3.
+**Nothing is committed yet.** The branch is `phase-5/cart-interactions`, off `b70fed0`. Review,
+commit and open the PR — CI has not seen any of this.
 
-One thing worth carrying forward: **an unexplained Vitest timeout was seen once locally**, on a machine simultaneously running the API, the dev server and a Playwright browser. It did not reproduce in five subsequent runs, CI has not shown it, and the failing test's name was lost. The three async waits in `AuthProvider.test.tsx` were given 5s instead of testing-library's 1s default as a result, since they are the ones waiting on a fetch plus an effect. If a timeout appears, look there first — and this time write down which test it was.
-
----
+**A migration has been applied to `pos_dev`.** `20260805170034_OverrideGrants` — one new table,
+purely additive. Anyone pulling this branch runs `dotnet ef database update` (the command with the
+owner connection string, in CLAUDE.md) or the API will 500 on the register.
 
 ## Read first
 
-1. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) — §5.3 is next, and §5.2 now records two mistakes worth not repeating.
-2. [`CLAUDE.md`](../CLAUDE.md) — invariants 3 (money), 6 (idempotency), 7 (policies) and 10 (no blocking dialogs) are all load-bearing in what 5.3 adds.
-3. [`docs/API.md`](API.md) → **Sales**. 5.3 is the milestone where `unitPriceOverride` and `discountAmount` stop being `null`, and the server **refuses** rather than ignores them without the policy.
+1. [`docs/API.md`](API.md) → **Auth** and **Sales**. `POST /auth/override`, the
+   `X-Override-Authorization` header, and why the quote enforces policies but does not spend a grant.
+2. [`DECISIONS.md`](../DECISIONS.md) → the grant entry. Two alternatives were weighed and rejected;
+   don't re-propose them without reading why.
+3. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) → §5.4 is next, and §5.3
+   records an exit criterion that was **re-worded rather than ticked as written**.
 
 ## What landed
 
-**The auth fix (the last session's "fix this first").** `AuthProvider` cleared the tokens on *any* `/auth/me` failure, so an unreachable API during session restore threw away a good refresh token. Now only a 401 ends the session; anything else is the new `unreachable` status, which `RequireAuth` renders as "Could not reach the shop's server" with a **Try again**, keeping the route tree mounted exactly as `expired` does. `retry: false` came off the `me` query so the shared policy in `queryClient.ts` retries a transport failure twice first. `AuthProvider.test.tsx` covers all three outcomes; both "keeps the token" cases were red before the fix.
+**The override grant** — the mechanism that lets a cashier do something they cannot authorise.
 
-**5.1, the register**, at `/register` inside `AppLayout` (`src/features/register/`):
+- `POST /auth/override`: device-token authenticated exactly like `/auth/pin`, takes a manager's PIN
+  and the policies the cart needs, returns an opaque single-use grant stored hashed in
+  `override_grant`. `POST /sales` presents it and **consumes it inside the writer's transaction**;
+  `POST /sales/quote` validates it and does not.
+- The PIN verification is now **one shared helper** used by `/auth/pin` and `/auth/override`. That
+  is deliberate: a forked copy is how one of the two quietly stops counting failed attempts.
+- `SaleLine.OverriddenBy` is the manager; `Sale.CashierId` stays whoever was on the till.
 
-- `cart.ts` — the reducer, pure and React-free. Holds products, quantities and the selection; **no money** beyond an integer minor-unit unit price for the provisional subtotal. `toSaleLines()` is the single function both the quote and (in 5.4) the sale will build their lines through.
-- `CartProvider` is mounted in `AppLayout`, above the router's outlet. That is deliberate and load-bearing: the cart survives a route change *and* a session expiring, because `RequireAuth` renders the re-auth prompt over this tree rather than navigating. An e2e test walks to Overview and back to prove it.
-- `queries.ts` — `useCurrentShift` (also used by the header indicator now, one query key for both), `useOpenShift`, and `useQuote`, keyed on a **cart signature** so moving the cursor does not re-price.
-- `OpenShiftPanel` — on the screen, not in a menu. Idempotency key minted once per panel, as `StockAdjustmentDialog` does.
-
-**5.2, the scanner** — `src/lib/scanner.ts` (pure) plus `useScanner` (the `document` listener) and `beep.ts`.
-
-**Layout change worth knowing about:** `AppLayout`'s `<main>` no longer carries `p-6`. Every page brings its own padding now, so the register can run edge to edge without the layout knowing which route it is rendering. Six pages were touched for this; if a new page looks cramped against the viewport edge, that is why.
+**5.3 on the till** — `cart.ts` carries `discountAmount`, `unitPriceOverride` and
+`cartDiscountAmount` (all values a person *typed*, never computed); `LineAdjustDialog` for the
+amount; `ManagerAuthorizationDialog` for the PIN; `OverrideProvider` holds the grant.
 
 ## Things that will bite you
 
-New, and all of them cost time this session:
+New this session:
 
-1. **A per-gap timing threshold splits a barcode in half.** The frame rendering the previous scan runs while the next one arrives; a 100ms stall mid-burst is normal. The scanner now budgets the *whole* burst (`maxIntervalMs` × length). If you touch the timing, the Vitest case "survives one stalled frame in the middle of a code" is the one that fails.
-2. **A scan that fails the pacing test falls through to the keypad**, and `5099999000011` as a quantity clamped to 9,999. Manual entries above `MAX_LINE_QUANTITY` are now refused outright. Any new keypad path needs the same guard.
-3. **`page.keyboard` cannot simulate a scanner while the page is busy.** Every CDP keystroke waits on the renderer's main thread, so a burst that follows a scan is delivered over hundreds of milliseconds — real hardware is not. `machineBurst()` in `e2e/register.spec.ts` dispatches a burst in one JS turn for the two tests that need device timing; everything else uses the real keyboard, which is what proves the listener is wired to real input at all.
-4. **A test can pass for the wrong reason here.** "Typing into the search does not fill the cart" passed with the stand-down rule *removed* — the typing was slow enough to fail the pacing test anyway. Found by the falsification pass, and the test now dispatches at machine speed into the focused field. Falsify anything you add to this file.
-5. **`vi.stubGlobal('fetch', …)` does not reach the generated client.** `createClient` captures `globalThis.fetch` when `api/client.ts` is first evaluated, which is import time. `src/test/fetchMock.ts` installs one swappable function up front — **import it first**, before anything that pulls in the client, or the test quietly hits the real network and fails with a `TypeError` that looks exactly like the offline case.
-6. **`+` and `−` are reserved keys** in `useScanner` and never reach the buffer. Reserving anything a barcode could contain would delete that character from the middle of a code.
-7. **The quote is keyed on `cartSignature`**, not the cart object. Anything added to a cart line that changes the price must go into the signature or the total will not refresh.
+1. **A modal open does not stop the scanner by itself — it does now, and finding that out cost a
+   manager's PIN.** In the PIN dialog, selecting a name puts focus on a *button*, so anything typed
+   before focus reaches the input has a non-editable target and the scanner read it. `7391` is four
+   digits, which clears `minLength`, so it was looked up as a barcode and **printed back on screen
+   in the unknown-item banner**. `useScanner` now stands down whenever `[aria-modal="true"]` exists
+   in the document. `ReauthOverlay` had the identical hole and nobody had noticed.
+   `useScanner.test.tsx` pins it; falsified.
+2. **The grant lives beside the cart, never in it.** 5.5 adds `sessionStorage` persistence to
+   `CartProvider`. A grant in the cart reducer would be written to a shared tablet's disk as a
+   silent side effect of that. `OverrideProvider.test.tsx` fails if the grant string ever reaches
+   either storage — falsified by adding one line.
+3. **`authorize()` asks for the union, not just the new policy.** A cart with a discount *and* a
+   price override must end up with **one** grant carrying both, because the sale sends one header.
+   Asking for only the new one would replace a grant covering the old, and the sale would be
+   refused for something the manager had already approved.
+4. **The quote is keyed on `cartSignature`, which now carries three more fields.** Phase 5.2's
+   bite #7, and it nearly bit again. Anything added to a line that changes the price must go in, or
+   the previous total stays on screen looking authoritative — not a missing number, a wrong one.
+5. **`form_input` (Chrome MCP) does not reach React.** It sets the DOM value; the component's state
+   stays empty and the form submits blank. Click the field and `type` instead.
+6. **`import.meta.glob`, not `node:fs`, for a test that reads source files.** `tsconfig.app.json`
+   covers `src` only and deliberately excludes Node's globals — Vitest runs the test happily and
+   `tsc -b` then fails the build.
 
-Carried forward, all still true — Playwright/`webServer` ordering, `playwright install --with-deps` hanging on Windows, `schema.d.ts` drift, `JsonIgnore` fields arriving as `undefined`, `.tsx` files that export hooks, the `http` profile, and the whole backend list: see the Phase 4 handoff in `git log` (`docs/HANDOFF.md` at `de7183c`) — nothing there has been invalidated.
+Carried forward and still true: the whole 5.1/5.2 list (per-gap scanner timing, `MAX_LINE_QUANTITY`
+on manual entry, `page.keyboard` vs `machineBurst`, `vi.stubGlobal` not reaching the generated
+client, reserved `+`/`−`), plus everything in the Phase 4 handoff at `de7183c`.
 
 ## Verified, and not
 
-**Verified in a real browser** (headless Chromium at 1280×900 and 834×1112, screenshots reviewed by eye): the empty register with the open-drawer prompt, opening a drawer, a three-line cart including 0.35 kg of cheese entered on the keypad, the unknown-code banner, and the overview. The €7.10 on screen is the server's quote, and it adds up.
+**Verified in a real browser** (Chrome, 1280×900, signed in as the cashier at an enrolled till):
+the PIN step a cashier gets instead of an amount field; **"Robin Vale cannot authorise this"** for a
+correct PIN with the wrong role; "Authorised by Sam Cole" on the amount dialog; a line discount and
+a sale discount priced by the server (€1.20 → €1.00 → €0.70, and 2 units → €1.90); the second
+discount reusing the held grant with no second PIN; and pressing **Change price** afterwards
+correctly asking to approve "this discount **and** price change" — the union. Cancelling changed
+nothing.
 
-**Verified end to end** by 7 new Playwright specs against a real API and a real Postgres: scan → line → server total, double-fire → one unit, the stand-down rule, the unknown-code banner, keyboard-only operation, the two-step cart void, and the cart surviving a route change.
+**Verified end to end** by 6 new Playwright specs and 17 new .NET tests, including the ones that
+matter most: a grant spent twice is refused, a grant from another till is refused, a grant from
+another tenant resolves to nothing, and a quote does not consume one.
 
-**Falsified deliberately**, both restored afterwards: removing the double-fire guard makes the cart charge €2.40 for one bottle; removing the stand-down rule puts a line in the cart from typing in the search box.
+**Falsified deliberately, all restored:** removing the `ConsumedAt` write (single-use test goes
+red), removing the register check, dropping the adjustment fields from `cartSignature`, writing the
+grant to `sessionStorage`, removing the modal stand-down, and adding a real `confirm()` to a
+register file.
 
 **Not verified:**
 
-- **The beep has never been heard.** Headless Chromium has no audio device, and every failure in `beep.ts` is swallowed by design. Somebody has to open the page with speakers on. The mute toggle and its `localStorage` round trip are equally unproven.
-- **The re-auth overlay over a populated cart** — still. `guards.test.tsx` proves the route stays mounted and an e2e test proves the cart survives a route change, which together are the mechanism; nobody has watched a token expire with six items on screen.
-- **Touch.** Targets are sized for a finger (44px+) and it was screenshotted at tablet dimensions, but no tablet has been touched.
-- **The header at tablet width is cramped** — the shop name truncates to "Corne…" and the user's name wraps. Cosmetic, pre-existing, and visible in the tablet screenshot.
-- **Nobody who has worked a till has used any of it.** Unchanged, and it is still the real bar the phase doc sets.
+- **The beep — still not confirmed heard.** Scans and one unknown code were fired in a real Chrome
+  with the sound toggle on, so it should have sounded, but nobody has reported hearing it. The tab
+  is still open at `/register`; scan anything to check. This has been outstanding since 5.2.
+- **Tablet width, for the new controls.** `resize_window` did not take in this browser (the
+  viewport stayed 1280). The new row of buttons uses `flex-wrap`, and 5.1's layout was screenshotted
+  at 834×1112, but the 5.3 additions have not been seen at that width.
+- **The re-auth overlay over a populated cart** — still, since 5.1. Now more interesting than it
+  was: the overlay is `aria-modal`, so the scanner stands down behind it, and that path has a unit
+  test but has never been watched.
+- **A grant expiring mid-sale.** Five minutes, covered by a .NET test that ages the row. No one has
+  seen what the till does when a cashier is slow.
+- **Nobody who has worked a till has used any of it.** Unchanged, and still the real bar.
 
 ## Outstanding / deferred
 
-- **5.3 is next** — line discount, price override, manager override. The API refuses a discount without `CanApplyDiscount` (403, not ignored), so the gate is real; `IfPolicy` handles the control side.
-- **`Take cash` is present and disabled**, with a caption saying tendering arrives in the next milestone. It is not wired to anything.
-- **No `sessionStorage` persistence for the cart yet** — 5.5. `CartProvider` is where it goes, and the shape was chosen so it is an addition rather than a move.
-- **The dev device token was rotated this session.** The one in a browser from before is dead; re-enrol from `/settings/device`, or re-run the seeder with `--rotate-device-token`.
-- **`pos_e2e` keeps its shift open between runs** — there is no close-shift UI until 6.3, so `ensureDrawerOpen()` in the register spec opens one only if there is none.
-- Everything else from the Phase 4 list is unchanged: no audit log until 7.2, `GET`/`PUT /settings` unbuilt, `/sales/{id}/receipt` and `/shifts/{id}/report` documented and unbuilt, `?from=`/`?to=` on `GET /sales` not implemented, percentage discounts do not exist, `Tender.Method` accepts `Cash` only, `RebuildOnHand` has no route, `limit=abc` returns a bare 400, `auth/policies.ts` is hand-written and can drift.
+- **5.4 is next** — tender, quick-cash, change due. It is also where the grant is finally spent:
+  `OverrideProvider` holds one, `POST /sales` accepts it and is tested, but **the register has
+  never called `POST /sales`**. Attach the header there and clear the authorisation on completion
+  (`OverrideProvider` already clears it when the cart empties, so that may be free).
+- **One exit criterion was re-worded**, not quietly ticked — see the phase doc. A Cashier *can*
+  reach the Discount control; what they cannot do is apply one on their own authority.
+- **No percentage discounts.** The API has no such field, and computing one client-side would put
+  arithmetic on the amount that decides what a customer pays.
+- **A refused override attempt is still recorded nowhere** until the audit log in 7.2, which
+  already has an exit criterion for it.
+- **`LineAdjustDialog` labels the field "Amount off (EUR)"** — the currency code, not the symbol.
+  Cosmetic; every other amount on the screen uses `Intl`.
+- Everything else from the Phase 5.1/5.2 list is unchanged: `Take cash` present and disabled, no
+  cart persistence until 5.5, `pos_e2e` keeps its shift open between runs, and the Phase 4 backlog.
 
 ## Still genuinely open
 
-**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing until Phase 10, but must be settled before quoting a price.
+**Pricing/business model** — one-time purchase vs. recurring, given that we host. Blocks nothing
+until Phase 10, but must be settled before quoting a price.

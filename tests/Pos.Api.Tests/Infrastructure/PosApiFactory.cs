@@ -203,6 +203,32 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
         return new EnrolledRegister(register.Id, token);
     }
 
+    /// <summary>
+    /// Enrols a till that already exists, and returns the token.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="CreateEnrolledRegisterAsync"/> because the override tests need
+    /// a device token for <i>the register the sale is rung on</i>: a grant records the till it
+    /// was minted at, and one minted at a till that is not the sale's is refused. A helper that
+    /// created a second register would exercise exactly the case that is supposed to fail.
+    /// </remarks>
+    public async Task<string> EnrolRegisterAsync(Guid tenantId, Guid registerId)
+    {
+        var token = OpaqueToken.Issue(tenantId);
+
+        await AsTenantAsync(tenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var register = await db.Registers.FirstAsync(r => r.Id == registerId);
+
+            register.DeviceTokenHash = OpaqueToken.Hash(token);
+
+            await db.SaveChangesAsync();
+        });
+
+        return token;
+    }
+
     /// <summary>Creates a till and leaves it unenrolled, as <c>POST /registers</c> does.</summary>
     public async Task<Guid> CreateRegisterAsync(Guid tenantId, string name)
     {
