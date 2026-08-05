@@ -7,9 +7,10 @@
  * gets a scan into the wrong box, and the code ends up in the product search or
  * — worse — in a quantity.
  *
- * The listener stands down whenever a text field, textarea or select has focus.
- * That is what keeps manual entry working: while somebody is typing into the
- * product search, the keystrokes belong to the search.
+ * The listener stands down in three cases: while a text field, textarea or
+ * select has focus, which is what keeps manual entry working; while a modal
+ * dialog is open, because then the register is not what is being typed at; and
+ * whenever the session is not live.
  */
 
 import { useEffect, useRef } from 'react'
@@ -63,6 +64,27 @@ export function useScanner(enabled: boolean, handlers: ScannerHandlers): void {
     }
 
     function onKeyDown(event: KeyboardEvent): void {
+      /*
+       * A modal is open, so the register is not what is being typed at.
+       *
+       * The editable-target rule below is not enough on its own, and finding out
+       * cost a manager's PIN. In the authorisation dialog, selecting a name puts
+       * focus on a *button*; anything typed before focus reaches the PIN field
+       * has a non-editable target, so the scanner read it — and a four-digit PIN
+       * clears `minLength`, so `7391` was looked up as a barcode and printed
+       * back on screen in the unknown-item banner.
+       *
+       * Checked against the document rather than passed down as a flag, because
+       * the dialogs that matter are mounted in three different places:
+       * `LineAdjustDialog` under the register, `ManagerAuthorizationDialog`
+       * under `OverrideProvider`, and `ReauthOverlay` above the whole route
+       * tree. The last of those had the same hole and nobody had noticed.
+       */
+      if (document.querySelector('[aria-modal="true"]') !== null) {
+        scan.reset()
+        return
+      }
+
       // Someone is typing into a field. Their keystrokes are theirs.
       if (isEditableTarget(event.target)) {
         scan.reset()
