@@ -75,6 +75,19 @@ New this session:
 6. **`import.meta.glob`, not `node:fs`, for a test that reads source files.** `tsconfig.app.json`
    covers `src` only and deliberately excludes Node's globals — Vitest runs the test happily and
    `tsc -b` then fails the build.
+7. **GitGuardian failed on PR #12 with "1 secret uncovered" and no detail reachable from the CLI.**
+   The check exposes no annotations and the finding is visible only on
+   `dashboard.gitguardian.com`. It had passed on #10 and #11, so this branch introduced it. The
+   owner assessed it as a false positive and the PR was merged on that judgement — **it was never
+   identified.** Worth five minutes on the dashboard before it becomes permanent background noise
+   that hides a real one.
+
+   Two things learned trying: GitGuardian scans **every commit in the PR**, so a fix at the tip
+   cannot clear a finding introduced earlier in the branch — it needs history rewritten. And the
+   most likely candidate was mine: `OverrideProvider.test.tsx` originally used literals shaped like
+   `base64url(tenantId).base64url(secret)`, which is exactly a device token. Those are now
+   obviously-fake strings (`test-grant-not-a-credential`), which is better test hygiene regardless
+   of what the scanner was actually pointing at.
 
 Carried forward and still true: the whole 5.1/5.2 list (per-gap scanner timing, `MAX_LINE_QUANTITY`
 on manual entry, `page.keyboard` vs `machineBurst`, `vi.stubGlobal` not reaching the generated
