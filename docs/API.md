@@ -50,6 +50,7 @@ Offsets are not offered. During trading hours rows are being inserted underneath
 |---|---|---|---|
 | POST | `/auth/login` | anonymous | Tenant slug + email + password → access + refresh token |
 | POST | `/auth/pin` | device token | Cashier PIN → session on an enrolled register |
+| POST | `/auth/override` | device token | Manager PIN → a single-use grant for **one** privileged action |
 | POST | `/auth/refresh` | refresh token | Rotate; returns a new pair |
 | POST | `/auth/logout` | authenticated | Revoke the current refresh-token family |
 | GET | `/auth/me` | authenticated | Current user, role, granted policies, tenant settings |
@@ -71,6 +72,24 @@ POST /auth/pin     { "userId": "...", "pin": "1234" }   + X-Device-Token: <token
 → 401 problem+json, type .../account-locked  + "lockoutEndsAt": <timestamp>
 → 429 + Retry-After   (more than 10 attempts in a minute from one till)
 ```
+
+```
+POST /auth/override  { "userId": "...", "pin": "1234",
+                       "policies": ["CanApplyDiscount"] }   + X-Device-Token: <token>
+→ 200 { "grant": "...", "expiresIn": 300, "authorizedById": "...",
+        "authorizedByName": "Sam Cole", "policies": ["CanApplyDiscount"] }
+→ 400 problem+json   (a policy outside the grantable set, or an empty list)
+→ 401 problem+json, type .../invalid-credentials  |  .../account-locked
+→ 403 problem+json, type .../override-not-permitted
+```
+
+**A manager approving one action without the session changing hands.** A cashier cannot discount a line; a manager standing beside them enters a PIN, and the *cashier's* session goes on to ring the sale. This exists because the two obvious alternatives are both wrong: swapping the session attributes the sale — and the override — to the manager, so the Z-report reconciles the wrong drawer; granting the role for a while is a standing permission with no end.
+
+- **`ConsumedAt` is the control, not `expiresIn`.** The grant is spent by the first `POST /sales` it authorises, and a second sale presenting it is refused. A merely short-lived token would let one PIN discount every sale in its window, which is the fraud the flow exists to prevent. The five minutes only bounds a grant minted for a sale that was then abandoned.
+- **Only `CanApplyDiscount` and `CanOverridePrice` are grantable**, checked *before* the PIN. Without that allow-list this is a general elevation mechanism, and a grant for `CanManageEmployees` would let its holder set a PIN on the owner's account.
+- The grant records the till it was minted at, and is refused at another. A manager approves what is on the counter in front of them.
+- **`override-not-permitted` does disclose that somebody is not a manager** — but only to a caller who already typed that person's correct PIN, so it is not an oracle anyone at the counter can query. Answering `invalid-credentials` instead would tell a manager their own correct PIN was wrong, and they would retry until locked out. See [`DECISIONS.md`](../DECISIONS.md).
+- A wrong PIN counts toward the **same** lockout as `/auth/pin`, and the same per-till rate limit applies. Both routes verify a PIN through one shared code path, because a second copy is how one of them quietly stops counting.
 
 ### Opaque tokens — refresh and `X-Device-Token`
 
@@ -218,7 +237,8 @@ The endpoint that must not get this wrong.
 Semantics:
 
 - **The server computes every amount.** There is nowhere to put a total: the request has no such field. A price a client can send is a price a customer can edit.
-- `unitPriceOverride` requires `CanOverridePrice`; `discountAmount`/`cartDiscountAmount` require `CanApplyDiscount`. A Cashier sending them gets `403` — **refused, not ignored**, unlike an unreadable `costPrice`, because this changes what the customer pays. The override is recorded on the sale line as `isPriceOverridden` + `overriddenBy`, and **that line is the whole trail** — there is no audit log until Phase 7.2, so a *rejected* attempt is currently recorded nowhere.
+- `unitPriceOverride` requires `CanOverridePrice`; `discountAmount`/`cartDiscountAmount` require `CanApplyDiscount`. A Cashier sending them without authorisation gets `403` with `type: .../override-required` and a `requiredPolicies` array — **refused, not ignored**, unlike an unreadable `costPrice`, because this changes what the customer pays. The override is recorded on the sale line as `isPriceOverridden` + `overriddenBy`, and **that line is the whole trail** — there is no audit log until Phase 7.2, so a *rejected* attempt is currently recorded nowhere.
+- **A manager's grant satisfies either policy in the caller's place.** Present it as `X-Override-Authorization: <grant>` from [`POST /auth/override`](#auth--auth). It must have been minted at this `registerId`, and it is **consumed inside the sale's transaction** — so it authorises exactly one sale, and a replayed `Idempotency-Key` (which never re-enters the handler) does not need a second one. `overriddenBy` is then the *manager*, while `cashierId` stays whoever was on the till.
 - Sale insert, lines, tenders, stock movements, discrepancies and the sale-number assignment happen in **one transaction**. Either all of it lands or none.
 - **Insufficient stock does not block the sale.** The customer is standing there holding the item; refusing to sell it is the wrong behaviour. The sale completes, stock goes negative, and a discrepancy is flagged for review (per `DECISIONS.md`).
 - The **cashier is taken from the token**, never the body. A caller able to supply it could attribute a sale — and a price override — to a colleague.
@@ -239,6 +259,8 @@ A **refund** creates a new `Sale` with `type: Refund`, its own sale number, `ori
 - **There is no `PUT` or `DELETE` under `/sales`**, and a test enumerates the routing table to keep it that way.
 
 `POST /sales/quote` takes the same body minus tenders and returns the computed totals. It exists so the register can show an authoritative total without a second pricing implementation on the client — two implementations of tax and discount rules will disagree, and the disagreement will surface at a till.
+
+**The quote enforces the discount and override policies too**, and accepts the same `X-Override-Authorization` header. Otherwise a till would display a discounted total the sale then refused: the cashier reads it out, the customer counts out the money, and only then does it come back `403`. The quote **validates the grant without consuming it** — the register re-quotes on every keystroke, and spending a single-use grant on the first of those would leave nothing for the sale it was minted for. It carries no `registerId`, so the till check is the sale's alone.
 
 ## Shifts — `/shifts`
 

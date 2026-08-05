@@ -17,6 +17,7 @@
  */
 
 import type { components } from '@/api/schema'
+import type { Policy } from '@/auth/policies'
 import { toMinorUnits, type MinorUnits, type ServerDecimal } from '@/lib/money'
 
 type Unit = components['schemas']['Unit']
@@ -43,6 +44,16 @@ export interface CartLine {
   unitPrice: ServerDecimal
   /** Integer minor units, for the provisional subtotal only. */
   unitPriceMinor: MinorUnits
+  /**
+   * A price a manager typed in place of the catalog's. Requires `CanOverridePrice`.
+   *
+   * A **typed** value, not a computed one — which is why holding it here does not
+   * breach invariant 3. The client is carrying a person's input to the server,
+   * not working out what anybody pays.
+   */
+  unitPriceOverride: number | null
+  /** Money off this line, typed by a person. Requires `CanApplyDiscount`. */
+  discountAmount: number | null
 }
 
 export interface Cart {
@@ -61,9 +72,16 @@ export interface Cart {
    * the animation has been shown.
    */
   flashedKey: string | null
+  /** Money off the whole sale, spread over the lines by the server. */
+  cartDiscountAmount: number | null
 }
 
-export const EMPTY_CART: Cart = { lines: [], selectedKey: null, flashedKey: null }
+export const EMPTY_CART: Cart = {
+  lines: [],
+  selectedKey: null,
+  flashedKey: null,
+  cartDiscountAmount: null,
+}
 
 export type CartAction =
   | { type: 'add'; product: CartProduct; quantity?: number }
@@ -72,6 +90,9 @@ export type CartAction =
   | { type: 'select'; key: string | null }
   | { type: 'move'; delta: 1 | -1 }
   | { type: 'remove'; key: string }
+  | { type: 'setLineDiscount'; key: string; amount: number | null }
+  | { type: 'setPriceOverride'; key: string; unitPrice: number | null }
+  | { type: 'setCartDiscount'; amount: number | null }
   | { type: 'clearFlash' }
   | { type: 'clear' }
 
@@ -114,6 +135,8 @@ export function cartReducer(state: Cart, action: CartAction): Cart {
         quantity: clampQuantity(quantity),
         unitPrice: action.product.unitPrice,
         unitPriceMinor: toMinorUnits(action.product.unitPrice),
+        unitPriceOverride: null,
+        discountAmount: null,
       }
 
       return {
@@ -198,6 +221,43 @@ export function cartReducer(state: Cart, action: CartAction): Cart {
       }
     }
 
+    case 'setLineDiscount': {
+      const amount = action.amount === null ? null : roundAmount(action.amount)
+
+      return {
+        ...state,
+        lines: state.lines.map((line) =>
+          // Zero is "no discount", not "a discount of nothing": a line showing
+          // "−£0.00" reads as a failed keystroke, and the server would price it
+          // identically anyway.
+          line.key === action.key
+            ? { ...line, discountAmount: amount === null || amount <= 0 ? null : amount }
+            : line,
+        ),
+      }
+    }
+
+    case 'setPriceOverride': {
+      const unitPrice = action.unitPrice === null ? null : roundAmount(action.unitPrice)
+
+      return {
+        ...state,
+        lines: state.lines.map((line) =>
+          // Zero is kept, unlike a discount: "this one is free" is a real
+          // decision a manager makes, and the server accepts a price of 0.
+          line.key === action.key
+            ? { ...line, unitPriceOverride: unitPrice === null || unitPrice < 0 ? null : unitPrice }
+            : line,
+        ),
+      }
+    }
+
+    case 'setCartDiscount': {
+      const amount = action.amount === null ? null : roundAmount(action.amount)
+
+      return { ...state, cartDiscountAmount: amount === null || amount <= 0 ? null : amount }
+    }
+
     case 'clearFlash':
       return state.flashedKey === null ? state : { ...state, flashedKey: null }
 
@@ -219,17 +279,39 @@ export function isEmpty(cart: Cart): boolean {
  * that is sold cannot be different — which is the failure that shows up as a
  * total changing between the display and the receipt.
  *
- * `unitPriceOverride` and `discountAmount` are `null` until 5.3 builds the
- * controls for them; both are permission-gated server-side and a Cashier sending
- * one is refused rather than ignored.
+ * `unitPriceOverride` and `discountAmount` are permission-gated server-side: a
+ * Cashier sending one without a manager's grant is refused rather than ignored.
  */
 export function toSaleLines(cart: Cart): SaleLineRequest[] {
   return cart.lines.map((line) => ({
     productId: line.productId,
     quantity: line.quantity,
-    unitPriceOverride: null,
-    discountAmount: null,
+    unitPriceOverride: line.unitPriceOverride,
+    discountAmount: line.discountAmount,
   }))
+}
+
+/**
+ * Which policies pricing this cart needs.
+ *
+ * Read by the register to decide whether a manager has to authorise the next
+ * action, and by the quote to know whether to present a grant. It mirrors
+ * `SaleEndpoints.AuthorizeAdjustmentsAsync` — the server checks the same two
+ * conditions and refuses, so a mismatch here costs a round trip and a clear
+ * message rather than an unpriced cart.
+ */
+export function requiredPolicies(cart: Cart): Policy[] {
+  const policies: Policy[] = []
+
+  if (cart.cartDiscountAmount !== null || cart.lines.some((line) => line.discountAmount !== null)) {
+    policies.push('CanApplyDiscount')
+  }
+
+  if (cart.lines.some((line) => line.unitPriceOverride !== null)) {
+    policies.push('CanOverridePrice')
+  }
+
+  return policies
 }
 
 /**
@@ -238,14 +320,46 @@ export function toSaleLines(cart: Cart): SaleLineRequest[] {
  * The quote's query key, so a cart that changes and changes back reuses the
  * cached price instead of another round trip, and re-selecting a line — which
  * changes the cart object but not the money — does not re-quote at all.
+ *
+ * **Everything that changes the price belongs in here.** A discount left out
+ * would leave the previous total on the screen looking authoritative, which is
+ * the worst available failure: not a missing number, a wrong one.
  */
 export function cartSignature(cart: Cart): string {
-  return cart.lines.map((line) => `${line.productId}:${String(line.quantity)}`).join('|')
+  const lines = cart.lines
+    .map(
+      (line) =>
+        `${line.productId}:${String(line.quantity)}` +
+        `:${line.unitPriceOverride === null ? '' : String(line.unitPriceOverride)}` +
+        `:${line.discountAmount === null ? '' : String(line.discountAmount)}`,
+    )
+    .join('|')
+
+  return cart.cartDiscountAmount === null ? lines : `${lines}#${String(cart.cartDiscountAmount)}`
 }
 
-/** Provisional line totals in integer minor units. Never authoritative. */
+/**
+ * What one unit of this line costs, in integer minor units — the override if a
+ * manager set one, otherwise the catalog's price.
+ */
+export function effectiveUnitPriceMinor(line: CartLine): MinorUnits {
+  return line.unitPriceOverride === null
+    ? line.unitPriceMinor
+    : Math.round(line.unitPriceOverride * 100)
+}
+
+/**
+ * Provisional line total in integer minor units. Never authoritative.
+ *
+ * Floored at zero because a discount larger than its line is a mistake the
+ * *server* refuses (`InvalidDiscountException`), and showing "−£2.30" on the way
+ * to that refusal would suggest the till was willing to pay the customer.
+ */
 export function provisionalLineMinor(line: CartLine): MinorUnits {
-  return Math.round(line.unitPriceMinor * line.quantity)
+  const gross = Math.round(effectiveUnitPriceMinor(line) * line.quantity)
+  const discount = line.discountAmount === null ? 0 : Math.round(line.discountAmount * 100)
+
+  return Math.max(0, gross - discount)
 }
 
 function clampIndex(index: number, length: number): number {
@@ -265,4 +379,14 @@ function clampQuantity(quantity: number): number {
  */
 function roundQuantity(quantity: number): number {
   return Math.round(quantity * 10_000) / 10_000
+}
+
+/**
+ * Four decimal places, matching `numeric(19,4)`.
+ *
+ * The same rule as a quantity's and for the same reason: an amount the server
+ * would reject on the fifth decimal is one the cashier cannot see the cause of.
+ */
+function roundAmount(amount: number): number {
+  return Math.round(amount * 10_000) / 10_000
 }

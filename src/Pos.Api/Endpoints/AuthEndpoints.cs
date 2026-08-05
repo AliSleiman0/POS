@@ -15,6 +15,24 @@ public sealed record LoginRequest(string TenantSlug, string Email, string Passwo
 
 public sealed record PinLoginRequest(Guid UserId, string Pin);
 
+/// <summary>A manager authorising one privileged action on somebody else's session.</summary>
+/// <remarks>
+/// <c>Policies</c> is the set the cart needs <i>now</i>, not one name: a cart carrying both a
+/// discount and a price override would otherwise need two grants, two headers and two PIN
+/// entries for an authorisation the manager gave once.
+/// </remarks>
+public sealed record OverrideRequest(Guid UserId, string Pin, IReadOnlyList<string> Policies);
+
+/// <summary>
+/// A minted grant. <c>Grant</c> is shown once and stored nowhere on the server but as a digest.
+/// </summary>
+public sealed record OverrideGrantResponse(
+    string Grant,
+    int ExpiresIn,
+    Guid AuthorizedById,
+    string AuthorizedByName,
+    IReadOnlyList<string> Policies);
+
 public sealed record RefreshRequest(string RefreshToken);
 
 public sealed record LogoutRequest(string RefreshToken);
@@ -65,6 +83,11 @@ public static class AuthEndpoints
             .RequireAuthorization(DeviceTokenAuthenticationHandler.PolicyName)
             .RequireRateLimiting(RateLimitPolicies.PinAttempts)
             .WithSummary("Start a cashier session from an enrolled till");
+
+        auth.MapPost("/override", OverrideAsync)
+            .RequireAuthorization(DeviceTokenAuthenticationHandler.PolicyName)
+            .RequireRateLimiting(RateLimitPolicies.PinAttempts)
+            .WithSummary("Manager PIN authorising one privileged action, without swapping the session");
 
         auth.MapPost("/refresh", RefreshAsync)
             .AllowAnonymous()
@@ -146,42 +169,17 @@ public static class AuthEndpoints
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(http);
 
-        // The device token was validated by the authentication scheme before this method
-        // was reached, so an unenrolled till never gets as far as presenting a PIN.
-        var registerClaim = http.User.FindFirst(PosClaims.RegisterId)?.Value;
-
-        if (!Guid.TryParse(registerClaim, CultureInfo.InvariantCulture, out var registerId))
+        if (!TryReadRegister(http, out var registerId))
         {
             return InvalidCredentials();
         }
 
-        var user = await users.Users.FirstOrDefaultAsync(u => u.Id == request.UserId, cancellationToken);
+        var (user, failure) = await CheckPinAsync(users, request.UserId, request.Pin, cancellationToken);
 
-        if (user is null || !user.IsActive || user.PinHash is null)
+        if (user is null)
         {
-            return InvalidCredentials();
+            return failure!;
         }
-
-        if (await users.IsLockedOutAsync(user))
-        {
-            return LockedOut(user.LockoutEnd);
-        }
-
-        var verification = users.PasswordHasher.VerifyHashedPassword(user, user.PinHash, request.Pin);
-
-        if (verification == PasswordVerificationResult.Failed)
-        {
-            await users.AccessFailedAsync(user);
-
-            // Told plainly once the lockout has actually engaged: the staff member needs to
-            // know to wait rather than keep trying, and by then the attempt budget is spent
-            // anyway so it reveals nothing an attacker could not measure.
-            return await users.IsLockedOutAsync(user)
-                ? LockedOut((await users.GetLockoutEndDateAsync(user)))
-                : InvalidCredentials();
-        }
-
-        await users.ResetAccessFailedCountAsync(user);
 
         var now = timeProvider.GetUtcNow();
 
@@ -195,6 +193,85 @@ public static class AuthEndpoints
             .ExecuteUpdateAsync(r => r.SetProperty(x => x.LastSeenAt, now), cancellationToken);
 
         return TypedResults.Ok(await BuildAuthResponseAsync(tokens, user, registerId, cancellationToken));
+    }
+
+    /// <summary>
+    /// A manager's PIN, exchanged for authorisation to do one thing on someone else's session.
+    /// </summary>
+    /// <remarks>
+    /// The cashier's session is not touched. That is the whole point: <c>POST /sales</c> takes
+    /// the cashier from the token, so a flow that swapped the session would attribute the sale —
+    /// and the override — to the manager, and the drawer's Z-report would reconcile against the
+    /// wrong person. Here the sale stays the cashier's and <c>SaleLine.OverriddenBy</c> records
+    /// who authorised the exception.
+    /// <para>
+    /// Device-token authenticated, exactly like <c>/auth/pin</c>: a PIN is never sufficient on
+    /// its own, and a grant minted from a laptop somewhere would defeat the point of standing at
+    /// the till to give it.
+    /// </para>
+    /// </remarks>
+    private static async Task<Results<Ok<OverrideGrantResponse>, ProblemHttpResult, ValidationProblem>> OverrideAsync(
+        OverrideRequest request,
+        HttpContext http,
+        UserManager<ApplicationUser> users,
+        TokenService tokens,
+        OverrideGrantService grants,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(http);
+
+        if (!TryReadRegister(http, out var registerId))
+        {
+            return InvalidCredentials();
+        }
+
+        var requested = (request.Policies ?? []).Distinct(StringComparer.Ordinal).ToArray();
+
+        if (requested.Length == 0 || !OverrideGrantService.AreGrantable(requested))
+        {
+            // 400 rather than 403, and checked before the PIN: asking for CanManageEmployees is
+            // a malformed request, not a permission that might be granted on a better day. The
+            // allow-list is what stops this endpoint being a general elevation mechanism.
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["policies"] =
+                    [$"One or more of {string.Join(", ", OverrideGrantService.Grantable)} is required."],
+            });
+        }
+
+        var (user, failure) = await CheckPinAsync(users, request.UserId, request.Pin, cancellationToken);
+
+        if (user is null)
+        {
+            return failure!;
+        }
+
+        var role = await tokens.ResolveRoleAsync(user);
+        var held = PolicyCatalog.PoliciesFor(role);
+
+        if (!requested.All(policy => held.Contains(policy, StringComparer.Ordinal)))
+        {
+            // Says plainly that this person cannot authorise it, which does disclose that they
+            // are not a manager — but only to somebody who already knows their PIN, so it is
+            // not an oracle anyone at the counter can query. The alternative, answering
+            // "invalid credentials", tells a manager their own correct PIN is wrong.
+            return NotPermittedToAuthorize();
+        }
+
+        var token = await grants.IssueAsync(
+            user.TenantId,
+            user.Id,
+            registerId,
+            requested,
+            cancellationToken);
+
+        return TypedResults.Ok(new OverrideGrantResponse(
+            token,
+            (int)OverrideGrant.Lifetime.TotalSeconds,
+            user.Id,
+            user.DisplayName,
+            requested));
     }
 
     private static async Task<Results<Ok<AuthResponse>, ProblemHttpResult>> RefreshAsync(
@@ -298,6 +375,66 @@ public static class AuthEndpoints
     }
 
     /// <summary>
+    /// The register the presented device token belongs to.
+    /// </summary>
+    /// <remarks>
+    /// The token was validated by the authentication scheme before either handler was reached,
+    /// so an unenrolled till never gets as far as presenting a PIN.
+    /// </remarks>
+    private static bool TryReadRegister(HttpContext http, out Guid registerId) =>
+        Guid.TryParse(
+            http.User.FindFirst(PosClaims.RegisterId)?.Value,
+            CultureInfo.InvariantCulture,
+            out registerId);
+
+    /// <summary>
+    /// Verifies a PIN, counting the attempt.
+    /// </summary>
+    /// <remarks>
+    /// <b>Shared by <c>/auth/pin</c> and <c>/auth/override</c> on purpose.</b> Both are a PIN
+    /// presented from a till, both must count failures toward the same lockout, and a second
+    /// copy of this is how one of the two quietly stops doing so — leaving an unrated-limited
+    /// guessing oracle behind the endpoint nobody was looking at.
+    /// </remarks>
+    /// <returns>The user, or the single failure response to return in their place.</returns>
+    private static async Task<(ApplicationUser? User, ProblemHttpResult? Failure)> CheckPinAsync(
+        UserManager<ApplicationUser> users,
+        Guid userId,
+        string pin,
+        CancellationToken cancellationToken)
+    {
+        var user = await users.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        if (user is null || !user.IsActive || user.PinHash is null)
+        {
+            return (null, InvalidCredentials());
+        }
+
+        if (await users.IsLockedOutAsync(user))
+        {
+            return (null, LockedOut(user.LockoutEnd));
+        }
+
+        var verification = users.PasswordHasher.VerifyHashedPassword(user, user.PinHash, pin);
+
+        if (verification == PasswordVerificationResult.Failed)
+        {
+            await users.AccessFailedAsync(user);
+
+            // Told plainly once the lockout has actually engaged: the staff member needs to
+            // know to wait rather than keep trying, and by then the attempt budget is spent
+            // anyway so it reveals nothing an attacker could not measure.
+            return await users.IsLockedOutAsync(user)
+                ? (null, LockedOut(await users.GetLockoutEndDateAsync(user)))
+                : (null, InvalidCredentials());
+        }
+
+        await users.ResetAccessFailedCountAsync(user);
+
+        return (user, null);
+    }
+
+    /// <summary>
     /// Stamps <c>LastLoginAt</c> without going through the change tracker.
     /// </summary>
     /// <remarks>
@@ -372,6 +509,14 @@ public static class AuthEndpoints
             detail: "The tenant, email address or password is incorrect.",
             statusCode: StatusCodes.Status401Unauthorized,
             type: "https://pos.example/errors/invalid-credentials");
+
+    /// <summary>The PIN was right; the person it belongs to still cannot authorise this.</summary>
+    private static ProblemHttpResult NotPermittedToAuthorize()
+        => TypedResults.Problem(
+            title: "Not permitted to authorise",
+            detail: "That member of staff cannot authorise this. Ask a manager or the owner.",
+            statusCode: StatusCodes.Status403Forbidden,
+            type: "https://pos.example/errors/override-not-permitted");
 
     /// <summary>Carries the expiry, so the till can say "try again at 14:05" rather than "no".</summary>
     private static ProblemHttpResult LockedOut(DateTimeOffset? until)

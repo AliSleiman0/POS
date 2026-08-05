@@ -34,6 +34,17 @@ public sealed record TenderInstruction(TenderMethod Method, Money Amount, string
 /// Which of the cart's products decrement stock. Resolved by the caller from the catalog,
 /// because the ledger has no opinion about <c>TrackStock</c> and should not grow one.
 /// </param>
+/// <param name="AuthorizedBy">
+/// Who authorised the price overrides on this sale, when it was not the cashier.
+/// <para>
+/// This is not an exception to the rule above — it is the reason the rule holds. A cashier
+/// cannot override a price on their own authority, so a manager authorises it with a PIN
+/// (<c>POST /auth/override</c>) and the API resolves the resulting grant into this value. The
+/// cashier is still taken from the token and the sale is still theirs; only
+/// <c>SaleLine.OverriddenBy</c> names the manager. Null means the caller held the policy
+/// themselves, and the cashier is recorded.
+/// </para>
+/// </param>
 public sealed record SaleCommitRequest(
     Guid ClientTransactionId,
     Guid RegisterId,
@@ -41,7 +52,8 @@ public sealed record SaleCommitRequest(
     TaxMode TaxMode,
     PricedSale Priced,
     IReadOnlyList<TenderInstruction> Tenders,
-    IReadOnlySet<Guid> StockTrackedProductIds);
+    IReadOnlySet<Guid> StockTrackedProductIds,
+    Guid? AuthorizedBy = null);
 
 /// <summary>What was committed.</summary>
 /// <param name="SaleId">The new sale.</param>

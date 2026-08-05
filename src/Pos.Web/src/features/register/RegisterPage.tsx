@@ -10,10 +10,12 @@ import { useToast } from '@/components/toastContext'
 import { isStorableAmount } from '@/features/catalog/validation'
 import { beep, isScanSoundMuted, setScanSoundMuted } from '@/lib/beep'
 import { formatMoney, parseServerDecimal, type ServerDecimal } from '@/lib/money'
-import { MAX_LINE_QUANTITY, provisionalLineMinor, type CartProduct } from './cart'
+import { MAX_LINE_QUANTITY, provisionalLineMinor, type CartLine, type CartProduct } from './cart'
 import { useCart } from './cartContext'
 import { CartPane } from './CartPane'
+import { LineAdjustDialog, type Adjustment } from './LineAdjustDialog'
 import { OpenShiftPanel } from './OpenShiftPanel'
+import { useOverride } from './overrideContext'
 import { ProductGrid } from './ProductGrid'
 import { registerKeys, useCurrentShift, useQuote } from './queries'
 import { TotalPanel } from './TotalPanel'
@@ -40,24 +42,31 @@ import { useScanner } from './useScanner'
  * | `Delete` | void the selected line |
  * | `Escape` | clear the entry and dismiss the scan banner |
  * | `F2` | focus the product search |
+ * | `F3` | discount the selected line |
+ * | `F4` | change the selected line's price |
  *
  * A fast burst of characters ending in Enter is a scan and goes to the cart
  * instead; see `lib/scanner.ts` for how the two are told apart.
  */
 export function RegisterPage() {
-  const { status, tenant } = useAuth()
+  const { status, tenant, can } = useAuth()
   const currency = tenant?.currencyCode ?? 'GBP'
   const queryClient = useQueryClient()
   const toast = useToast()
 
   const { cart, dispatch } = useCart()
+  const override = useOverride()
   const shift = useCurrentShift()
-  const quote = useQuote(cart)
+  const quote = useQuote(cart, override.authorization?.grant ?? null)
 
   const [pending, setPending] = useState('')
   const [unknownCode, setUnknownCode] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [muted, setMuted] = useState(isScanSoundMuted)
+  const [adjusting, setAdjusting] = useState<{
+    adjustment: Adjustment
+    line: CartLine | null
+  } | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
   /** Line totals from the quote, by product, for the cart rows. */
@@ -171,6 +180,61 @@ export function RegisterPage() {
     [cart.selectedKey, dispatch, toast],
   )
 
+  /**
+   * Opens a discount or price-override entry, asking a manager first if the
+   * cashier cannot approve it themselves.
+   *
+   * **A Cashier is not shown a control that does nothing, and not shown one that
+   * discounts on their own authority either.** Pressing Discount without
+   * `CanApplyDiscount` goes to the manager's PIN first, every time, and if the
+   * manager declines nothing is changed — the amount field is never reached. The
+   * server refuses the same cart regardless (`override-required`), so this is
+   * the courteous path to the same answer rather than the enforcement.
+   */
+  const beginAdjustment = useCallback(
+    async (adjustment: Adjustment, line: CartLine | null) => {
+      const policy = adjustment === 'priceOverride' ? 'CanOverridePrice' : 'CanApplyDiscount'
+
+      if (!can(policy) && (await override.authorize([policy])) === null) {
+        return
+      }
+
+      setAdjusting({ adjustment, line })
+    },
+    [can, override],
+  )
+
+  const applyAdjustment = useCallback(
+    (amount: number | null) => {
+      if (adjusting === null) {
+        return
+      }
+
+      const { adjustment, line } = adjusting
+
+      setAdjusting(null)
+
+      if (adjustment === 'cartDiscount') {
+        dispatch({ type: 'setCartDiscount', amount })
+        return
+      }
+
+      if (line === null) {
+        return
+      }
+
+      dispatch(
+        adjustment === 'lineDiscount'
+          ? { type: 'setLineDiscount', key: line.key, amount }
+          : { type: 'setPriceOverride', key: line.key, unitPrice: amount },
+      )
+    },
+    [adjusting, dispatch],
+  )
+
+  /** The selected line, re-read from the cart so it is never a stale copy. */
+  const selectedLine = cart.lines.find((line) => line.key === cart.selectedKey) ?? null
+
   const onKey = useCallback(
     (event: KeyboardEvent) => {
       switch (event.key) {
@@ -196,11 +260,26 @@ export function RegisterPage() {
           event.preventDefault()
           searchRef.current?.focus()
           break
+        case 'F3':
+          // Function keys, like F2, because a barcode cannot contain one —
+          // reserving a printable character would delete it from the middle of
+          // a scanned code.
+          if (selectedLine !== null) {
+            event.preventDefault()
+            void beginAdjustment('lineDiscount', selectedLine)
+          }
+          break
+        case 'F4':
+          if (selectedLine !== null) {
+            event.preventDefault()
+            void beginAdjustment('priceOverride', selectedLine)
+          }
+          break
         default:
           break
       }
     },
-    [cart.selectedKey, dispatch],
+    [beginAdjustment, cart.selectedKey, dispatch, selectedLine],
   )
 
   useScanner(status === 'authenticated', {
@@ -275,6 +354,9 @@ export function RegisterPage() {
           currency={currency}
           pricedLines={pricedLines}
           isQuoting={quote.isFetching && !quote.isPending}
+          onAdjust={(adjustment, line) => {
+            void beginAdjustment(adjustment, line)
+          }}
         />
 
         <div className="flex min-h-0 flex-col gap-3">
@@ -312,6 +394,20 @@ export function RegisterPage() {
           />
         </div>
       </div>
+
+      {adjusting !== null ? (
+        <LineAdjustDialog
+          adjustment={adjusting.adjustment}
+          line={adjusting.line}
+          currency={currency}
+          cartSubtotalMinor={provisionalMinor}
+          authorizedByName={override.authorization?.authorizedByName ?? null}
+          onApply={applyAdjustment}
+          onCancel={() => {
+            setAdjusting(null)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

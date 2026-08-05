@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { enrolDevice, signIn } from './fixtures/actors'
+import { MANAGER_NAME, MANAGER_PIN } from './fixtures/seed'
 
 /**
  * The register, end to end against a real API and a real Postgres.
@@ -222,5 +223,172 @@ test.describe('register', () => {
 
     await expect(page.getByTestId('cart-line')).toHaveCount(1)
     await expect(page.getByTestId('cart-total')).toHaveText('€1.20')
+  })
+})
+
+/**
+ * 5.3 — discounts, price overrides, and a manager authorising one action.
+ *
+ * The behaviour that makes the flow worth having: a cashier can get a discount
+ * approved **without the session changing hands**. They stay signed in, the sale
+ * stays theirs, and `SaleLine.OverriddenBy` records the manager — asserted
+ * server-side in `SaleOverrideTests`, because 5.4 is what actually posts a sale.
+ *
+ * What is asserted here is the till's half: the control a cashier cannot use
+ * alone, the PIN step it goes through instead, and a total that came back from
+ * the server rather than being subtracted on the client.
+ */
+test.describe('cart adjustments', () => {
+  test.beforeEach(async ({ page }) => {
+    await enrolDevice(page)
+  })
+
+  /** Selects the only line and opens the discount entry. */
+  async function openDiscount(page: Page): Promise<void> {
+    await page
+      .getByTestId('cart-line')
+      .getByRole('button', { name: /^Select / })
+      .click()
+    await page.getByRole('button', { name: 'Discount', exact: true }).click()
+  }
+
+  async function applyAmount(page: Page, amount: string): Promise<void> {
+    await page.getByTestId('adjust-amount').fill(amount)
+    await page.getByRole('button', { name: 'Apply' }).click()
+  }
+
+  test('a manager discounts a line and the server prices the result', async ({ page }) => {
+    await signIn(page, 'manager')
+    await page.goto('/register')
+    await ensureDrawerOpen(page)
+
+    await scan(page, WATER)
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.20')
+
+    // Holding CanApplyDiscount, they are not asked to approve themselves.
+    await openDiscount(page)
+    await expect(page.getByTestId('manager-override')).toHaveCount(0)
+
+    await applyAmount(page, '0.20')
+
+    // €1.00 came back from POST /sales/quote. The client subtracted nothing —
+    // it sent `discountAmount: 0.2` and displayed the answer (invariant 3).
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.00')
+    await expect(page.getByTestId('line-discount')).toContainText('€0.20')
+  })
+
+  test('a cashier cannot reach the amount without a manager, and gets there with one', async ({
+    page,
+  }) => {
+    await signIn(page, 'cashier')
+    await page.goto('/register')
+    await ensureDrawerOpen(page)
+
+    await scan(page, WATER)
+    await openDiscount(page)
+
+    // The PIN step, not the amount field. This is the exit criterion as built:
+    // a Cashier has no control that discounts on their own authority.
+    await expect(page.getByTestId('manager-override')).toBeVisible()
+    await expect(page.getByTestId('adjust-amount')).toHaveCount(0)
+
+    await page.getByRole('button', { name: MANAGER_NAME }).click()
+    await page.getByLabel('Manager PIN').fill(MANAGER_PIN)
+    await page.getByRole('button', { name: 'Approve' }).click()
+
+    // Now the amount, and the screen says whose authority it is on.
+    await expect(page.getByTestId('adjust-amount')).toBeVisible()
+    await expect(page.getByTestId('authorized-by')).toContainText(MANAGER_NAME)
+
+    await applyAmount(page, '0.20')
+
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.00')
+  })
+
+  test('a cashier who cannot find a manager changes nothing', async ({ page }) => {
+    await signIn(page, 'cashier')
+    await page.goto('/register')
+    await ensureDrawerOpen(page)
+
+    await scan(page, WATER)
+    await openDiscount(page)
+
+    await page.getByRole('button', { name: 'Cancel' }).click()
+
+    // Not a partially-applied discount, not an error state: the same cart.
+    await expect(page.getByTestId('manager-override')).toHaveCount(0)
+    await expect(page.getByTestId('adjust-amount')).toHaveCount(0)
+    await expect(page.getByTestId('line-discount')).toHaveCount(0)
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.20')
+  })
+
+  test('a price override shows both prices, because the counter will ask', async ({ page }) => {
+    await signIn(page, 'cashier')
+    await page.goto('/register')
+    await ensureDrawerOpen(page)
+
+    await scan(page, WATER)
+
+    await page
+      .getByTestId('cart-line')
+      .getByRole('button', { name: /^Select / })
+      .click()
+    await page.getByRole('button', { name: 'Change price' }).click()
+
+    await page.getByRole('button', { name: MANAGER_NAME }).click()
+    await page.getByLabel('Manager PIN').fill(MANAGER_PIN)
+    await page.getByRole('button', { name: 'Approve' }).click()
+
+    await applyAmount(page, '1.00')
+
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.00')
+
+    // The old price struck through beside the new one: "why is this cheaper" is
+    // asked at the counter, and the answer has to be on the screen being asked
+    // about.
+    await expect(page.getByTestId('price-override')).toContainText('€1.00')
+    await expect(page.getByTestId('cart-line')).toContainText('€1.20')
+  })
+
+  test('a discount on the whole sale is spread by the server', async ({ page }) => {
+    await signIn(page, 'manager')
+    await page.goto('/register')
+    await ensureDrawerOpen(page)
+
+    await scan(page, WATER)
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.20')
+
+    await page.getByRole('button', { name: 'Discount sale' }).click()
+    await applyAmount(page, '0.20')
+
+    await expect(page.getByTestId('cart-discount')).toContainText('€0.20')
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.00')
+  })
+
+  test('voiding the cart takes the manager authorisation with it', async ({ page }) => {
+    // Otherwise a discount approved for one customer is available to whatever
+    // the next person puts on the counter.
+    await signIn(page, 'cashier')
+    await page.goto('/register')
+    await ensureDrawerOpen(page)
+
+    await scan(page, WATER)
+    await openDiscount(page)
+
+    await page.getByRole('button', { name: MANAGER_NAME }).click()
+    await page.getByLabel('Manager PIN').fill(MANAGER_PIN)
+    await page.getByRole('button', { name: 'Approve' }).click()
+    await applyAmount(page, '0.20')
+
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.00')
+
+    await page.getByRole('button', { name: 'Void cart' }).click()
+    await page.getByRole('button', { name: 'Void the whole cart?' }).click()
+
+    // The next customer. The PIN is asked for again.
+    await scan(page, WATER)
+    await openDiscount(page)
+
+    await expect(page.getByTestId('manager-override')).toBeVisible()
   })
 })

@@ -126,8 +126,10 @@ internal sealed class SaleWriter(
                     IsPriceOverridden = source.IsPriceOverridden,
 
                     // Until Phase 7.2's audit log exists, these two columns are the whole
-                    // record of who authorised an override.
-                    OverriddenBy = source.IsPriceOverridden ? cashierId : null,
+                    // record of who authorised an override. The manager who gave a PIN when
+                    // the cashier could not, or the cashier when they held the policy
+                    // themselves — never simply "whoever was logged in".
+                    OverriddenBy = source.IsPriceOverridden ? request.AuthorizedBy ?? cashierId : null,
                 };
             }
 

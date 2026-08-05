@@ -38,9 +38,15 @@ export const ErrorType = {
   tenantNotResolved: 'tenant-not-resolved',
   underTender: 'under-tender',
 
-  // Not domain exceptions — TypedResults.Problem in AuthEndpoints.
+  // Not domain exceptions — TypedResults.Problem in AuthEndpoints and SaleEndpoints.
   invalidCredentials: 'invalid-credentials',
   accountLocked: 'account-locked',
+
+  /** The cart carries a discount or an override the caller may not apply. A manager can. */
+  overrideRequired: 'override-required',
+
+  /** The PIN was right; that member of staff still cannot authorise it. */
+  overrideNotPermitted: 'override-not-permitted',
 } as const
 
 export type ErrorTypeSlug = (typeof ErrorType)[keyof typeof ErrorType]
@@ -57,6 +63,8 @@ export interface ProblemDetails {
   traceId?: string
   /** `account-locked` carries this. Others carry their own extensions. */
   lockoutEndsAt?: string
+  /** `override-required` carries the policies a manager would have to authorise. */
+  requiredPolicies?: string[]
 }
 
 /**

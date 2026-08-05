@@ -113,6 +113,7 @@ authorization.AddPolicy(DeviceTokenAuthenticationHandler.PolicyName, policy => p
     .RequireAuthenticatedUser());
 
 builder.Services.AddScoped<TokenService>();
+builder.Services.AddScoped<OverrideGrantService>();
 
 // One scoped instance behind two registrations: the filter needs the concrete type to call
 // Begin(), the writers need only the interface. Registered as a factory rather than twice, or

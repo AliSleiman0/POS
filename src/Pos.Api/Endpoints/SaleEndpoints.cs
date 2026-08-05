@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
 using Pos.Api.Common;
@@ -230,9 +231,27 @@ public static class SaleEndpoints
         return TypedResults.Ok(await ReadAsync(db, sale, cancellationToken));
     }
 
-    private static async Task<Results<Ok<SaleResponse>, ValidationProblem>> QuoteAsync(
+    /// <summary>
+    /// Prices a cart without committing it.
+    /// </summary>
+    /// <remarks>
+    /// <b>The discount and override policies are enforced here too</b>, even though nothing is
+    /// written. A quote that priced a discount the sale would then refuse would put a total on
+    /// the customer-facing display that the till cannot honour — the cashier reads it out, the
+    /// customer counts out the money, and only then does the sale come back 403.
+    /// <para>
+    /// A grant presented here is <i>validated and not consumed</i>. The register re-quotes on
+    /// every keystroke; spending a single-use grant on the first of those would leave nothing
+    /// for the sale it was minted for.
+    /// </para>
+    /// </remarks>
+    private static async Task<Results<Ok<SaleResponse>, ValidationProblem, ProblemHttpResult>> QuoteAsync(
         CreateSaleRequest request,
+        [FromHeader(Name = OverrideGrantService.HeaderName)] string? overrideGrant,
         AppDbContext db,
+        OverrideGrantService grants,
+        System.Security.Claims.ClaimsPrincipal caller,
+        IAuthorizationService authorization,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -244,6 +263,20 @@ public static class SaleEndpoints
             return TypedResults.ValidationProblem(errors);
         }
 
+        var authorized = await AuthorizeAdjustmentsAsync(
+            cart!,
+            overrideGrant,
+            grants,
+            caller,
+            authorization,
+            registerId: null,
+            cancellationToken);
+
+        if (!authorized.Succeeded)
+        {
+            return OverrideRequired(authorized.Missing);
+        }
+
         var priced = PricingEngine.Price(cart!);
 
         return TypedResults.Ok(Project(priced, Money.Zero));
@@ -252,11 +285,13 @@ public static class SaleEndpoints
     /// <summary>
     /// Prices the cart and commits it, in one transaction, exactly once.
     /// </summary>
-    private static async Task<Results<Created<SaleResponse>, ValidationProblem, ForbidHttpResult>> CreateAsync(
+    private static async Task<Results<Created<SaleResponse>, ValidationProblem, ProblemHttpResult>> CreateAsync(
         CreateSaleRequest request,
+        [FromHeader(Name = OverrideGrantService.HeaderName)] string? overrideGrant,
         AppDbContext db,
         ISaleWriter writer,
         IIdempotencyContext idempotency,
+        OverrideGrantService grants,
         System.Security.Claims.ClaimsPrincipal caller,
         IAuthorizationService authorization,
         CancellationToken cancellationToken)
@@ -268,16 +303,22 @@ public static class SaleEndpoints
         // Discounts and overrides are separately gated, and a Cashier sending one is refused
         // rather than silently ignored: unlike an unreadable costPrice, this changes what the
         // customer pays, so quietly dropping it would take the shop's money instead of theirs.
-        if (cart is not null && NeedsDiscountPermission(cart) &&
-            !(await authorization.AuthorizeAsync(caller, Policies.CanApplyDiscount)).Succeeded)
-        {
-            return TypedResults.Forbid();
-        }
+        // A manager's grant satisfies the policy without the cashier holding it — see
+        // AuthorizeAdjustmentsAsync.
+        var authorized = cart is null
+            ? Authorization.Granted
+            : await AuthorizeAdjustmentsAsync(
+                cart,
+                overrideGrant,
+                grants,
+                caller,
+                authorization,
+                request.RegisterId,
+                cancellationToken);
 
-        if (cart is not null && cart.Lines.Any(l => l.IsPriceOverridden) &&
-            !(await authorization.AuthorizeAsync(caller, Policies.CanOverridePrice)).Succeeded)
+        if (!authorized.Succeeded)
         {
-            return TypedResults.Forbid();
+            return OverrideRequired(authorized.Missing);
         }
 
         ValidateTenders(request, errors);
@@ -316,7 +357,8 @@ public static class SaleEndpoints
                 cart!.TaxMode,
                 priced,
                 tenders,
-                tracked),
+                tracked,
+                authorized.Grant?.UserId),
 
             // Runs inside the writer's transaction, once the numbers are known. This is what
             // makes "the key is inserted in the same transaction as the work" true rather than
@@ -325,6 +367,14 @@ public static class SaleEndpoints
             {
                 response = Project(priced, committed.ChangeGiven, committed, tenders);
                 idempotency.Record(db, StatusCodes.Status201Created, response, committed.CompletedAt);
+
+                // Spent here and nowhere else. Consumed before this point, a sale that then
+                // failed would leave the cashier needing the manager back for a second PIN;
+                // consumed after the commit, a crash in between would leave it spendable again.
+                if (authorized.Grant is { } grant)
+                {
+                    grants.Consume(grant, committed.SaleId);
+                }
             },
             cancellationToken);
 
@@ -707,6 +757,82 @@ public static class SaleEndpoints
             throw new Core.Exceptions.ShiftClosedException();
         }
     }
+
+    /// <summary>Whether the caller may price this cart, and on whose authority.</summary>
+    private sealed record Authorization(bool Succeeded, IReadOnlyList<string> Missing, OverrideGrant? Grant)
+    {
+        /// <summary>Nothing about this cart needed permission, or the caller held it.</summary>
+        public static readonly Authorization Granted = new(true, [], null);
+    }
+
+    /// <summary>
+    /// Checks the policies a cart's adjustments need, accepting a manager's grant in place of
+    /// the caller's own role.
+    /// </summary>
+    /// <remarks>
+    /// <b>One resolver for both the quote and the sale.</b> Two copies would eventually disagree
+    /// about what a discount costs in permissions, and the way that surfaces is a total shown to
+    /// a customer that the sale then refuses.
+    /// <para>
+    /// The caller's own policy is checked first, so a manager working the till never presents a
+    /// grant to themselves. A grant is looked up under the tenant query filter with RLS beneath
+    /// it, so one minted at another shop cannot resolve here whatever the token says.
+    /// </para>
+    /// </remarks>
+    private static async Task<Authorization> AuthorizeAdjustmentsAsync(
+        Cart cart,
+        string? presentedGrant,
+        OverrideGrantService grants,
+        System.Security.Claims.ClaimsPrincipal caller,
+        IAuthorizationService authorization,
+        Guid? registerId,
+        CancellationToken cancellationToken)
+    {
+        var required = new List<string>();
+
+        if (NeedsDiscountPermission(cart) &&
+            !(await authorization.AuthorizeAsync(caller, Policies.CanApplyDiscount)).Succeeded)
+        {
+            required.Add(Policies.CanApplyDiscount);
+        }
+
+        if (cart.Lines.Any(l => l.IsPriceOverridden) &&
+            !(await authorization.AuthorizeAsync(caller, Policies.CanOverridePrice)).Succeeded)
+        {
+            required.Add(Policies.CanOverridePrice);
+        }
+
+        if (required.Count == 0)
+        {
+            return Authorization.Granted;
+        }
+
+        var resolution = await grants.ResolveAsync(presentedGrant, required, registerId, cancellationToken);
+
+        return resolution.Grant is { } grant
+            ? new Authorization(true, [], grant)
+            : new Authorization(false, required, null);
+    }
+
+    /// <summary>
+    /// The refusal a register can act on: "a manager has to authorise this", not a bare 403.
+    /// </summary>
+    /// <remarks>
+    /// A stable <c>type</c> slug rather than the status code alone, per docs/API.md's global
+    /// rules — 403 is shared with every other refusal in the API, and a till branching on it
+    /// would offer a manager PIN for things no PIN can fix. The missing policies are listed so
+    /// the dialog can ask for exactly those.
+    /// </remarks>
+    private static ProblemHttpResult OverrideRequired(IReadOnlyList<string> missing)
+        => TypedResults.Problem(
+            title: "Manager authorisation required",
+            detail: "A discount or a price override on this sale needs a manager's authorisation.",
+            statusCode: StatusCodes.Status403Forbidden,
+            type: "https://pos.example/errors/override-required",
+            extensions: new Dictionary<string, object?>
+            {
+                ["requiredPolicies"] = missing,
+            });
 
     private static bool NeedsDiscountPermission(Cart cart) =>
         !cart.CartDiscount.IsZero || cart.Lines.Any(l => !l.LineDiscount.IsZero);

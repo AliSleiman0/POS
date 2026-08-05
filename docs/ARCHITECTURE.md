@@ -174,6 +174,20 @@ Roles `Cashier` / `Manager` / `Owner` exist, but endpoints do **not** test role 
 
 Indirection through policies means a customer asking "can my supervisors do refunds?" is a mapping change in one place, not an audit of every controller. The same policy names are exported to the frontend so UI gating and API enforcement cannot disagree — **and the frontend gate is never the only gate.**
 
+#### Override grants — the one way a policy is satisfied other than by role
+
+`CanApplyDiscount` and `CanOverridePrice` can also be satisfied by an **override grant**: a manager's PIN, entered at the till on the cashier's screen, exchanged for a single-use token (`POST /auth/override`) that `POST /sales` accepts as `X-Override-Authorization` and consumes inside the sale's transaction.
+
+The cashier's session is untouched throughout, and that is the whole point. `POST /sales` takes the cashier from the token, so a flow that swapped the session would attribute the sale to the manager and make the drawer's Z-report reconcile the wrong person. Instead the sale stays the cashier's and `SaleLine.OverriddenBy` names who approved the exception.
+
+Three properties keep this from being a hole in the policy model:
+
+1. **Only those two policies are grantable**, enforced by an allow-list checked before the PIN. Anything else is a `400`, so this is never a route to `CanManageEmployees`.
+2. **Single use**, tracked by `override_grant.ConsumedAt` in the same transaction as the sale. The five-minute expiry is hygiene, not the control.
+3. **Bound to the register** it was minted at, so a grant cannot be carried to another drawer.
+
+`POST /sales/quote` honours a grant without consuming one — see [`API.md`](API.md#sales--sales).
+
 ## API conventions
 
 - **Versioned base path**: `/api/v1/...`.

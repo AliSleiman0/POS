@@ -55,6 +55,17 @@ export const TENANT_SLUG = 'e2e-shop'
 export const CASHIER_PIN = '4821'
 
 /**
+ * The manager's PIN and the name the PIN pad lists them under.
+ *
+ * `SeedOptions.DefaultManagerPin` and the display name `DevSeeder` gives the
+ * manager. The name is needed because the override dialog lists staff exactly as
+ * the PIN screen does — by display name, never by id, because that is all
+ * `GET /employees/pin-eligible` returns.
+ */
+export const MANAGER_PIN = '7391'
+export const MANAGER_NAME = 'Sam Cole'
+
+/**
  * The seeded users' password.
  *
  * Satisfies the Identity rules in `AddPosIdentity` (10+, upper, lower, digit)
