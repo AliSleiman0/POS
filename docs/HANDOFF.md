@@ -75,7 +75,15 @@ New this session:
 6. **The Chrome extension's screenshot API broke mid-session** with a CDP
    `params.clip.scale` deserialisation error and did not recover across resize or re-navigation.
    Fell back to a scripted headless Chromium, which is what Phase 5.1 did for the same reason.
-   Do not sink time into it — write the script.
+   Do not sink time into it — write the script. `resize_window` has also never worked in either
+   session; a Playwright `newContext({ viewport })` is how tablet width finally got checked.
+7. **CI could not get runners for two of the four jobs.** On PR #13, `e2e (Playwright)` and
+   `API contract (client drift)` recorded `cancelled` with **zero steps** after exactly 15 minutes
+   queued — three times, including an explicit re-run. `backend (.NET)` and `frontend (web)` got
+   machines and passed on the same commit. That is a capacity or billing cap, not a code failure,
+   and a run whose jobs are cancelled reports `conclusion: failure` at the run level — so check
+   the *jobs* before believing the run. If it is still happening, look at
+   github.com/settings/billing first.
 
 Carried forward and still true: the 5.3 list (modal stand-down for the scanner, the grant beside
 the cart not in it, the union rule in `authorize()`, `cartSignature` completeness, `form_input` not
@@ -88,6 +96,11 @@ cart tendered by split payment with the balance counting to zero; change due €
 taken on €14.15; the cart clearing to a **€0.00** total; and a `--cash-rounding 0.05` tenant showing
 a €0.17 line priced to €0.15 with "Includes −€0.02 cash rounding" spelled out.
 
+**Tablet width, finally** — 834×1112 with `hasTouch`, which had been open since 5.1. The layout
+stacks (cart, tender pad, grid), `document.scrollWidth === clientWidth` so nothing overflows
+sideways, and the tender pad and completion panel both read correctly at that width. The 5.3
+adjustment strip sits under the selected line as intended.
+
 **Verified end to end** by 7 new Playwright specs: exact cash, server-computed change, split
 tender, **a lost response not charging twice**, the stock decrement, a cashier's manager-approved
 discount going all the way to a sale, and backing out of the tender step keeping the same sale.
@@ -99,9 +112,6 @@ a second sale and the replay banner never appears.
 
 - **The beep, still.** Outstanding since 5.2 and now three sessions old. Headless has no audio
   device. It needs a person with speakers on, and the completion path adds a second place it fires.
-- **Tablet width for anything since 5.1.** `resize_window` did not take in either browser session.
-  The tender pad is in the same column the total was, so it should inherit the working layout —
-  but "should" is doing the work in that sentence.
 - **A grant expiring mid-sale.** The five-minute window is handled (`override-required` on submit
   clears the grant and asks for the PIN again) and the branch has never run: it needs a cashier to
   be slow on purpose. The .NET side has an expiry test.
