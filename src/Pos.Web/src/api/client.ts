@@ -157,6 +157,33 @@ export async function unwrap<T>(call: Promise<FetchResult<T>>): Promise<T> {
   return data as T
 }
 
+/**
+ * `unwrap`, keeping the `Response`.
+ *
+ * For the one caller that needs a header off it: `POST /sales` sets
+ * `Idempotent-Replay: true` when a key has been seen before, and "that sale was
+ * already recorded" is a different thing to tell a cashier than "sale recorded"
+ * — after a timeout and a retry it is the true one. See `wasReplayed` in
+ * `api/idempotency.ts`.
+ *
+ * Deliberately a sibling rather than a change to `unwrap`: almost nothing wants
+ * the response, and a tuple return everywhere would be ceremony at ninety call
+ * sites to serve one.
+ *
+ * @throws {ProblemError} on any non-2xx, by the same path as `unwrap`.
+ */
+export async function unwrapWithResponse<T>(
+  call: Promise<FetchResult<T>>,
+): Promise<{ data: T; response: Response }> {
+  const { data, error, response } = await call
+
+  if (!response.ok) {
+    throw new ProblemError(response.status, toProblem(response.status, error, response.statusText))
+  }
+
+  return { data: data as T, response }
+}
+
 /** Test seam. Not used by application code. */
 export function __clearRetryables(): void {
   retryables.clear()

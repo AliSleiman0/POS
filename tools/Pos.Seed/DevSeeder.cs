@@ -142,6 +142,17 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
 
         if (existing is not null)
         {
+            // The one field a re-run may change, and only when it was asked for. There is no
+            // PUT /settings, so this is the only way to give an existing dev shop a rounding
+            // increment — and without one the register's rounding line cannot be reached from
+            // a browser at all.
+            if (options.CashRoundingIncrement is { } increment
+                && existing.CashRoundingIncrement != increment)
+            {
+                existing.CashRoundingIncrement = increment;
+                await db.SaveChangesAsync();
+            }
+
             return (existing, false);
         }
 
@@ -154,6 +165,7 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
             Slug = options.Slug,
             CurrencyCode = options.CurrencyCode,
             TimeZoneId = options.TimeZoneId,
+            CashRoundingIncrement = options.CashRoundingIncrement ?? 0m,
 
             // Stamped by hand because Tenant is not a TenantEntity, so the audit
             // interceptor does not see it.

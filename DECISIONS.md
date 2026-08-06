@@ -267,6 +267,20 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
   after it: before, a sale that then failed validation would leave the cashier needing the
   manager back for a second PIN; after, a crash in between would leave the grant spendable again.
 
+- **The sale's GUID lives in the cart, not in the submit** (Phase 5.4). It is minted when
+  *tendering begins* rather than when Complete is pressed, so every attempt from that moment
+  carries the same key and a retry after a lost response returns the original sale. A key created
+  inside the mutation would be new each time, which makes the `Idempotency-Key` header decorative
+  and charges the customer twice for one basket. In the cart reducer specifically — unlike the
+  manager's override grant, which is a credential and is deliberately kept out — because Phase 5.5
+  persists the in-flight sale to `sessionStorage`, and "the GUID and the cart" is then one thing to
+  serialise rather than two.
+
+  The e2e test for it is not a double click: the submit button disables itself while a request is
+  in flight, so a double click proves the courtesy works and says nothing about the mechanism. The
+  test lets the first request reach the server and throws its response away, which is the failure
+  the key exists for.
+
 - **`override-not-permitted` reveals that somebody is not a manager, and that is the better
   trade.** `GET /employees/pin-eligible` deliberately withholds roles so a list readable from a
   counter does not become the shop's org chart, and this `403` weakens that. It only does so for
@@ -584,11 +598,11 @@ Called out because they are cheap now and expensive-to-impossible later:
 
 ## Current State
 
-**Phases 0–4 are complete, and Phase 5 is through 5.3.** The backend prices, tenders and commits
-a cash sale exactly once behind three layers of tenant isolation; a cashier can open the drawer,
-scan, adjust and discount a cart the server prices, with a manager's PIN authorising what they
-cannot approve alone. 871 .NET tests, 116 Vitest and 24 Playwright specs — the last against a
-real API and a real Postgres, not mocks.
+**Phases 0–4 are complete, and Phase 5 is through 5.4.** A cashier can open the drawer, scan,
+adjust and discount a cart the server prices — with a manager's PIN authorising what they cannot
+approve alone — and take cash for it, exactly once, with change read off the server's figure.
+871 .NET tests, 138 Vitest and 31 Playwright specs — the last against a real API and a real
+Postgres, not mocks.
 
-Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 5.4, cash payment, and read
+Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 5.5, and read
 [`docs/HANDOFF.md`](docs/HANDOFF.md) first for session state.

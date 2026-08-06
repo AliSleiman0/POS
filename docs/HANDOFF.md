@@ -1,13 +1,10 @@
 # Session Handoff
 
-**Written:** 2026-08-05 · **Branch:** `phase-5/cart-interactions` · **Phase 5.3 done — start 5.4**
+**Written:** 2026-08-05 · **Branch:** `phase-5/cash-payment` · **Phase 5.4 done — start 5.5**
 
-> A cashier can discount a line, discount the sale and change a price — with a **manager's PIN
-> authorising it and the session never changing hands**. **871 .NET · 120 Vitest · 24 Playwright**,
-> all green locally.
->
-> This milestone has a **backend half**: a new endpoint, a new table and a migration. It is the
-> first API change since Phase 4, so the client-drift CI job is live again.
+> A cart becomes a sale. Tender entry, quick cash, split tender, change due off the server's own
+> figure, and **exactly one sale however many times Complete is pressed.**
+> **871 .NET · 138 Vitest · 31 Playwright**, all green locally.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions
 > belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
@@ -16,133 +13,111 @@
 
 ## Before anything else
 
-**Nothing is committed yet.** The branch is `phase-5/cart-interactions`, off `b70fed0`. Review,
-commit and open the PR — CI has not seen any of this.
+**Nothing is committed.** The branch is `phase-5/cash-payment`, off `fb69129`. No migration and no
+API change this time, so the client-drift job has nothing to catch.
 
-**A migration has been applied to `pos_dev`.** `20260805170034_OverrideGrants` — one new table,
-purely additive. Anyone pulling this branch runs `dotnet ef database update` (the command with the
-owner connection string, in CLAUDE.md) or the API will 500 on the register.
+**Your dev tenant now has cash rounding.** This session ran
+`dotnet run --project tools/Pos.Seed -- --cash-rounding 0.05`, which is a **new option** and the
+only one that changes an existing tenant. Set it back to `0` if you want the old behaviour.
 
 ## Read first
 
-1. [`docs/API.md`](API.md) → **Auth** and **Sales**. `POST /auth/override`, the
-   `X-Override-Authorization` header, and why the quote enforces policies but does not spend a grant.
-2. [`DECISIONS.md`](../DECISIONS.md) → the grant entry. Two alternatives were weighed and rejected;
-   don't re-propose them without reading why.
-3. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) → §5.4 is next, and §5.3
-   records an exit criterion that was **re-worded rather than ticked as written**.
+1. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) — §5.4 records two
+   defects found by driving it, and §5.5 says what is left of it.
+2. [`DECISIONS.md`](../DECISIONS.md) → the sale-GUID entry. Where the key lives is load-bearing for
+   5.5 and is not an arbitrary choice.
 
 ## What landed
 
-**The override grant** — the mechanism that lets a cashier do something they cannot authorise.
+**The tender pad** (`TenderPanel.tsx`) replaces the total in the right-hand column rather than
+covering the screen, so the cart stays visible — the moment a customer says "actually, take that
+off" is while they are reaching for their wallet.
 
-- `POST /auth/override`: device-token authenticated exactly like `/auth/pin`, takes a manager's PIN
-  and the policies the cart needs, returns an opaque single-use grant stored hashed in
-  `override_grant`. `POST /sales` presents it and **consumes it inside the writer's transaction**;
-  `POST /sales/quote` validates it and does not.
-- The PIN verification is now **one shared helper** used by `/auth/pin` and `/auth/override`. That
-  is deliberate: a forked copy is how one of the two quietly stops counting failed attempts.
-- `SaleLine.OverriddenBy` is the manager; `Sale.CashierId` stays whoever was on the till.
+- Quick cash: Exact, the next whole unit, then the notes above the total. Integer minor units
+  throughout (`tender.ts`), and none of it decides what anyone pays: it suggests what a person
+  might hand over.
+- Split tender: several amounts with a running balance, sent as one `tenders` array.
+- `SaleCompletePanel.tsx` shows change due at `text-6xl` — the **server's** `changeGiven`, not the
+  provisional figure the pad was showing while the cashier counted.
 
-**5.3 on the till** — `cart.ts` carries `discountAmount`, `unitPriceOverride` and
-`cartDiscountAmount` (all values a person *typed*, never computed); `LineAdjustDialog` for the
-amount; `ManagerAuthorizationDialog` for the PIN; `OverrideProvider` holds the grant.
+**The idempotency key lifecycle, pulled forward from 5.5.** `cart.saleKey` is minted by a
+`beginSale` action when tendering starts, is idempotent so backing out and returning is still one
+sale, and dies with `clear`. `unwrapWithResponse` in `api/client.ts` finally gives `wasReplayed()`
+a caller, so a retry says "already recorded" instead of "recorded".
+
+**`--cash-rounding` on the seeder**, because there is no `PUT /settings` and without it the
+rounding line was unreachable from a browser.
 
 ## Things that will bite you
 
 New this session:
 
-1. **A modal open does not stop the scanner by itself — it does now, and finding that out cost a
-   manager's PIN.** In the PIN dialog, selecting a name puts focus on a *button*, so anything typed
-   before focus reaches the input has a non-editable target and the scanner read it. `7391` is four
-   digits, which clears `minLength`, so it was looked up as a barcode and **printed back on screen
-   in the unknown-item banner**. `useScanner` now stands down whenever `[aria-modal="true"]` exists
-   in the document. `ReauthOverlay` had the identical hole and nobody had noticed.
-   `useScanner.test.tsx` pins it; falsified.
-2. **The grant lives beside the cart, never in it.** 5.5 adds `sessionStorage` persistence to
-   `CartProvider`. A grant in the cart reducer would be written to a shared tablet's disk as a
-   silent side effect of that. `OverrideProvider.test.tsx` fails if the grant string ever reaches
-   either storage — falsified by adding one line.
-3. **`authorize()` asks for the union, not just the new policy.** A cart with a discount *and* a
-   price override must end up with **one** grant carrying both, because the sale sends one header.
-   Asking for only the new one would replace a grant covering the old, and the sale would be
-   refused for something the manager had already approved.
-4. **The quote is keyed on `cartSignature`, which now carries three more fields.** Phase 5.2's
-   bite #7, and it nearly bit again. Anything added to a line that changes the price must go in, or
-   the previous total stays on screen looking authoritative — not a missing number, a wrong one.
-5. **`form_input` (Chrome MCP) does not reach React.** It sets the DOM value; the component's state
-   stays empty and the form submits blank. Click the field and `type` instead.
-6. **`import.meta.glob`, not `node:fs`, for a test that reads source files.** `tsconfig.app.json`
-   covers `src` only and deliberately excludes Node's globals — Vitest runs the test happily and
-   `tsc -b` then fails the build.
-7. **GitGuardian failed on PR #12 with "1 secret uncovered" and no detail reachable from the CLI.**
-   The check exposes no annotations and the finding is visible only on
-   `dashboard.gitguardian.com`. It had passed on #10 and #11, so this branch introduced it. The
-   owner assessed it as a false positive and the PR was merged on that judgement — **it was never
-   identified.** Worth five minutes on the dashboard before it becomes permanent background noise
-   that hides a real one.
+1. **An emptied cart inherited the last customer's total, and had since 5.1.** `useQuote` keeps the
+   previous answer on screen so a scan does not blank the biggest number on the till; the cost is
+   that a cart with nothing in it shows the price of the cart before it. Before 5.4 it took a cart
+   void to notice — a completed sale makes it happen every time, and it put "€14.15" directly under
+   the change due for an empty basket. `RegisterPage` now passes
+   `quote={isEmpty(cart) ? undefined : quote.data}`. An e2e assertion pins it.
+2. **`fullyParallel: true`, so counting rows in a shared tenant races.** The cash-payment describe
+   is `mode: 'serial'` for exactly this reason — it is the only block in the suite that *writes
+   sales*, and "exactly one sale" is a claim you can only make by counting. Everything above it can
+   stay parallel.
+3. **A double click is not a test of double-submit safety.** The button disables itself while a
+   request is in flight, so a double click proves the courtesy and says nothing about the
+   mechanism. The real test lets the first request reach the server (`route.fetch()`) and then
+   aborts the response, so the till sees a failure the server never had. Falsified: mint the key
+   inside `useCompleteSale` and it goes red.
+4. **`GET /stock/movements` does not exist** — it is `GET /stock/{productId}/movements`, and the
+   list is oldest-first, so `items[0]` is the seeded `Receive`. The stock test compares on-hand
+   before and after instead, which is the actual claim anyway.
+5. **Playwright's `webServer` will not start if a dev API is already on :5013.** Kill
+   `Pos.Api` before `pnpm test:e2e`, or the run dies with "already used".
+6. **The Chrome extension's screenshot API broke mid-session** with a CDP
+   `params.clip.scale` deserialisation error and did not recover across resize or re-navigation.
+   Fell back to a scripted headless Chromium, which is what Phase 5.1 did for the same reason.
+   Do not sink time into it — write the script.
 
-   Two things learned trying: GitGuardian scans **every commit in the PR**, so a fix at the tip
-   cannot clear a finding introduced earlier in the branch — it needs history rewritten. And the
-   most likely candidate was mine: `OverrideProvider.test.tsx` originally used literals shaped like
-   `base64url(tenantId).base64url(secret)`, which is exactly a device token. Those are now
-   obviously-fake strings (`test-grant-not-a-credential`), which is better test hygiene regardless
-   of what the scanner was actually pointing at.
-
-Carried forward and still true: the whole 5.1/5.2 list (per-gap scanner timing, `MAX_LINE_QUANTITY`
-on manual entry, `page.keyboard` vs `machineBurst`, `vi.stubGlobal` not reaching the generated
-client, reserved `+`/`−`), plus everything in the Phase 4 handoff at `de7183c`.
+Carried forward and still true: the 5.3 list (modal stand-down for the scanner, the grant beside
+the cart not in it, the union rule in `authorize()`, `cartSignature` completeness, `form_input` not
+reaching React), the 5.1/5.2 list, and the Phase 4 backlog at `de7183c`.
 
 ## Verified, and not
 
-**Verified in a real browser** (Chrome, 1280×900, signed in as the cashier at an enrolled till):
-the PIN step a cashier gets instead of an amount field; **"Robin Vale cannot authorise this"** for a
-correct PIN with the wrong role; "Authorised by Sam Cole" on the amount dialog; a line discount and
-a sale discount priced by the server (€1.20 → €1.00 → €0.70, and 2 units → €1.90); the second
-discount reusing the held grant with no second PIN; and pressing **Change price** afterwards
-correctly asking to approve "this discount **and** price change" — the union. Cancelling changed
-nothing.
+**Verified in a real browser** (headless Chromium at 1280×900, screenshots reviewed): a two-item
+cart tendered by split payment with the balance counting to zero; change due €25.00 against €39.15
+taken on €14.15; the cart clearing to a **€0.00** total; and a `--cash-rounding 0.05` tenant showing
+a €0.17 line priced to €0.15 with "Includes −€0.02 cash rounding" spelled out.
 
-**Verified end to end** by 6 new Playwright specs and 17 new .NET tests, including the ones that
-matter most: a grant spent twice is refused, a grant from another till is refused, a grant from
-another tenant resolves to nothing, and a quote does not consume one.
+**Verified end to end** by 7 new Playwright specs: exact cash, server-computed change, split
+tender, **a lost response not charging twice**, the stock decrement, a cashier's manager-approved
+discount going all the way to a sale, and backing out of the tender step keeping the same sale.
 
-**Falsified deliberately, all restored:** removing the `ConsumedAt` write (single-use test goes
-red), removing the register check, dropping the adjustment fields from `cartSignature`, writing the
-grant to `sessionStorage`, removing the modal stand-down, and adding a real `confirm()` to a
-register file.
+**Falsified deliberately, restored:** minting the key inside the mutation — the retry then creates
+a second sale and the replay banner never appears.
 
 **Not verified:**
 
-- **The beep — still not confirmed heard.** Scans and one unknown code were fired in a real Chrome
-  with the sound toggle on, so it should have sounded, but nobody has reported hearing it. The tab
-  is still open at `/register`; scan anything to check. This has been outstanding since 5.2.
-- **Tablet width, for the new controls.** `resize_window` did not take in this browser (the
-  viewport stayed 1280). The new row of buttons uses `flex-wrap`, and 5.1's layout was screenshotted
-  at 834×1112, but the 5.3 additions have not been seen at that width.
-- **The re-auth overlay over a populated cart** — still, since 5.1. Now more interesting than it
-  was: the overlay is `aria-modal`, so the scanner stands down behind it, and that path has a unit
-  test but has never been watched.
-- **A grant expiring mid-sale.** Five minutes, covered by a .NET test that ages the row. No one has
-  seen what the till does when a cashier is slow.
+- **The beep, still.** Outstanding since 5.2 and now three sessions old. Headless has no audio
+  device. It needs a person with speakers on, and the completion path adds a second place it fires.
+- **Tablet width for anything since 5.1.** `resize_window` did not take in either browser session.
+  The tender pad is in the same column the total was, so it should inherit the working layout —
+  but "should" is doing the work in that sentence.
+- **A grant expiring mid-sale.** The five-minute window is handled (`override-required` on submit
+  clears the grant and asks for the PIN again) and the branch has never run: it needs a cashier to
+  be slow on purpose. The .NET side has an expiry test.
 - **Nobody who has worked a till has used any of it.** Unchanged, and still the real bar.
 
 ## Outstanding / deferred
 
-- **5.4 is next** — tender, quick-cash, change due. It is also where the grant is finally spent:
-  `OverrideProvider` holds one, `POST /sales` accepts it and is tested, but **the register has
-  never called `POST /sales`**. Attach the header there and clear the authorisation on completion
-  (`OverrideProvider` already clears it when the cart empties, so that may be free).
-- **One exit criterion was re-worded**, not quietly ticked — see the phase doc. A Cashier *can*
-  reach the Discount control; what they cannot do is apply one on their own authority.
-- **No percentage discounts.** The API has no such field, and computing one client-side would put
-  arithmetic on the amount that decides what a customer pays.
-- **A refused override attempt is still recorded nowhere** until the audit log in 7.2, which
-  already has an exit criterion for it.
-- **`LineAdjustDialog` labels the field "Amount off (EUR)"** — the currency code, not the symbol.
-  Cosmetic; every other amount on the screen uses `Intl`.
-- Everything else from the Phase 5.1/5.2 list is unchanged: `Take cash` present and disabled, no
-  cart persistence until 5.5, `pos_e2e` keeps its shift open between runs, and the Phase 4 backlog.
+- **5.5 is what is left of double-submit safety** — persisting the in-flight sale to
+  `sessionStorage` so a *reload* recovers. `CartProvider` is where it goes, the cart already
+  carries the GUID, and the grant is deliberately outside the cart so it will not be serialised.
+- **No receipt action** — 6.1 builds the payload; the completion panel says so.
+- **The tender pad has no "clear all" for a mis-keyed split** — each row has an ×, which is enough
+  for two entries and would not be for six.
+- Everything else from the 5.3 list stands: no percentage discounts, no audit of a refused
+  override until 7.2, `LineAdjustDialog` labelling its field with the currency *code*, and the
+  unidentified GitGuardian finding on PR #12.
 
 ## Still genuinely open
 

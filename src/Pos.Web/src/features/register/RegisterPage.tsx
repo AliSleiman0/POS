@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, unwrap } from '@/api/client'
-import { isProblemError } from '@/api/problem'
+import { ErrorType, isProblemError } from '@/api/problem'
 import { CATALOG_STALE_MS } from '@/app/queryClient'
 import { useAuth } from '@/auth/authContext'
 import { Button } from '@/components/ui/button'
@@ -10,14 +10,29 @@ import { useToast } from '@/components/toastContext'
 import { isStorableAmount } from '@/features/catalog/validation'
 import { beep, isScanSoundMuted, setScanSoundMuted } from '@/lib/beep'
 import { formatMoney, parseServerDecimal, type ServerDecimal } from '@/lib/money'
-import { MAX_LINE_QUANTITY, provisionalLineMinor, type CartLine, type CartProduct } from './cart'
+import {
+  isEmpty,
+  MAX_LINE_QUANTITY,
+  provisionalLineMinor,
+  type CartLine,
+  type CartProduct,
+} from './cart'
 import { useCart } from './cartContext'
 import { CartPane } from './CartPane'
 import { LineAdjustDialog, type Adjustment } from './LineAdjustDialog'
 import { OpenShiftPanel } from './OpenShiftPanel'
 import { useOverride } from './overrideContext'
 import { ProductGrid } from './ProductGrid'
-import { registerKeys, useCurrentShift, useQuote } from './queries'
+import {
+  registerKeys,
+  useCompleteSale,
+  useCurrentShift,
+  useQuote,
+  type CompletedSale,
+} from './queries'
+import { SaleCompletePanel } from './SaleCompletePanel'
+import type { Tender } from './tender'
+import { TenderPanel } from './TenderPanel'
 import { TotalPanel } from './TotalPanel'
 import { useScanner } from './useScanner'
 
@@ -40,13 +55,19 @@ import { useScanner } from './useScanner'
  * | digits, `.` | quantity for the selected line; `Enter` commits |
  * | `Backspace` | edit the quantity being typed |
  * | `Delete` | void the selected line |
- * | `Escape` | clear the entry and dismiss the scan banner |
+ * | `Escape` | clear the entry, dismiss the scan banner, leave the tender step |
  * | `F2` | focus the product search |
  * | `F3` | discount the selected line |
  * | `F4` | change the selected line's price |
+ * | `F7` | take cash |
  *
  * A fast burst of characters ending in Enter is a scan and goes to the cart
  * instead; see `lib/scanner.ts` for how the two are told apart.
+ *
+ * **While tendering the same keys mean money.** Digits then `Enter` add a cash
+ * amount rather than a quantity, and the keys that edit the basket — ↑/↓,
+ * `Delete`, `+`/`−` — stand down, because a line voided by a stray keystroke
+ * would change a total that has already been read out to the customer.
  */
 export function RegisterPage() {
   const { status, tenant, can } = useAuth()
@@ -69,6 +90,50 @@ export function RegisterPage() {
   } | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
+  /**
+   * Which of the three things the right-hand column is doing.
+   *
+   * `building` → the total and keypad; `tendering` → the tender pad;
+   * `complete` → the change due. The cart pane is unaffected by all three, which
+   * is the point of putting them here rather than over the screen.
+   */
+  const [tendering, setTendering] = useState(false)
+  const [tenders, setTenders] = useState<Tender[]>([])
+  const [completed, setCompleted] = useState<CompletedSale | null>(null)
+
+  const completeSale = useCompleteSale()
+
+  /**
+   * Enters the tender step.
+   *
+   * `beginSale` is what mints the sale's identity, and it happens **here** —
+   * when the sale begins — rather than when Complete is pressed. That is
+   * CLAUDE.md invariant 6 in one line: every attempt from this moment carries
+   * the same key, so a retry after a dropped connection returns the original
+   * sale instead of taking the money again. It is idempotent, so backing out and
+   * coming in again is still one sale.
+   */
+  const beginTender = useCallback(() => {
+    dispatch({ type: 'beginSale' })
+    setTenders([])
+    setPending('')
+    setTendering(true)
+  }, [dispatch])
+
+  const cancelTender = useCallback(() => {
+    // The tenders go; the sale key stays. Nothing was taken, but this is still
+    // the same sale being tendered — a new key here would defeat the mechanism
+    // for anyone who backs out to remove a line and comes straight back.
+    setTenders([])
+    setPending('')
+    setTendering(false)
+  }, [])
+
+  const addTender = useCallback((amountMinor: number) => {
+    setTenders((current) => [...current, { key: crypto.randomUUID(), amountMinor }])
+    setPending('')
+  }, [])
+
   /** Line totals from the quote, by product, for the cart rows. */
   const pricedLines = new Map<string, ServerDecimal>(
     (quote.data?.lines ?? []).map((line) => [line.productId, line.lineTotal]),
@@ -78,6 +143,10 @@ export function RegisterPage() {
 
   const addProduct = useCallback(
     (product: CartProduct) => {
+      // The next customer. Their first item is what clears the last one's change
+      // off the screen — no dismiss button, because a queue does not wait for
+      // one.
+      setCompleted(null)
       dispatch({ type: 'add', product })
       beep('ok')
       // The flash is a one-shot: cleared straight after so the next scan of the
@@ -141,10 +210,24 @@ export function RegisterPage() {
     [addProduct, queryClient, toast],
   )
 
-  /** Enter on something a person typed: a quantity for the selected line. */
+  /** Enter on something a person typed: a quantity, or a cash amount. */
   const onManual = useCallback(
     (text: string) => {
       setPending('')
+
+      // While tendering, the same keystream means money instead of quantity.
+      // One buffer rather than two competing handlers, for the same reason the
+      // scanner and the keypad share one — see `lib/scanner.ts`.
+      if (tendering) {
+        if (!isStorableAmount(text)) {
+          beep('miss')
+          toast.show(`"${text}" is not an amount.`, { tone: 'error' })
+          return
+        }
+
+        addTender(Math.round(Number(text) * 100))
+        return
+      }
 
       if (!isStorableAmount(text)) {
         beep('miss')
@@ -177,7 +260,7 @@ export function RegisterPage() {
 
       dispatch({ type: 'setQuantity', key: cart.selectedKey, quantity: Number(text) })
     },
-    [cart.selectedKey, dispatch, toast],
+    [addTender, cart.selectedKey, dispatch, tendering, toast],
   )
 
   /**
@@ -235,8 +318,106 @@ export function RegisterPage() {
   /** The selected line, re-read from the cart so it is never a stale copy. */
   const selectedLine = cart.lines.find((line) => line.key === cart.selectedKey) ?? null
 
+  /**
+   * Sends the sale, and says what happened when it does not go.
+   *
+   * Every branch below leaves the cart and the tenders **intact**. A failed
+   * submit that cleared the screen would make the cashier rebuild the basket
+   * with a customer waiting, and — worse — would lose the key that makes the
+   * retry safe.
+   */
+  const onCompleteSale = useCallback(() => {
+    if (shift.data === undefined || shift.registerId === null) {
+      return
+    }
+
+    completeSale.mutate(
+      {
+        cart,
+        registerId: shift.registerId,
+        shiftId: shift.data.id,
+        tenders,
+        grant: override.authorization?.grant ?? null,
+      },
+      {
+        onSuccess: (result) => {
+          setCompleted(result)
+          setTendering(false)
+          setTenders([])
+          setPending('')
+
+          // The sale is finished, so its identity and its authorisation are
+          // both spent. `clear` drops the key; `OverrideProvider` drops the
+          // grant when the cart empties.
+          dispatch({ type: 'clear' })
+
+          beep('ok')
+        },
+
+        onError: (caught) => {
+          beep('miss')
+
+          if (isProblemError(caught)) {
+            /*
+             * The manager's grant expired while the queue moved.
+             *
+             * It lives five minutes, and this is the first code path slow enough
+             * to lose one — the cashier gets approval, scans more, counts notes,
+             * and the authorisation dies between the quote and the sale. Said
+             * plainly, with the way out, rather than as a bare "forbidden".
+             */
+            if (caught.is(ErrorType.overrideRequired)) {
+              override.clear()
+              toast.show('That approval has expired.', {
+                tone: 'error',
+                detail: 'Nothing was charged. Ask a manager to approve it again.',
+              })
+              return
+            }
+
+            if (caught.is(ErrorType.shiftClosed)) {
+              toast.show('The drawer was closed.', {
+                tone: 'error',
+                detail: 'Nothing was charged. Open a drawer and take the payment again.',
+              })
+              return
+            }
+
+            if (caught.is(ErrorType.underTender)) {
+              // Should be unreachable behind the disabled button. Surfaced
+              // rather than swallowed, because if it happens the button is lying.
+              toast.show('That does not cover the total.', { tone: 'error' })
+              return
+            }
+          }
+
+          // Including the one this milestone is really about: a transport
+          // failure. The cart, the tenders and the key are all still here, so
+          // pressing Complete again is a retry rather than a second sale.
+          toast.showError(caught, 'Could not complete the sale. Try again.')
+        },
+      },
+    )
+  }, [cart, completeSale, dispatch, override, shift.data, shift.registerId, tenders, toast])
+
   const onKey = useCallback(
     (event: KeyboardEvent) => {
+      /*
+       * While tendering, the keyboard is counting money, not editing the basket.
+       *
+       * ↑/↓ and Delete would otherwise still be moving the selection and voiding
+       * lines under a cashier whose attention is on the notes in their hand —
+       * and a line voided by a stray Delete at that moment changes the total
+       * after it has been read out. The cart's own buttons stay live for a
+       * deliberate change; only the invisible keystream is withdrawn.
+       */
+      if (
+        tendering &&
+        (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Delete')
+      ) {
+        return
+      }
+
       switch (event.key) {
         case 'ArrowDown':
           event.preventDefault()
@@ -255,6 +436,20 @@ export function RegisterPage() {
         case 'Escape':
           setPending('')
           setUnknownCode(null)
+
+          // Backing out of the tender step, which is what Escape means once the
+          // cashier is in it. The cart and the sale's key both survive.
+          if (tendering) {
+            cancelTender()
+          }
+          break
+        case 'F7':
+          // A function key, like F2/F3/F4 — a barcode cannot contain one, so
+          // reserving it cannot delete a character from the middle of a scan.
+          if (!tendering && !isEmpty(cart) && quote.data !== undefined) {
+            event.preventDefault()
+            beginTender()
+          }
           break
         case 'F2':
           event.preventDefault()
@@ -279,7 +474,16 @@ export function RegisterPage() {
           break
       }
     },
-    [beginAdjustment, cart.selectedKey, dispatch, selectedLine],
+    [
+      beginAdjustment,
+      beginTender,
+      cancelTender,
+      cart,
+      dispatch,
+      quote.data,
+      selectedLine,
+      tendering,
+    ],
   )
 
   useScanner(status === 'authenticated', {
@@ -295,15 +499,16 @@ export function RegisterPage() {
     onKey,
     onPendingChange: setPending,
     // `+` and `-` step the selected line: a barcode cannot contain either, so
-    // they are safe to reserve.
+    // they are safe to reserve. Withdrawn while tendering, for the same reason
+    // ↑/↓ and Delete are.
     reservedKeys: {
       '+': () => {
-        if (cart.selectedKey !== null) {
+        if (!tendering && cart.selectedKey !== null) {
           dispatch({ type: 'adjustQuantity', key: cart.selectedKey, delta: 1 })
         }
       },
       '-': () => {
-        if (cart.selectedKey !== null) {
+        if (!tendering && cart.selectedKey !== null) {
           dispatch({ type: 'adjustQuantity', key: cart.selectedKey, delta: -1 })
         }
       },
@@ -360,19 +565,59 @@ export function RegisterPage() {
         />
 
         <div className="flex min-h-0 flex-col gap-3">
-          {shift.isPending ? null : shift.isSuccess ? (
-            <TotalPanel
-              cart={cart}
-              quote={quote.data}
-              currency={currency}
-              provisionalMinor={provisionalMinor}
-              isQuoting={quote.isFetching}
-              quoteFailed={quote.isError}
-              pending={pending}
-            />
-          ) : (
+          {shift.isPending ? null : !shift.isSuccess ? (
             // A 404 from `/shifts/current` is the answer "no drawer is open".
             <OpenShiftPanel registerId={shift.registerId} currency={currency} />
+          ) : tendering && quote.data !== undefined ? (
+            <TenderPanel
+              quote={quote.data}
+              currency={currency}
+              tenders={tenders}
+              pending={pending}
+              submitting={completeSale.isPending}
+              onAdd={addTender}
+              onRemove={(key) => {
+                setTenders((current) => current.filter((tender) => tender.key !== key))
+              }}
+              onComplete={onCompleteSale}
+              onCancel={cancelTender}
+            />
+          ) : (
+            <>
+              {/* The last sale's change, until the next item is scanned. It sits
+                  above the total so the number being read out is the top of the
+                  column, not something the eye has to hunt for. */}
+              {completed !== null ? (
+                <SaleCompletePanel
+                  sale={completed.sale}
+                  currency={currency}
+                  replayed={completed.replayed}
+                />
+              ) : null}
+
+              <TotalPanel
+                cart={cart}
+                /*
+                 * Not `quote.data` directly.
+                 *
+                 * `useQuote` keeps the previous answer on screen while the next
+                 * one is computed, so a scan does not blank the biggest number
+                 * on the till. The cost is that an *emptied* cart inherits the
+                 * last cart's total — and after a completed sale that put
+                 * "€14.15" under the change due for a cart with nothing in it.
+                 * A stale total that looks authoritative is the worst failure
+                 * this screen has.
+                 */
+                quote={isEmpty(cart) ? undefined : quote.data}
+                currency={currency}
+                provisionalMinor={provisionalMinor}
+                isQuoting={quote.isFetching}
+                quoteFailed={quote.isError}
+                pending={pending}
+                canTender={!isEmpty(cart) && quote.data !== undefined && !quote.isError}
+                onTender={beginTender}
+              />
+            </>
           )}
 
           {quote.isError ? (
