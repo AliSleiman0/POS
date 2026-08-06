@@ -1,3 +1,4 @@
+using System.Globalization;
 using Pos.Core.Entities;
 
 namespace Pos.Seed;
@@ -53,6 +54,24 @@ public sealed record SeedOptions
     public required string ManagerPin { get; init; }
 
     /// <summary>
+    /// The smallest coin the shop rounds cash payments to, or null to leave it alone.
+    /// </summary>
+    /// <remarks>
+    /// Seeded because there is no <c>PUT /settings</c> yet, and without a way to set it the
+    /// register's cash-rounding line is unreachable from a browser — the pricing engine's
+    /// rounding could only ever be asserted in C#. <c>0.05</c> is the usual Swedish-rounding
+    /// value for a euro shop that has stopped handling 1c and 2c coins.
+    /// <para>
+    /// Nullable so that <b>supplying it changes an existing tenant</b> while omitting it does
+    /// not. Everything else here is create-only ("safe to re-run: existing rows are left
+    /// alone"), but a value nobody can otherwise reach would be useless if it only applied to
+    /// a shop that did not exist yet. Same reasoning as <see cref="RotateDeviceToken"/>: an
+    /// explicit flag is a deliberate act.
+    /// </para>
+    /// </remarks>
+    public required decimal? CashRoundingIncrement { get; init; }
+
+    /// <summary>
     /// Reissue the enrolled register's device token.
     /// </summary>
     /// <remarks>
@@ -85,6 +104,7 @@ public sealed record SeedOptions
           --password <string>      Password for all three users. Default: Dev-Password-1
           --cashier-pin <digits>   4-6 digits. Default: 4821
           --manager-pin <digits>   4-6 digits. Default: 7391
+          --cash-rounding <amount> Smallest coin cash is rounded to, e.g. 0.05. Default: 0 (off)
           --rotate-device-token    Reissue the front register's device token and print it.
                                    A token is only shown at enrollment, so a re-run cannot
                                    reprint the previous one.
@@ -162,6 +182,9 @@ public sealed record SeedOptions
             Password = Value(values, "password", DefaultPassword),
             CashierPin = Pin(Value(values, "cashier-pin", DefaultCashierPin), "--cashier-pin"),
             ManagerPin = Pin(Value(values, "manager-pin", DefaultManagerPin), "--manager-pin"),
+            CashRoundingIncrement = values.TryGetValue("cash-rounding", out var rounding)
+                ? Increment(rounding)
+                : null,
             RotateDeviceToken = rotate,
             SkipCatalog = skipCatalog,
         };
@@ -169,7 +192,8 @@ public sealed record SeedOptions
 
     private static readonly HashSet<string> ValueOptions = new(StringComparer.Ordinal)
     {
-        "connection", "slug", "name", "currency", "timezone", "password", "cashier-pin", "manager-pin",
+        "connection", "slug", "name", "currency", "timezone", "password", "cashier-pin",
+        "manager-pin", "cash-rounding",
     };
 
     private static string Value(Dictionary<string, string> values, string name, string fallback) =>
@@ -179,6 +203,25 @@ public sealed record SeedOptions
     /// The same 4-6 digit rule the PIN endpoint enforces, checked here so a bad PIN fails
     /// before any row is written rather than after two of the three users exist.
     /// </summary>
+    /// <summary>
+    /// A cash-rounding increment the pricing engine will accept.
+    /// </summary>
+    /// <remarks>
+    /// Validated here rather than left to the column, because a nonsense value produces a
+    /// tenant whose every total is wrong in a way that looks like a pricing bug.
+    /// </remarks>
+    private static decimal Increment(string candidate)
+    {
+        if (!decimal.TryParse(candidate, CultureInfo.InvariantCulture, out var increment)
+            || increment < 0m
+            || increment > 1m)
+        {
+            throw new SeedException("--cash-rounding must be between 0 and 1, for example 0.05.");
+        }
+
+        return increment;
+    }
+
     private static string Pin(string candidate, string option)
     {
         if (candidate.Length is < 4 or > 6 || !candidate.All(char.IsAsciiDigit))

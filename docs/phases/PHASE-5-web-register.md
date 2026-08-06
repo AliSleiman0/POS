@@ -106,15 +106,37 @@ Where a running subtotal must appear before the quote returns, it is computed in
 - Cash rounding adjustment shown explicitly when it applies, so a total that isn't the sum of the lines is explained rather than looking like a bug
 
 **Exit criteria**
-- [ ] Tender, change, quick-cash all correct
-- [ ] Split tender with running balance
-- [ ] Change due is the most prominent element on the screen
-- [ ] Rounding adjustment shown when non-zero
-- [ ] Completion returns to a clean cart, ready for the next customer with no extra click
+- [x] Tender, change, quick-cash all correct — quick cash is Exact, the next whole unit, then the notes above the total, computed in integer minor units
+- [x] Split tender with running balance — several amounts, one request, the balance counting down to zero
+- [x] Change due is the most prominent element on the screen — `text-6xl`, larger than the total ever was, and it is the **server's** `changeGiven`
+- [x] Rounding adjustment shown when non-zero — and *explained*, not merely shown; seed with `--cash-rounding 0.05` to see it
+- [x] Completion returns to a clean cart, ready for the next customer with no extra click — the next scan is what clears the change panel
+- [ ] ~~A receipt action (print / skip / reprint later)~~ — **deferred to 6.1.** `GET /sales/{id}/receipt` is documented and unbuilt, so there is nothing to print. The completion panel says so rather than stubbing it, the same treatment `Take cash` had before this milestone built it.
+
+> **Pulled forward from 5.5: the idempotency key lifecycle.** The key is minted when *tendering
+> begins* and reused on every attempt. Building the submit the other way first would have shipped a
+> double-charge on any retry — `api/idempotency.ts` says so in its own doc comment — and then fixed
+> it a milestone later. `sessionStorage` persistence and reload-recovery remain 5.5.
+
+**Two things this milestone found by being driven rather than reasoned about:**
+
+1. **An emptied cart inherited the last customer's total.** `useQuote` keeps the previous answer on
+   screen so a scan does not blank the biggest number on the till; the cost is that a cart with
+   nothing in it showed the price of the cart before it. A bug since 5.1, where it took a cart void
+   to see — a completed sale makes it happen every time, and it put "€14.15" directly under the
+   change due for an empty basket. A stale total that looks authoritative is the worst failure this
+   screen has.
+2. **A split tender listed its amounts without labels.** "Cash taken €10.00" followed by two bare
+   rows, on the panel a cashier checks when the drawer does not balance.
 
 ## 5.5 Double-submit safety
 
-- Generate the `clientTransactionId` GUID **when the sale begins**, not when submit is pressed. Every retry — including a page reload mid-submit — reuses it.
+> **Half of this landed in 5.4.** The key lifecycle — minted when tendering begins, reused on every
+> attempt, replay surfaced to the cashier — is done and pinned by an e2e test that lets the first
+> request commit and throws its response away. What remains here is persistence: surviving a
+> *reload*, which needs the cart and its GUID in `sessionStorage`.
+
+- Generate the `clientTransactionId` GUID **when the sale begins**, not when submit is pressed. Every retry — including a page reload mid-submit — reuses it. ✅ *done in 5.4, except across a reload*
 - Persist the in-flight sale (GUID + cart) to `sessionStorage` before submitting, so a crash or reload recovers rather than losing the sale
 - On timeout or network error: retry with the **same** key. The server returns the original result if the first attempt actually landed.
 - Optimistic UI, but the cart is not cleared until the server confirms

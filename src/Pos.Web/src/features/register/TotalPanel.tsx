@@ -24,6 +24,8 @@ export function TotalPanel({
   isQuoting,
   quoteFailed,
   pending,
+  canTender,
+  onTender,
 }: {
   cart: Cart
   quote: SaleResponse | undefined
@@ -33,6 +35,9 @@ export function TotalPanel({
   quoteFailed: boolean
   /** The keypad buffer, as typed. */
   pending: string
+  /** There is something to sell and the server has priced it. */
+  canTender: boolean
+  onTender: () => void
 }) {
   // Lines, not summed quantity: a cart of two waters and 0.35 kg of cheese is
   // not "3.35 items", and a weighed line has no unit count worth adding up.
@@ -108,14 +113,21 @@ export function TotalPanel({
         )}
       </div>
 
-      {/* Present and honest: the tender flow is 5.4, and a button that pretended
-          to take money would be worse than one that says it cannot yet. */}
+      {/* Disabled until the server has priced the cart, deliberately: tendering
+          against a provisional figure would mean counting change from a number
+          the client made up. */}
       <div className="flex flex-col gap-1">
-        <Button size="lg" disabled className="h-12 text-base">
+        <Button
+          size="lg"
+          data-testid="take-cash"
+          disabled={!canTender}
+          className="h-12 text-base"
+          onClick={onTender}
+        >
           Take cash
         </Button>
         <p className="text-center text-xs text-muted-foreground">
-          Taking payment arrives in the next milestone.
+          {canTender ? 'F7' : 'Waiting for the server to price this cart.'}
         </p>
       </div>
     </section>

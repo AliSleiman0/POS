@@ -74,6 +74,22 @@ export interface Cart {
   flashedKey: string | null
   /** Money off the whole sale, spread over the lines by the server. */
   cartDiscountAmount: number | null
+  /**
+   * This sale's identity, minted when tendering starts and reused on every
+   * attempt.
+   *
+   * **This is the double-submit mechanism** (CLAUDE.md invariant 6), and a
+   * disabled button is not. The same GUID goes in the `Idempotency-Key` header
+   * and in `clientTransactionId`, so a retry after a timeout — or a second
+   * click that beats React's re-render — is recognised as the same work and
+   * returns the original sale rather than charging the customer twice.
+   *
+   * In the cart rather than beside it, unlike the manager's grant: 5.5 persists
+   * the in-flight sale to `sessionStorage` so a reload mid-submit recovers, and
+   * "the GUID and the cart" is one thing to serialise. A key held in the submit
+   * button's component would not survive the reload that makes it matter.
+   */
+  saleKey: string | null
 }
 
 export const EMPTY_CART: Cart = {
@@ -81,6 +97,7 @@ export const EMPTY_CART: Cart = {
   selectedKey: null,
   flashedKey: null,
   cartDiscountAmount: null,
+  saleKey: null,
 }
 
 export type CartAction =
@@ -93,6 +110,7 @@ export type CartAction =
   | { type: 'setLineDiscount'; key: string; amount: number | null }
   | { type: 'setPriceOverride'; key: string; unitPrice: number | null }
   | { type: 'setCartDiscount'; amount: number | null }
+  | { type: 'beginSale' }
   | { type: 'clearFlash' }
   | { type: 'clear' }
 
@@ -258,6 +276,19 @@ export function cartReducer(state: Cart, action: CartAction): Cart {
       return { ...state, cartDiscountAmount: amount === null || amount <= 0 ? null : amount }
     }
 
+    case 'beginSale':
+      /*
+       * Idempotent, and that is the entire point.
+       *
+       * A cashier can enter the tender step, back out to remove a line, and go
+       * in again — that is one sale being tendered twice, not two sales. Minting
+       * a fresh key here would make the header decorative in exactly the way
+       * `api/idempotency.ts` warns about: the retry would carry a GUID the
+       * server has never seen, so it would be new work, and the customer pays
+       * twice. `clear` is the only thing that ends a sale's identity.
+       */
+      return state.saleKey === null ? { ...state, saleKey: crypto.randomUUID() } : state
+
     case 'clearFlash':
       return state.flashedKey === null ? state : { ...state, flashedKey: null }
 
@@ -324,6 +355,10 @@ export function requiredPolicies(cart: Cart): Policy[] {
  * **Everything that changes the price belongs in here.** A discount left out
  * would leave the previous total on the screen looking authoritative, which is
  * the worst available failure: not a missing number, a wrong one.
+ *
+ * The rule runs both ways: `saleKey` is deliberately absent, because it changes
+ * no amount. In the key would re-quote the cart on entering the tender step, and
+ * put a spinner over the total at the moment the customer is being told it.
  */
 export function cartSignature(cart: Cart): string {
   const lines = cart.lines

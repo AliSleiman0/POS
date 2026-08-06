@@ -6,10 +6,13 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, unwrap } from '@/api/client'
+import { api, unwrap, unwrapWithResponse } from '@/api/client'
+import { wasReplayed } from '@/api/idempotency'
+import type { components } from '@/api/schema'
 import { LIVE_QUERY_OPTIONS } from '@/app/queryClient'
 import { getEnrolledRegisterId } from '@/auth/deviceToken'
 import { cartSignature, isEmpty, toSaleLines, type Cart } from './cart'
+import type { Tender } from './tender'
 
 export const registerKeys = {
   currentShift: (registerId: string | null) => ['shifts', 'current', registerId] as const,
@@ -117,5 +120,93 @@ export function useQuote(cart: Cart, grant: string | null) {
     // The previous total stays on screen while the next one is computed, so the
     // most prominent number on the till does not blink on every scan.
     placeholderData: (previous) => previous,
+  })
+}
+
+/** A completed sale, plus whether the server had already recorded it. */
+export interface CompletedSale {
+  sale: components['schemas']['SaleResponse']
+  /**
+   * True when this request replayed a key the server had seen.
+   *
+   * Not an error. It is what a successful retry looks like, and the only
+   * evidence a cashier has that their second press did not take a second
+   * payment.
+   */
+  replayed: boolean
+}
+
+/**
+ * Turns the cart into a sale.
+ *
+ * **The idempotency key comes from the cart, not from here** (CLAUDE.md
+ * invariant 6). Minted when tendering began and reused on every attempt, so a
+ * timeout followed by a retry returns the original sale rather than taking the
+ * money twice. A key generated inside this function would be new each time and
+ * the header would be decorative — see `cart.ts`'s `beginSale`.
+ *
+ * The same GUID is sent as `clientTransactionId`, per docs/API.md.
+ *
+ * Lines go through `toSaleLines`, which is also what the quote uses. That is the
+ * mechanical reason the figure on the screen and the figure on the sale cannot
+ * disagree — not a promise that two code paths were kept in step.
+ */
+export function useCompleteSale() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (input: {
+      cart: Cart
+      registerId: string
+      shiftId: string
+      tenders: readonly Tender[]
+      /** A manager's grant, when the cart carries something needing one. */
+      grant: string | null
+    }): Promise<CompletedSale> => {
+      const saleKey = input.cart.saleKey
+
+      if (saleKey === null) {
+        // A programming error, not a user-facing one: nothing may reach this
+        // without `beginSale` having run, because without a key the retry story
+        // is gone and a double-tap is a double charge.
+        throw new Error('The sale has no idempotency key — dispatch beginSale first.')
+      }
+
+      const { data, response } = await unwrapWithResponse(
+        api.POST('/api/v1/sales', {
+          params: {
+            header: {
+              'Idempotency-Key': saleKey,
+              ...(input.grant === null ? {} : { 'X-Override-Authorization': input.grant }),
+            },
+          },
+          body: {
+            clientTransactionId: saleKey,
+            registerId: input.registerId,
+            shiftId: input.shiftId,
+            lines: toSaleLines(input.cart),
+            cartDiscountAmount: input.cart.cartDiscountAmount,
+            tenders: input.tenders.map((tender) => ({
+              method: 'Cash',
+              // Back to a decimal for the wire. Held as integer minor units
+              // right up to here so nothing accumulated float error on the way.
+              amount: tender.amountMinor / 100,
+              reference: null,
+            })),
+          },
+        }),
+      )
+
+      return { sale: data, replayed: wasReplayed(response) }
+    },
+
+    onSuccess: async () => {
+      // Both moved: the drawer's expected cash, and the on-hand of everything
+      // that was sold.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['shifts'] }),
+        queryClient.invalidateQueries({ queryKey: ['stock'] }),
+      ])
+    },
   })
 }

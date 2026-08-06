@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 5 in progress — 5.1, 5.2 and 5.3 done. 871 .NET + 116 Vitest + 24 Playwright green |
-| **Next up** | Phase 5.4, cash payment: tender entry, quick-cash, change due. `POST /sales` is built and tested but the register has never called it — 5.4 is where the cart becomes a sale, and where the override grant it already holds is finally spent. |
+| **Current phase** | Phase 5 in progress — 5.1 to 5.4 done. 871 .NET + 138 Vitest + 31 Playwright green |
+| **Next up** | Phase 5.5, what is left of double-submit safety: persisting the in-flight sale to `sessionStorage` so a **reload** mid-submit recovers. The key lifecycle itself landed in 5.4; `CartProvider` is where the persistence goes, and the cart already carries the GUID so it is one serialisation rather than two. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
 | **Last updated** | 2026-08-05 |
 
@@ -101,7 +101,7 @@ The screen that decides whether the product is usable. Detail: [phases/PHASE-5-w
 - [x] **5.1 Register layout** — cart pane + total/keypad + product grid at `/register`, inside `AppLayout` so the cart (held in a `CartProvider` above the router's outlet) survives a route change and a re-auth. Open-shift prompt on the screen rather than in a menu. `POST /sales/quote` pulled forward from 5.3 so the headline number is the server's, with an integer minor-unit subtotal marked provisional until it lands.
 - [x] **5.2 Scan input** — global keystroke capture that stands down for focused fields, told from human typing by a **budget over the whole burst** rather than a per-gap threshold: one stalled frame used to split a code and look up its tail. Double-fire suppressed within 300ms of the previous scan starting. Unknown code is an in-page banner; feedback is a WebAudio beep plus a line flash, mutable.
 - [x] **5.3 Cart interactions** — line and cart discount, price override, and a **manager override**: `POST /auth/override` exchanges a manager's PIN at the enrolled till for a single-use grant that `POST /sales` consumes inside the sale's transaction. The cashier's session is untouched, so the sale stays theirs while `SaleLine.OverriddenBy` names the manager. The quote enforces the same policies without spending the grant, so the till can never display a total the sale would refuse.
-- [ ] **5.4 Cash payment** — tender screen, quick-cash buttons, change due legible across a counter.
+- [x] **5.4 Cash payment** — the tender pad replaces the total in the right-hand column so the cart stays visible; quick cash, split tender with a running balance, and change due at `text-6xl` from the server's `changeGiven`. **The idempotency key lifecycle came forward from 5.5**: minted when tendering begins, reused on every attempt, and a replay is shown to the cashier — pinned by an e2e test that lets the first request commit and drops its response. A receipt action is deferred to 6.1, which is where the payload it would print gets built.
 - [ ] **5.5 Double-submit safety** — reuses the 3.5 idempotency key; a disabled button is not the mechanism.
 - [ ] **5.6 Tests** — Playwright: scan → cart → tender → sale recorded → stock decremented.
 

@@ -363,3 +363,70 @@ describe('discounts and price overrides', () => {
     expect(cartReducer(adjusted, { type: 'clear' })).toEqual(EMPTY_CART)
   })
 })
+
+/**
+ * The sale's identity.
+ *
+ * CLAUDE.md invariant 6 lives here. The key is minted when tendering begins and
+ * reused on every attempt, so a retry after a dropped connection is recognised
+ * as the same work. A disabled button is not this mechanism and never was.
+ */
+describe('the sale key', () => {
+  const water: CartProduct = {
+    productId: 'p-water',
+    name: 'Still Water 500ml',
+    sku: 'SKU-1001',
+    unit: 'Each',
+    unitPrice: 1.2,
+  }
+
+  function withWater(): Cart {
+    return cartReducer(EMPTY_CART, { type: 'add', product: water })
+  }
+
+  it('is absent until a sale begins', () => {
+    expect(withWater().saleKey).toBeNull()
+  })
+
+  it('is minted once and survives being asked again', () => {
+    /*
+     * The case that makes it a mechanism rather than a decoration.
+     *
+     * A cashier enters the tender step, backs out to remove a line, and goes
+     * in again. That is one sale tendered twice. If `beginSale` minted afresh,
+     * the second attempt would carry a GUID the server had never seen — new
+     * work, and the customer pays twice.
+     */
+    const begun = cartReducer(withWater(), { type: 'beginSale' })
+
+    expect(begun.saleKey).not.toBeNull()
+    expect(cartReducer(begun, { type: 'beginSale' }).saleKey).toBe(begun.saleKey)
+  })
+
+  it('survives everything that is not the end of the sale', () => {
+    const begun = cartReducer(withWater(), { type: 'beginSale' })
+    const key = begun.saleKey
+
+    const busy = cartReducer(cartReducer(begun, { type: 'add', product: water }), {
+      type: 'setCartDiscount',
+      amount: 0.5,
+    })
+
+    expect(busy.saleKey).toBe(key)
+  })
+
+  it('ends with the cart, so the next customer is a new sale', () => {
+    const begun = cartReducer(withWater(), { type: 'beginSale' })
+
+    expect(cartReducer(begun, { type: 'clear' }).saleKey).toBeNull()
+  })
+
+  it('stays out of the signature, so entering the tender step does not re-quote', () => {
+    // The rule from the other direction: only things that change the price go in
+    // the key the quote is cached on. A spinner over the total at the moment the
+    // customer is being told it would be the worst possible time for one.
+    const cart = withWater()
+
+    expect(cartSignature(cartReducer(cart, { type: 'beginSale' }))).toBe(cartSignature(cart))
+  })
+})

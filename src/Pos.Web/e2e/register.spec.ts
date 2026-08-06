@@ -1,12 +1,12 @@
 import { expect, test, type Page } from '@playwright/test'
 import { enrolDevice, signIn } from './fixtures/actors'
-import { MANAGER_NAME, MANAGER_PIN } from './fixtures/seed'
+import { MANAGER_NAME, MANAGER_PIN, OWNER_EMAIL, PASSWORD, TENANT_SLUG } from './fixtures/seed'
 
 /**
  * The register, end to end against a real API and a real Postgres.
  *
- * Phases 5.1 and 5.2: the drawer, the cart, and the scanner. Tender, receipt and
- * the stock decrement are 5.4/5.6 and are deliberately not asserted here.
+ * Phases 5.1 to 5.4: the drawer, the cart, the scanner, the adjustments and the
+ * money. The receipt is 6.1 and is deliberately not asserted here.
  *
  * The barcodes are the seeded catalog's own (`tools/Pos.Seed/CatalogSeeder.cs`):
  * `5099999000011` is Still Water 500ml at €1.20, tax-inclusive.
@@ -15,6 +15,9 @@ import { MANAGER_NAME, MANAGER_PIN } from './fixtures/seed'
 /** Still Water 500ml, seeded with two codes because a multipack scans differently. */
 const WATER = '5099999000011'
 const WATER_NAME = 'Still Water 500ml'
+
+/** Irish Cheddar, sold by the kilogram at €12.95. */
+const CHEDDAR = '2000000000015'
 
 /**
  * A wedge scanner, as far as the browser can tell: characters with no delay,
@@ -390,5 +393,269 @@ test.describe('cart adjustments', () => {
     await openDiscount(page)
 
     await expect(page.getByTestId('manager-override')).toBeVisible()
+  })
+})
+
+/**
+ * 5.4 — taking the money.
+ *
+ * The milestone where a cart becomes a sale. `POST /sales` has been built and
+ * tested from the .NET side since Phase 3; nothing on the till had ever called
+ * it until now.
+ *
+ * The test that matters most is the double-submit one, and it is deliberately
+ * *not* a double click: the button disables itself while a submit is in flight,
+ * so a double click proves the courtesy works and says nothing about the
+ * mechanism. What is exercised instead is the failure the mechanism exists for —
+ * a request that reaches the server and whose response is lost.
+ */
+test.describe('cash payment', () => {
+  /*
+   * Serial, unlike everything else in this file.
+   *
+   * `fullyParallel` is on, so sibling tests otherwise run at once — and these are
+   * the only tests in the suite that *write sales into a shared tenant*. Counting
+   * rows is the only honest way to assert "exactly one sale", and a count is
+   * meaningless while a neighbour is committing its own. Everything above this
+   * block reads or builds a cart and can stay parallel.
+   */
+  test.describe.configure({ mode: 'serial' })
+
+  test.beforeEach(async ({ page }) => {
+    await enrolDevice(page)
+    await signIn(page, 'cashier')
+    await page.goto('/register')
+    await ensureDrawerOpen(page)
+  })
+
+  /** An owner's token, for reading back what the till wrote. */
+  async function ownerToken(page: Page): Promise<string> {
+    const login = await page.request.post('/api/v1/auth/login', {
+      data: { tenantSlug: TENANT_SLUG, email: OWNER_EMAIL, password: PASSWORD },
+    })
+
+    return ((await login.json()) as { accessToken: string }).accessToken
+  }
+
+  /** How many sales this shop has, straight from the API. */
+  async function saleCount(page: Page): Promise<number> {
+    const sales = await page.request.get('/api/v1/sales?limit=100', {
+      headers: { Authorization: `Bearer ${await ownerToken(page)}` },
+    })
+
+    return ((await sales.json()) as { items: unknown[] }).items.length
+  }
+
+  async function takeCash(page: Page): Promise<void> {
+    await page.getByTestId('take-cash').click()
+    await expect(page.getByTestId('tender-panel')).toBeVisible()
+  }
+
+  test('exact cash completes the sale and leaves a clean cart', async ({ page }) => {
+    await scan(page, WATER)
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.20')
+
+    await takeCash(page)
+
+    // "Exact" is the first quick-cash button and the commonest press.
+    await page.getByRole('button', { name: 'Exact' }).click()
+    await expect(page.getByTestId('tender-remaining')).toHaveText('€0.00')
+
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+    await expect(page.getByTestId('change-due')).toHaveText('€0.00')
+
+    // Ready for the next customer with no extra click — the phase doc's bar.
+    await expect(page.getByTestId('cart-line')).toHaveCount(0)
+    await expect(page.getByText('Scan an item to start.')).toBeVisible()
+
+    /*
+     * And the total is zero, not the last customer's.
+     *
+     * A bug since 5.1 that a completed sale makes routine: `useQuote` keeps the
+     * previous answer on screen so a scan does not blank the total, and an
+     * emptied cart inherited it — so "€1.20" sat under the change due for a cart
+     * containing nothing. Before 5.4 it took a cart void to see it.
+     */
+    await expect(page.getByTestId('cart-total')).toHaveText('€0.00')
+
+    // And the next scan is what clears the change off the screen.
+    await scan(page, WATER)
+    await expect(page.getByTestId('sale-complete')).toHaveCount(0)
+  })
+
+  test('change due comes back from the server, not from the client', async ({ page }) => {
+    await scan(page, WATER)
+    await takeCash(page)
+
+    await page.getByRole('button', { name: '€5.00' }).click()
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('change-due')).toHaveText('€3.80')
+  })
+
+  test('a split tender runs the balance down to zero and writes one sale', async ({ page }) => {
+    const before = await saleCount(page)
+
+    await scan(page, WATER)
+    await scan(page, CHEDDAR)
+    await expect(page.getByTestId('cart-total')).toHaveText('€14.15')
+
+    await takeCash(page)
+
+    // Two amounts typed on the keypad, which is what a cashier does with a
+    // handful of notes and coins.
+    await page.keyboard.type('10', { delay: 40 })
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('tender-remaining')).toHaveText('€4.15')
+
+    await page.keyboard.type('4.15', { delay: 40 })
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('tender-remaining')).toHaveText('€0.00')
+    await expect(page.getByTestId('tender-line')).toHaveCount(2)
+
+    await page.getByTestId('complete-sale').click()
+    await expect(page.getByTestId('change-due')).toHaveText('€0.00')
+
+    expect(await saleCount(page)).toBe(before + 1)
+  })
+
+  test('a lost response does not charge the customer twice', async ({ page }) => {
+    /*
+     * The mechanism, not the courtesy.
+     *
+     * The first request reaches the server and commits; its response is thrown
+     * away, so the till sees a network failure and the cashier presses again.
+     * The second attempt carries the *same* idempotency key — minted when
+     * tendering began — so the server returns the original sale.
+     *
+     * Falsify by minting the key inside `useCompleteSale` instead of in the
+     * cart: the retry then carries a key the server has never seen, and this
+     * shop takes the money twice.
+     */
+    const before = await saleCount(page)
+
+    await scan(page, WATER)
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+
+    let swallowed = false
+
+    await page.route('**/api/v1/sales', async (route) => {
+      if (route.request().method() !== 'POST' || swallowed) {
+        await route.continue()
+        return
+      }
+
+      // Let it land, then drop the answer on the floor.
+      swallowed = true
+      await route.fetch()
+      await route.abort('connectionaborted')
+    })
+
+    await page.getByTestId('complete-sale').click()
+
+    // The till says so, and keeps the cart: nothing to rebuild, and the same
+    // key is still in hand.
+    await expect(page.getByText(/Could not complete the sale/)).toBeVisible()
+    await expect(page.getByTestId('cart-line')).toHaveCount(1)
+
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+
+    // The visible half of invariant 6.
+    await expect(page.getByTestId('sale-replayed')).toBeVisible()
+
+    // The half that matters.
+    expect(await saleCount(page)).toBe(before + 1)
+  })
+
+  test('a sale decrements the stock it sold', async ({ page }) => {
+    /** What the ledger says is on the shelf. */
+    async function onHand(): Promise<number> {
+      const authorization = { Authorization: `Bearer ${await ownerToken(page)}` }
+
+      const product = await page.request.get(`/api/v1/products/by-barcode/${WATER}`, {
+        headers: authorization,
+      })
+
+      const { productId } = (await product.json()) as { productId: string }
+
+      const stock = await page.request.get(`/api/v1/stock?limit=100`, { headers: authorization })
+
+      const body = (await stock.json()) as {
+        items: { productId: string; onHand: number | string }[]
+      }
+
+      return Number(body.items.find((item) => item.productId === productId)?.onHand)
+    }
+
+    // Before and after, rather than "the newest movement is a Sale": the
+    // movement list is oldest-first and the seeded Receive sits at the top of
+    // it, so an index-based assertion would be reading the wrong row and
+    // passing or failing for reasons unrelated to this sale.
+    const before = await onHand()
+
+    await scan(page, WATER)
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+
+    // Read back through the API rather than a screen, so this asserts the ledger
+    // moved rather than that a component re-rendered.
+    expect(await onHand()).toBe(before - 1)
+  })
+
+  test('a discounted sale spends the manager approval', async ({ page }) => {
+    // 5.3 built the grant and 5.4 is the first thing that can spend one. Until
+    // now no test had taken that path from the UI at all.
+    const before = await saleCount(page)
+
+    await scan(page, WATER)
+
+    await page
+      .getByTestId('cart-line')
+      .getByRole('button', { name: /^Select / })
+      .click()
+    await page.getByRole('button', { name: 'Discount', exact: true }).click()
+
+    await page.getByRole('button', { name: MANAGER_NAME }).click()
+    await page.getByLabel('Manager PIN').fill(MANAGER_PIN)
+    await page.getByRole('button', { name: 'Approve' }).click()
+
+    await page.getByTestId('adjust-amount').fill('0.20')
+    await page.getByRole('button', { name: 'Apply' }).click()
+
+    await expect(page.getByTestId('cart-total')).toHaveText('€1.00')
+
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+    expect(await saleCount(page)).toBe(before + 1)
+  })
+
+  test('backing out of the tender step keeps the sale, not just the cart', async ({ page }) => {
+    await scan(page, WATER)
+    await takeCash(page)
+
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('tender-panel')).toHaveCount(0)
+    await expect(page.getByTestId('cart-line')).toHaveCount(1)
+
+    // Same sale, tendered again — and it must still complete exactly once.
+    const before = await saleCount(page)
+
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+    expect(await saleCount(page)).toBe(before + 1)
   })
 })
