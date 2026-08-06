@@ -131,6 +131,12 @@ public static class SaleEndpoints
             .RequireAuthorization(Policies.CanSell)
             .WithSummary("One sale with its lines and tenders");
 
+        // Ordered before nothing and colliding with nothing: "by-client-transaction" is not a
+        // guid, so the {id:guid} route above cannot match it.
+        sales.MapGet("/by-client-transaction/{clientTransactionId:guid}", GetByClientTransactionAsync)
+            .RequireAuthorization(Policies.CanSell)
+            .WithSummary("The sale a client transaction id produced, if it produced one");
+
         // Priced but not committed, so no idempotency key: nothing is written, and a replay is
         // simply the same arithmetic again.
         sales.MapPost("/quote", QuoteAsync)
@@ -222,6 +228,42 @@ public static class SaleEndpoints
         CancellationToken cancellationToken)
     {
         var sale = await db.Sales.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+
+        if (sale is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        return TypedResults.Ok(await ReadAsync(db, sale, cancellationToken));
+    }
+
+    /// <summary>
+    /// The sale a client transaction id produced, or 404 if it never produced one.
+    /// </summary>
+    /// <remarks>
+    /// <b>This exists so a till can find out what happened to a sale it lost the answer to.</b>
+    /// A register that reloads mid-payment holds the GUID it submitted and nothing else: the
+    /// basket may have been charged, or the request may never have arrived, and those two need
+    /// opposite actions from the cashier.
+    /// <para>
+    /// The alternative is re-POSTing the sale and letting idempotency answer — which works when
+    /// the answer is "it landed" and <i>takes the money</i> when it is not, on a page load, with
+    /// nobody having pressed anything. A read is the honest question.
+    /// </para>
+    /// <para>
+    /// Not an existence oracle across tenants: the query filter scopes it, so another tenant's
+    /// id is a 404 indistinguishable from an unused one.
+    /// </para>
+    /// </remarks>
+    private static async Task<Results<Ok<SaleResponse>, NotFound>> GetByClientTransactionAsync(
+        Guid clientTransactionId,
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        // Index-backed and unique: ux_sale_tenant_client_transaction_id in SaleConfiguration.
+        var sale = await db.Sales
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.ClientTransactionId == clientTransactionId, cancellationToken);
 
         if (sale is null)
         {

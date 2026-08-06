@@ -24,6 +24,7 @@ import { OpenShiftPanel } from './OpenShiftPanel'
 import { useOverride } from './overrideContext'
 import { ProductGrid } from './ProductGrid'
 import {
+  fetchSaleByKey,
   registerKeys,
   useCompleteSale,
   useCurrentShift,
@@ -31,9 +32,11 @@ import {
   type CompletedSale,
 } from './queries'
 import { SaleCompletePanel } from './SaleCompletePanel'
+import { clearSaleInFlight, writeSaleInFlight } from './storage'
 import type { Tender } from './tender'
 import { TenderPanel } from './TenderPanel'
 import { TotalPanel } from './TotalPanel'
+import { useSaleRecovery } from './useSaleRecovery'
 import { useScanner } from './useScanner'
 
 /**
@@ -102,6 +105,33 @@ export function RegisterPage() {
   const [completed, setCompleted] = useState<CompletedSale | null>(null)
 
   const completeSale = useCompleteSale()
+
+  /**
+   * A payment that was in progress when this page went away.
+   *
+   * Resolved by asking the server what the key bought, not by submitting it
+   * again — see `useSaleRecovery`. Both outcomes land in the states above: a
+   * sale that was taken becomes `completed`, one that was not restores the
+   * tender pad with its amounts so a single press finishes it.
+   */
+  const { recovery, retry: retryRecovery } = useSaleRecovery({
+    enabled: status === 'authenticated',
+    registerId: shift.registerId,
+    onTaken: (sale) => {
+      setCompleted({ sale, provenance: 'recovered' })
+      setTendering(false)
+      setTenders([])
+      dispatch({ type: 'clear' })
+    },
+    onNotTaken: (record) => {
+      setTenders([...record.tenders])
+      setTendering(true)
+      toast.show('That payment was not taken.', {
+        tone: 'info',
+        detail: 'Nothing was charged. The amounts are as they were — complete it or start again.',
+      })
+    },
+  })
 
   /**
    * Enters the tender step.
@@ -319,6 +349,49 @@ export function RegisterPage() {
   const selectedLine = cart.lines.find((line) => line.key === cart.selectedKey) ?? null
 
   /**
+   * Finds out what a key that has already been spent actually bought.
+   *
+   * Reached only from `idempotency-key-reused`, which is the server saying "this
+   * key wrote something, and it was not this basket". The sale it wrote is shown
+   * — the cashier has to know a payment was taken before they take another — and
+   * what is on the screen now gets an identity of its own so it can still be
+   * sold.
+   */
+  const resolveSpentKey = useCallback(
+    async (saleKey: string) => {
+      // Whatever comes back, this basket is not that sale, and pressing Complete
+      // again must not repeat the same refusal.
+      dispatch({ type: 'restartSale' })
+
+      try {
+        const sale = await fetchSaleByKey(saleKey)
+
+        if (sale === null) {
+          // The key bought nothing under /sales — it was spent on some other
+          // idempotent route. Nothing to show, but the cart is usable again.
+          toast.show('That sale had already been submitted.', {
+            tone: 'error',
+            detail: 'Nothing on this screen was charged. Take the payment again.',
+          })
+          return
+        }
+
+        setCompleted({ sale, provenance: 'recovered' })
+        setTendering(false)
+        setTenders([])
+
+        toast.show(`Sale #${String(sale.saleNumber ?? '—')} was already paid for.`, {
+          tone: 'error',
+          detail: 'The basket has changed since. Check that sale before charging again.',
+        })
+      } catch (caught) {
+        toast.showError(caught, 'That sale was already submitted, and it cannot be looked up.')
+      }
+    },
+    [dispatch, toast],
+  )
+
+  /**
    * Sends the sale, and says what happened when it does not go.
    *
    * Every branch below leaves the cart and the tenders **intact**. A failed
@@ -327,9 +400,27 @@ export function RegisterPage() {
    * retry safe.
    */
   const onCompleteSale = useCallback(() => {
-    if (shift.data === undefined || shift.registerId === null) {
+    const saleKey = cart.saleKey
+
+    if (shift.data === undefined || shift.registerId === null || saleKey === null) {
       return
     }
+
+    /*
+     * Written before the request, and that ordering is the feature.
+     *
+     * If this page dies between here and the response — a reload, a crashed
+     * tab, a tablet that slept — the record is what lets the till come back and
+     * ask what the key bought instead of guessing. Written after the response
+     * it would exist only in the cases that do not need it.
+     */
+    writeSaleInFlight({
+      saleKey,
+      tenders,
+      registerId: shift.registerId,
+      shiftId: shift.data.id,
+      at: Date.now(),
+    })
 
     completeSale.mutate(
       {
@@ -341,6 +432,8 @@ export function RegisterPage() {
       },
       {
         onSuccess: (result) => {
+          clearSaleInFlight()
+
           setCompleted(result)
           setTendering(false)
           setTenders([])
@@ -359,6 +452,25 @@ export function RegisterPage() {
 
           if (isProblemError(caught)) {
             /*
+             * The key already bought something else.
+             *
+             * The server fingerprints the request body, so this answer means one
+             * thing only: an earlier attempt with this key *landed*, and the
+             * basket has changed since. That is exactly the case a cashier
+             * reaches by retrying a submit whose response was lost and then
+             * editing the cart — and until this branch existed it dead-ended on
+             * "try again", which would have failed identically for ever.
+             *
+             * So: find out what it bought, show that, and give what is on the
+             * screen now an identity of its own.
+             */
+            if (caught.is(ErrorType.idempotencyKeyReused)) {
+              clearSaleInFlight()
+              void resolveSpentKey(saleKey)
+              return
+            }
+
+            /*
              * The manager's grant expired while the queue moved.
              *
              * It lives five minutes, and this is the first code path slow enough
@@ -367,6 +479,9 @@ export function RegisterPage() {
              * plainly, with the way out, rather than as a bare "forbidden".
              */
             if (caught.is(ErrorType.overrideRequired)) {
+              // Refused before anything was written, so there is nothing to
+              // recover later and the record would only confuse the next load.
+              clearSaleInFlight()
               override.clear()
               toast.show('That approval has expired.', {
                 tone: 'error',
@@ -376,6 +491,7 @@ export function RegisterPage() {
             }
 
             if (caught.is(ErrorType.shiftClosed)) {
+              clearSaleInFlight()
               toast.show('The drawer was closed.', {
                 tone: 'error',
                 detail: 'Nothing was charged. Open a drawer and take the payment again.',
@@ -386,19 +502,36 @@ export function RegisterPage() {
             if (caught.is(ErrorType.underTender)) {
               // Should be unreachable behind the disabled button. Surfaced
               // rather than swallowed, because if it happens the button is lying.
+              clearSaleInFlight()
               toast.show('That does not cover the total.', { tone: 'error' })
               return
             }
           }
 
-          // Including the one this milestone is really about: a transport
-          // failure. The cart, the tenders and the key are all still here, so
-          // pressing Complete again is a retry rather than a second sale.
+          /*
+           * Including the one this milestone is really about: a transport
+           * failure. The cart, the tenders and the key are all still here, so
+           * pressing Complete again is a retry rather than a second sale.
+           *
+           * **The in-flight record is deliberately kept.** This is the branch
+           * where the till does not know whether the server wrote the sale, and
+           * that record is the only thing that can answer it after a reload.
+           */
           toast.showError(caught, 'Could not complete the sale. Try again.')
         },
       },
     )
-  }, [cart, completeSale, dispatch, override, shift.data, shift.registerId, tenders, toast])
+  }, [
+    cart,
+    completeSale,
+    dispatch,
+    override,
+    resolveSpentKey,
+    shift.data,
+    shift.registerId,
+    tenders,
+    toast,
+  ])
 
   const onKey = useCallback(
     (event: KeyboardEvent) => {
@@ -540,6 +673,10 @@ export function RegisterPage() {
         </Button>
       </header>
 
+      {recovery.status === 'unreachable' ? (
+        <UnresolvedPaymentBanner onRetry={retryRecovery} />
+      ) : null}
+
       {unknownCode !== null ? (
         <UnknownCodeBanner
           code={unknownCode}
@@ -591,7 +728,7 @@ export function RegisterPage() {
                 <SaleCompletePanel
                   sale={completed.sale}
                   currency={currency}
-                  replayed={completed.replayed}
+                  provenance={completed.provenance}
                 />
               ) : null}
 
@@ -682,6 +819,38 @@ function ShiftLine({
       Drawer open · float {formatMoney(shift.data.openingFloat, currency)}
       {parseServerDecimal(shift.data.openingFloat) === 0 ? ' (empty)' : ''}
     </span>
+  )
+}
+
+/**
+ * A payment this till cannot account for.
+ *
+ * The third answer, and the honest one: a sale was in flight when the page went
+ * away, and the server cannot be reached to find out whether it was written.
+ * **Saying "it failed" would be a guess that costs the customer a second
+ * payment**, and saying "it succeeded" would lose one. So the till says what it
+ * knows, tells the cashier not to re-ring it, and keeps the record so the
+ * question can be put again the moment the connection is back.
+ *
+ * In the page and not dismissible by accident, for the same reason the unknown
+ * code banner is in the page: a dialog here blocks the queue.
+ */
+function UnresolvedPaymentBanner({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      data-testid="unresolved-payment"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2.5"
+    >
+      <p className="flex-1 text-sm text-foreground">
+        <span className="font-medium">A payment was interrupted.</span> This till cannot reach the
+        server to check whether it went through.{' '}
+        <span className="font-medium">Do not ring it up again</span> until this is resolved.
+      </p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Check again
+      </Button>
+    </div>
   )
 }
 

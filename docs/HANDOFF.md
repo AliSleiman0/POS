@@ -1,10 +1,10 @@
 # Session Handoff
 
-**Written:** 2026-08-05 · **Branch:** `phase-5/cash-payment` · **Phase 5.4 done — start 5.5**
+**Written:** 2026-08-06 · **Branch:** `phase-5/reload-recovery` · **Phase 5 is done — start 6.1**
 
-> A cart becomes a sale. Tender entry, quick cash, split tender, change due off the server's own
-> figure, and **exactly one sale however many times Complete is pressed.**
-> **871 .NET · 138 Vitest · 31 Playwright**, all green locally.
+> A reload no longer costs a basket, and a reload *during a payment* no longer risks charging the
+> customer twice. The till asks the server what its key bought instead of guessing.
+> **877 .NET · 159 Vitest · 35 Playwright**, all green locally.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions
 > belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
@@ -13,121 +13,117 @@
 
 ## Before anything else
 
-**Nothing is committed.** The branch is `phase-5/cash-payment`, off `fb69129`. No migration and no
-API change this time, so the client-drift job has nothing to catch.
+**Nothing is committed.** The branch is `phase-5/reload-recovery`, off `0c97db1` (the 5.4 merge).
+There is **one API change** this time — a new endpoint — so `pnpm generate:api` has been run and
+`src/api/schema.d.ts` is part of the diff. The client-drift CI job finally has something to check.
 
-**Your dev tenant now has cash rounding.** This session ran
-`dotnet run --project tools/Pos.Seed -- --cash-rounding 0.05`, which is a **new option** and the
-only one that changes an existing tenant. Set it back to `0` if you want the old behaviour.
+**No migration.** The lookup rides an index that already existed
+(`ux_sale_tenant_client_transaction_id`).
+
+**PR #13 was merged** with `gh pr merge 13 --merge` — no `--admin` needed, so branch protection was
+never gating on the starved jobs. See the CI note below.
 
 ## Read first
 
-1. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) — §5.4 records two
-   defects found by driving it, and §5.5 says what is left of it.
-2. [`DECISIONS.md`](../DECISIONS.md) → the sale-GUID entry. Where the key lives is load-bearing for
-   5.5 and is not an arbitrary choice.
+1. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) → §5.5, which records
+   four decisions and the 5.4 hole this milestone closed.
+2. [`DECISIONS.md`](../DECISIONS.md) → the two new Phase 5.5 entries. The first says why recovery is
+   a **read** and not a re-POST, and that reasoning is load-bearing: it is the difference between a
+   safe page load and one that charges people.
 
 ## What landed
 
-**The tender pad** (`TenderPanel.tsx`) replaces the total in the right-hand column rather than
-covering the screen, so the cart stays visible — the moment a customer says "actually, take that
-off" is while they are reaching for their wallet.
+**`GET /sales/by-client-transaction/{id}`** — the whole backend half. Reuses `ReadAsync`, so a
+recovered sale arrives with its lines, tenders and `changeGiven` and the completion panel renders
+straight from it. A key that reached the server but bought nothing (a refused under-tender still
+writes an idempotency record) is a 404, because the question is about the sale.
 
-- Quick cash: Exact, the next whole unit, then the notes above the total. Integer minor units
-  throughout (`tender.ts`), and none of it decides what anyone pays: it suggests what a person
-  might hand over.
-- Split tender: several amounts with a running balance, sent as one `tenders` array.
-- `SaleCompletePanel.tsx` shows change due at `text-6xl` — the **server's** `changeGiven`, not the
-  provisional figure the pad was showing while the cashier counted.
+**The cart is persisted on every change** (`features/register/storage.ts`, wired in `CartProvider`
+by lazy `useReducer` init). Versioned, structurally validated on read, and every call wrapped —
+malformed storage must not stop a till from opening, because reloading is the only remedy anyone on
+a shop floor has.
 
-**The idempotency key lifecycle, pulled forward from 5.5.** `cart.saleKey` is minted by a
-`beginSale` action when tendering starts, is idempotent so backing out and returning is still one
-sale, and dies with `clear`. `unwrapWithResponse` in `api/client.ts` finally gives `wasReplayed()`
-a caller, so a retry says "already recorded" instead of "recorded".
+**Recovery has three outcomes, not two** (`useSaleRecovery.ts`). Taken → the completion panel with
+`provenance: 'recovered'`. Not taken → the tender pad restored with its amounts. **Unreachable → a
+banner saying so and telling the cashier not to re-ring it**, with the record kept so the question
+can be asked again.
 
-**`--cash-rounding` on the seeder**, because there is no `PUT /settings` and without it the
-rounding line was unreachable from a browser.
+**The 5.4 dead end is closed.** `IdempotencyFilter` fingerprints the request *body*, so the same key
+with an edited basket is `409 idempotency-key-reused` — not a replay. The till now looks up what the
+key bought, names that sale, dismisses the tender pad and gives the basket a fresh identity
+(`restartSale`). It previously said "try again", which would have failed identically for ever.
 
 ## Things that will bite you
 
 New this session:
 
-1. **An emptied cart inherited the last customer's total, and had since 5.1.** `useQuote` keeps the
-   previous answer on screen so a scan does not blank the biggest number on the till; the cost is
-   that a cart with nothing in it shows the price of the cart before it. Before 5.4 it took a cart
-   void to notice — a completed sale makes it happen every time, and it put "€14.15" directly under
-   the change due for an empty basket. `RegisterPage` now passes
-   `quote={isEmpty(cart) ? undefined : quote.data}`. An e2e assertion pins it.
-2. **`fullyParallel: true`, so counting rows in a shared tenant races.** The cash-payment describe
-   is `mode: 'serial'` for exactly this reason — it is the only block in the suite that *writes
-   sales*, and "exactly one sale" is a claim you can only make by counting. Everything above it can
-   stay parallel.
-3. **A double click is not a test of double-submit safety.** The button disables itself while a
-   request is in flight, so a double click proves the courtesy and says nothing about the
-   mechanism. The real test lets the first request reach the server (`route.fetch()`) and then
-   aborts the response, so the till sees a failure the server never had. Falsified: mint the key
-   inside `useCompleteSale` and it goes red.
-4. **`GET /stock/movements` does not exist** — it is `GET /stock/{productId}/movements`, and the
-   list is oldest-first, so `items[0]` is the seeded `Receive`. The stock test compares on-hand
-   before and after instead, which is the actual claim anyway.
-5. **Playwright's `webServer` will not start if a dev API is already on :5013.** Kill
-   `Pos.Api` before `pnpm test:e2e`, or the run dies with "already used".
-6. **The Chrome extension's screenshot API broke mid-session** with a CDP
-   `params.clip.scale` deserialisation error and did not recover across resize or re-navigation.
-   Fell back to a scripted headless Chromium, which is what Phase 5.1 did for the same reason.
-   Do not sink time into it — write the script. `resize_window` has also never worked in either
-   session; a Playwright `newContext({ viewport })` is how tablet width finally got checked.
-7. **CI could not get runners for two of the four jobs.** On PR #13, `e2e (Playwright)` and
-   `API contract (client drift)` recorded `cancelled` with **zero steps** after exactly 15 minutes
-   queued — three times, including an explicit re-run. `backend (.NET)` and `frontend (web)` got
-   machines and passed on the same commit. That is a capacity or billing cap, not a code failure,
-   and a run whose jobs are cancelled reports `conclusion: failure` at the run level — so check
-   the *jobs* before believing the run. If it is still happening, look at
-   github.com/settings/billing first.
+1. **`ServerDecimal` is `number | string`, and a validator that forgets it fails silently.** The
+   first version of `storage.ts` required a string for `unitPrice`, so every persisted cart was
+   rejected on read — and a rejected cart is indistinguishable from an empty till, so the feature
+   would have looked like it worked and done nothing. Caught only because the round-trip test
+   asserted the line came back. **Any structural validator against these types needs the same
+   care.**
+2. **A re-POST is not a safe way to ask a question.** It is safe when the sale landed and it
+   *creates the sale* when it did not. This is written up in `DECISIONS.md` because it is the kind
+   of shortcut that looks obviously fine.
+3. **`resolveSpentKey` deliberately dismisses the tender pad.** Money has already changed hands for
+   a different basket, so this is a stop-and-check, not a press-again. An e2e test asserts the pad
+   is gone — if you "fix" that, read the test's comment first.
+4. **One Playwright flake seen, once.** `register › …sees the server price it` expected `€2.40` and
+   read `€1.20` in a full-suite run; it passed 3/3 alone and on every subsequent full run. The
+   mechanism is `useQuote`'s `placeholderData`, which keeps the previous total on screen — so a
+   slow quote under parallel load shows a stale figure for longer than the 5s expect. **Not
+   diagnosed further, and not fixed.** If it recurs, that is where to look.
+5. **A leftover `dotnet run` locks the build.** `dotnet build` failed with MSB3027 on
+   `Pos.Data.dll` held by a `Pos.Api` process from the previous session. `Get-Process Pos.Api |
+   Stop-Process -Force`.
 
-Carried forward and still true: the 5.3 list (modal stand-down for the scanner, the grant beside
-the cart not in it, the union rule in `authorize()`, `cartSignature` completeness, `form_input` not
-reaching React), the 5.1/5.2 list, and the Phase 4 backlog at `de7183c`.
+Carried forward and still true: the 5.4 list (the emptied-cart stale total, serial mode for the
+sale-counting block, `GET /stock/{productId}/movements` not `/stock/movements`, Playwright's
+`webServer` refusing a held :5013, the Chrome extension's broken screenshot API), the 5.3 list, and
+the Phase 4 backlog at `de7183c`.
 
 ## Verified, and not
 
-**Verified in a real browser** (headless Chromium at 1280×900, screenshots reviewed): a two-item
-cart tendered by split payment with the balance counting to zero; change due €25.00 against €39.15
-taken on €14.15; the cart clearing to a **€0.00** total; and a `--cash-rounding 0.05` tenant showing
-a €0.17 line priced to €0.15 with "Includes −€0.02 cash rounding" spelled out.
+**Falsified deliberately, restored** — three separate mechanisms, each confirmed red:
 
-**Tablet width, finally** — 834×1112 with `hasTouch`, which had been open since 5.1. The layout
-stacks (cart, tender pad, grid), `document.scrollWidth === clientWidth` so nothing overflows
-sideways, and the tender pad and completion panel both read correctly at that width. The 5.3
-adjustment strip sits under the selected line as intended.
+- the in-flight record write removed → the reload test comes back to an ordinary empty till;
+- the reused-key branch removed → the edited-basket test never sees the recovered panel;
+- `CartProvider`'s lazy init removed → the basket does not survive a remount.
 
-**Verified end to end** by 7 new Playwright specs: exact cash, server-computed change, split
-tender, **a lost response not charging twice**, the stock decrement, a cashier's manager-approved
-discount going all the way to a sale, and backing out of the tender step keeping the same sale.
+(5.4's own falsification — minting the key inside the mutation — still stands from that milestone.)
 
-**Falsified deliberately, restored:** minting the key inside the mutation — the retry then creates
-a second sale and the replay banner never appears.
+**Verified end to end** by 4 new Playwright specs: a reload keeping the basket, a reload after the
+payment landed, a reload after it never arrived, and editing the basket after a lost response. Plus
+6 Vitest cases for the recovery hook, including the unreachable branch asserting that **neither**
+callback fires.
 
 **Not verified:**
 
-- **The beep, still.** Outstanding since 5.2 and now three sessions old. Headless has no audio
-  device. It needs a person with speakers on, and the completion path adds a second place it fires.
-- **A grant expiring mid-sale.** The five-minute window is handled (`override-required` on submit
-  clears the grant and asks for the PIN again) and the branch has never run: it needs a cashier to
-  be slow on purpose. The .NET side has an expiry test.
+- **The beep. Still.** Outstanding since 5.2, now four sessions. Headless has no audio device. It
+  needs a person with speakers on, and there are two places it fires.
+- **The unreachable banner in a real browser.** Its logic is covered by Vitest, but nobody has seen
+  it rendered. Devtools offline on `/register` with a marker in `sessionStorage` would do it.
 - **Nobody who has worked a till has used any of it.** Unchanged, and still the real bar.
+
+## CI
+
+Actions was not creating runs at all for a while yesterday — a push produced no run whatsoever, and
+before that `e2e` and `API contract` recorded `cancelled` with zero steps after 15 minutes queued
+while the other two jobs passed on the same commit. **Check `gh run list` before assuming this
+branch's CI means anything**, and remember that a run whose jobs were cancelled reports
+`conclusion: failure` at the *run* level. github.com/settings/billing is the first place to look.
 
 ## Outstanding / deferred
 
-- **5.5 is what is left of double-submit safety** — persisting the in-flight sale to
-  `sessionStorage` so a *reload* recovers. `CartProvider` is where it goes, the cart already
-  carries the GUID, and the grant is deliberately outside the cart so it will not be serialised.
-- **No receipt action** — 6.1 builds the payload; the completion panel says so.
-- **The tender pad has no "clear all" for a mis-keyed split** — each row has an ×, which is enough
+- **The receipt action** — `GET /sales/{id}/receipt` is documented and unbuilt. It is the one Phase
+  5 exit criterion deliberately left undone, and 6.1 is where it gets built; the completion panel
+  says so rather than stubbing it.
+- **The tender pad has no "clear all"** for a mis-keyed split — each row has an ×, which is enough
   for two entries and would not be for six.
-- Everything else from the 5.3 list stands: no percentage discounts, no audit of a refused
-  override until 7.2, `LineAdjustDialog` labelling its field with the currency *code*, and the
-  unidentified GitGuardian finding on PR #12.
+- Everything else from the 5.3 list stands: no percentage discounts, no audit of a refused override
+  until 7.2, `LineAdjustDialog` labelling its field with the currency *code*, and the unidentified
+  GitGuardian finding on PR #12 (it has not recurred — #13 passed that check).
 
 ## Still genuinely open
 

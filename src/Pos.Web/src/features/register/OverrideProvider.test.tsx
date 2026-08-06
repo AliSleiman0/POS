@@ -159,17 +159,26 @@ describe('OverrideProvider', () => {
     expect(granted).toBe(FAKE_GRANT)
 
     /*
-     * The assertion this file exists for.
+     * The assertion this file exists for, and it is no longer hypothetical.
      *
-     * The grant sits next to a cart that 5.5 will persist to sessionStorage. If
-     * it ever moves into the cart reducer, or somebody adds a convenience
-     * "remember the authorisation" line, this goes red — and the failure names
-     * the real problem, which is a live credential written to a shared tablet's
-     * disk.
+     * The grant sits next to a cart that **is** persisted to sessionStorage on
+     * every change, so this test now runs against a provider that genuinely
+     * writes. Before 5.5 it could have passed with nothing writing at all; the
+     * control below is what says it did not.
+     *
+     * If the grant ever moves into the cart reducer, or somebody adds a
+     * convenience "remember the authorisation" line, this goes red — and the
+     * failure names the real problem, which is a live credential written to a
+     * shared tablet's disk.
      */
     const stored = [...Object.values(sessionStorage), ...Object.values(localStorage)].join(' ')
 
     expect(stored).not.toContain(FAKE_GRANT)
+
+    // The control. "Nothing was written" and "the credential was not written"
+    // are different claims, and only the second one is worth anything — so prove
+    // the cart reached storage in the same breath.
+    expect(stored).toContain('p-water')
   })
 
   it('changes nothing when the manager declines', async () => {

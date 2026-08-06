@@ -111,6 +111,7 @@ export type CartAction =
   | { type: 'setPriceOverride'; key: string; unitPrice: number | null }
   | { type: 'setCartDiscount'; amount: number | null }
   | { type: 'beginSale' }
+  | { type: 'restartSale' }
   | { type: 'clearFlash' }
   | { type: 'clear' }
 
@@ -288,6 +289,19 @@ export function cartReducer(state: Cart, action: CartAction): Cart {
        * twice. `clear` is the only thing that ends a sale's identity.
        */
       return state.saleKey === null ? { ...state, saleKey: crypto.randomUUID() } : state
+
+    case 'restartSale':
+      /*
+       * The one place minting unconditionally is correct, and it is narrow.
+       *
+       * The server fingerprints the request body, so a key that has already
+       * bought something refuses a *different* basket under the same key
+       * (`idempotency-key-reused`). That answer is itself the evidence: the
+       * earlier attempt landed, so this cart is genuinely new work and needs an
+       * identity of its own. Used only on that branch — anywhere else it would
+       * be `beginSale` with the safety filed off.
+       */
+      return { ...state, saleKey: crypto.randomUUID() }
 
     case 'clearFlash':
       return state.flashedKey === null ? state : { ...state, flashedKey: null }

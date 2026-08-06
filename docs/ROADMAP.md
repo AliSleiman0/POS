@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 5 in progress — 5.1 to 5.4 done. 871 .NET + 138 Vitest + 31 Playwright green |
-| **Next up** | Phase 5.5, what is left of double-submit safety: persisting the in-flight sale to `sessionStorage` so a **reload** mid-submit recovers. The key lifecycle itself landed in 5.4; `CartProvider` is where the persistence goes, and the cart already carries the GUID so it is one serialisation rather than two. |
+| **Current phase** | **Phase 5 complete** — 5.1 to 5.6 done. 877 .NET + 159 Vitest + 35 Playwright green |
+| **Next up** | Phase 6.1, receipts. It is where `GET /sales/{id}/receipt` gets built, which unblocks the one Phase 5 exit criterion deliberately left undone — the receipt action on the completion panel, which currently says so rather than stubbing it. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS |
-| **Last updated** | 2026-08-05 |
+| **Last updated** | 2026-08-06 |
 
 ## Phase overview
 
@@ -25,7 +25,7 @@
 | 2 | [Catalog & inventory](phases/PHASE-2-catalog-inventory.md) | Products, barcodes, categories, stock ledger | ✅ Done |
 | 3 | [Checkout & sales (cash)](phases/PHASE-3-checkout-sales.md) | Money, pricing engine, tender, idempotency, shifts | ✅ Done |
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ✅ Done |
-| 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | 🔨 5.1–5.2 done |
+| 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ✅ Done |
 | 6 | [Receipts & reporting](phases/PHASE-6-receipts-reporting.md) | Receipt render/print, Z-report, sale history | ⬜ Not started |
 | 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log | ⬜ Not started |
 | 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ⬜ Not started |
@@ -102,8 +102,8 @@ The screen that decides whether the product is usable. Detail: [phases/PHASE-5-w
 - [x] **5.2 Scan input** — global keystroke capture that stands down for focused fields, told from human typing by a **budget over the whole burst** rather than a per-gap threshold: one stalled frame used to split a code and look up its tail. Double-fire suppressed within 300ms of the previous scan starting. Unknown code is an in-page banner; feedback is a WebAudio beep plus a line flash, mutable.
 - [x] **5.3 Cart interactions** — line and cart discount, price override, and a **manager override**: `POST /auth/override` exchanges a manager's PIN at the enrolled till for a single-use grant that `POST /sales` consumes inside the sale's transaction. The cashier's session is untouched, so the sale stays theirs while `SaleLine.OverriddenBy` names the manager. The quote enforces the same policies without spending the grant, so the till can never display a total the sale would refuse.
 - [x] **5.4 Cash payment** — the tender pad replaces the total in the right-hand column so the cart stays visible; quick cash, split tender with a running balance, and change due at `text-6xl` from the server's `changeGiven`. **The idempotency key lifecycle came forward from 5.5**: minted when tendering begins, reused on every attempt, and a replay is shown to the cashier — pinned by an e2e test that lets the first request commit and drops its response. A receipt action is deferred to 6.1, which is where the payload it would print gets built.
-- [ ] **5.5 Double-submit safety** — reuses the 3.5 idempotency key; a disabled button is not the mechanism.
-- [ ] **5.6 Tests** — Playwright: scan → cart → tender → sale recorded → stock decremented.
+- [x] **5.5 Double-submit safety** — the cart is persisted to `sessionStorage` on every change, so a reload keeps the basket *and* the sale's GUID. A reload mid-payment is resolved by **asking** the server what the key bought (`GET /sales/by-client-transaction/{id}`, new), never by re-POSTing to find out — re-submitting takes the money in exactly the case that must not be charged. Three answers, not two: taken, not taken, and *cannot be determined*, which gets a banner telling the cashier not to re-ring it. Also closes a 5.4 dead end: the same key with an edited basket is `409 idempotency-key-reused`, and the till now names the sale that was already paid for instead of saying "try again" for ever.
+- [x] **5.6 Tests** — Vitest and Playwright, green locally and in CI. "Reprint the receipt" is the one clause not met: `GET /sales/{id}/receipt` is unbuilt, so it is deferred to 6.1 along with the rest of the receipt work.
 
 ## Phase 6 — Receipts & reporting
 

@@ -281,6 +281,34 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
   test lets the first request reach the server and throws its response away, which is the failure
   the key exists for.
 
+- **A till that lost the answer to a sale asks the server what happened; it does not re-submit to
+  find out** (Phase 5.5). `GET /sales/by-client-transaction/{id}` exists for exactly one caller: a
+  register that reloaded during `POST /sales` and comes back holding the GUID it sent and nothing
+  else.
+
+  Re-POSTing would answer the same question, and idempotency would make it safe *in the case where
+  the sale landed*. It is the other case that rules it out: if the request never arrived, the retry
+  **creates the sale** — a charge nobody authorised, on a page load, with the customer possibly
+  already gone. A page load is not a person pressing Complete, and the difference is the whole
+  reason for the endpoint.
+
+  There are **three** answers, and the third is the one that needed designing. Taken, not taken,
+  and *cannot be determined* — the server is unreachable. That last one gets a banner of its own
+  telling the cashier not to ring it up again, and keeps the in-flight record so the question can
+  be put again later. Collapsing it into "it failed" charges the customer twice; collapsing it into
+  "it succeeded" gives the goods away. Neither guess is better than saying so.
+
+- **Persisting the cart is not the same feature as recovering a payment, and it was cheaper to do
+  both** (Phase 5.5). The exit criterion needed only the in-flight sale in `sessionStorage`; what
+  ships writes the whole cart on every change. An accidental F5 twenty items into a shop otherwise
+  costs a minute of a queue's time, and the sale's GUID rides along for free because it already
+  lives in the cart.
+
+  Signing out clears it; a session expiring does not. An expiry is the same person still serving
+  the same customer — `RequireAuth` renders over the tree rather than unmounting it, deliberately,
+  since Phase 4.2 — whereas signing out at a shared till means the next person, and handing them
+  the last one's basket is how the wrong items get sold.
+
 - **`override-not-permitted` reveals that somebody is not a manager, and that is the better
   trade.** `GET /employees/pin-eligible` deliberately withholds roles so a list readable from a
   counter does not become the shop's org chart, and this `403` weakens that. It only does so for

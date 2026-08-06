@@ -7,6 +7,7 @@ import { IfPolicy } from '@/auth/guards'
 import { CartProvider } from '@/features/register/CartProvider'
 import { OverrideProvider } from '@/features/register/OverrideProvider'
 import { useCurrentShift } from '@/features/register/queries'
+import { clearCart } from '@/features/register/storage'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 
@@ -20,8 +21,10 @@ import { cn } from '@/lib/utils'
  * cart inside the register screen would be thrown away by both.
  *
  * `OverrideProvider` sits inside it and holds any manager authorisation for the
- * same cart. Beside the cart rather than in it, so that 5.5's `sessionStorage`
- * persistence cannot write a live credential to disk as a side effect.
+ * same cart. Beside the cart rather than in it, so that the cart's
+ * `sessionStorage` persistence cannot write a live credential to disk as a side
+ * effect — which it now genuinely would, since the cart is persisted on every
+ * change.
  */
 export function AppLayout() {
   const { user, tenant, logout } = useAuth()
@@ -62,6 +65,12 @@ export function AppLayout() {
                 variant="outline"
                 size="sm"
                 onClick={() => {
+                  // The basket does not follow a sign-out. It survives a route
+                  // change and a session expiring — both are the same person
+                  // still serving the same customer — but signing out at a
+                  // shared till means the next person, and handing them the
+                  // last one's cart is how the wrong items get sold.
+                  clearCart()
                   void logout()
                 }}
               >

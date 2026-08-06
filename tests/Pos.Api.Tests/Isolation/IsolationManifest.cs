@@ -318,6 +318,21 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "GET api/v1/sales/by-client-transaction/{clientTransactionId:guid}",
+            Kind = IsolationKind.ById,
+
+            // A Cashier, like the two rows above: this is what a till calls after a reload to
+            // find out whether the payment it was taking went through.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // VictimPath rather than VictimId — the route parameter is a client transaction
+            // id, not a sale id, and handing it the wrong Guid would 404 for the right reason
+            // by accident and prove nothing.
+            VictimPath = w => [w.A.Sales.FirstClientTransactionId.ToString()],
+        },
+        new()
+        {
             Key = "GET api/v1/stock/discrepancies",
             Kind = IsolationKind.Collection,
             Paginated = true,

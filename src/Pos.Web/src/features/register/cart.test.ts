@@ -429,4 +429,25 @@ describe('the sale key', () => {
 
     expect(cartSignature(cartReducer(cart, { type: 'beginSale' }))).toBe(cartSignature(cart))
   })
+
+  it('is replaced by restartSale, which is the opposite of beginSale and only correct once', () => {
+    /*
+     * The contrast is the point, which is why this sits next to the idempotence
+     * test above rather than in a file of its own.
+     *
+     * `beginSale` refuses to mint over an existing key because a retry must
+     * carry the same one. `restartSale` mints unconditionally, and is reached
+     * only from `idempotency-key-reused` — the server saying the key already
+     * bought a *different* basket. At that point the old identity belongs to a
+     * sale that exists and what is on screen is genuinely new work.
+     */
+    const begun = cartReducer(withWater(), { type: 'beginSale' })
+    const restarted = cartReducer(begun, { type: 'restartSale' })
+
+    expect(restarted.saleKey).not.toBeNull()
+    expect(restarted.saleKey).not.toBe(begun.saleKey)
+
+    // And it does not touch the basket: the cashier is looking at those lines.
+    expect(restarted.lines).toEqual(begun.lines)
+  })
 })
