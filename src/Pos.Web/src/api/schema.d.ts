@@ -1791,6 +1791,11 @@ export interface paths {
           registerId?: string
           shiftId?: string
           cashierId?: string
+          from?: string
+          to?: string
+          type?: string
+          status?: string
+          saleNumber?: number | string
         }
         header?: never
         path?: never
@@ -2465,6 +2470,16 @@ export interface components {
         [key: string]: string[]
       }
     }
+    LinkedRefundResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: int64 */
+      saleNumber: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: date-time */
+      completedAt: string
+    }
     LoginRequest: {
       tenantSlug: string
       email: string
@@ -2844,6 +2859,25 @@ export interface components {
       completedAt: null | string
       lines: components['schemas']['SaleLineResponse'][]
       tenders: components['schemas']['SaleTenderResponse'][]
+      /** Format: uuid */
+      registerId?: null | string
+      /** Format: uuid */
+      shiftId?: null | string
+      /** Format: uuid */
+      cashierId?: null | string
+      cashierName?: null | string
+      registerName?: null | string
+      taxMode?: null | components['schemas']['TaxMode']
+      /** Format: uuid */
+      originalSaleId?: null | string
+      /** Format: int64 */
+      originalSaleNumber?: null | number | string
+      /** Format: date-time */
+      voidedAt?: null | string
+      voidedByName?: null | string
+      voidReason?: null | string
+      refundReason?: null | string
+      refunds?: null | components['schemas']['LinkedRefundResponse'][]
     }
     /** @enum {unknown} */
     SaleStatus: 'Completed' | 'Voided'
@@ -2860,6 +2894,10 @@ export interface components {
       shiftId: string
       /** Format: uuid */
       cashierId: string
+      cashierName: string
+      registerName: string
+      /** Format: uuid */
+      originalSaleId: null | string
       /** Format: double */
       total: number | string
       /** Format: date-time */
@@ -2973,7 +3011,7 @@ export interface components {
       updatedAt: null | string
     }
     /** @enum {unknown} */
-    TaxMode: 'Inclusive' | 'Exclusive'
+    TaxMode: 'Inclusive' | 'Exclusive' | null
     TenantSettings: {
       slug: string
       name: string

@@ -199,15 +199,23 @@ The endpoint that must not get this wrong.
 | Method | Route | Auth | Notes |
 |---|---|---|---|
 | POST 🔒 | `/sales` | `CanSell` | Create a completed sale |
-| GET | `/sales` | `CanSell` | `?registerId=&shiftId=&cashierId=`, paginated on `completedAt` |
-| GET | `/sales/{id}` | `CanSell` | Full detail with lines and tenders |
+| GET | `/sales` | `CanSell` | History. `?saleNumber=&from=&to=&type=&status=&registerId=&shiftId=&cashierId=`, paginated on `completedAt` **newest first** |
+| GET | `/sales/{id}` | `CanSell` | Full detail with lines, tenders and refund linkage both ways |
 | GET | `/sales/by-client-transaction/{id}` | `CanSell` | The sale a `clientTransactionId` produced, or `404` |
 | GET | `/sales/{id}/receipt` | `CanSell` | Render payload for print/reprint |
 | POST 🔒 | `/sales/{id}/void` | `CanVoidSale` | `{ reason }`. Status flag + compensating stock movements |
 | POST 🔒 | `/sales/{id}/refund` | `CanRefund` | Creates a **new** linked `Refund` sale |
 | POST | `/sales/quote` | `CanSell` | Price a cart without committing |
 
-`GET /sales` returns **every** sale regardless of type or status — voids and refunds included. A history that quietly hid them is how a manager fails to find the transaction they are looking for and concludes the system lost it. `?from=`/`?to=` are not implemented; date-range reporting is Phase 6.
+`GET /sales` returns **every** sale regardless of type or status — voids and refunds included. A history that quietly hid them is how a manager fails to find the transaction they are looking for and concludes the system lost it.
+
+- **Newest first**, unlike every other list in this API. A history whose first page is the shop's very first sales is unusable at a counter: the transaction anybody is looking for happened today. The stock ledger's oldest-first rule answers a different question — "why is this number wrong?" is read forwards.
+- **`?saleNumber=` is a lookup, not a filter.** It is the reference a customer reads off their receipt and the only search that happens at a counter, so an empty result means "no such sale" rather than "nothing matched".
+- **`?from=`/`?to=` are trading days** (`2026-08-07`), both ends inclusive, resolved through the tenant's zone and day-start offset exactly as `/reports/daily` resolves its `?date=`. UTC dates here would make the history and the report disagree by a few hours' sales.
+- **An unreadable `type`, `status` or date is `400` on that field**, never a silently dropped filter — a history quietly showing more than was asked for is a manager concluding the shop sold things it did not.
+- Filters **compose**; they are ANDed.
+
+`GET /sales/{id}` carries the refund link **in both directions**: a refund names its `originalSaleId`/`originalSaleNumber`, and an original lists the `refunds` written against it. The second is the one that is easy to leave out and the one that matters — without it a customer brings the same receipt back twice and the shop pays out twice. A **voided** refund drops off the original's list, because it reversed nothing.
 
 `POST /sales/quote` needs no register, shift, tenders or `Idempotency-Key`: it writes nothing, and a register showing a running total has not chosen a shift or taken money yet.
 

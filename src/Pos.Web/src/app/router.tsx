@@ -12,6 +12,8 @@ import { ProductListPage } from '@/features/catalog/ProductListPage'
 import { TaxClassesPage } from '@/features/catalog/TaxClassesPage'
 import { StockPage } from '@/features/catalog/StockPage'
 import { RegisterPage } from '@/features/register/RegisterPage'
+import { SaleDetailPage } from '@/features/sales/SaleDetailPage'
+import { SaleListPage } from '@/features/sales/SaleListPage'
 import { DailyReportPage } from '@/features/reports/DailyReportPage'
 import { ShiftReportPage } from '@/features/reports/ShiftReportPage'
 
@@ -64,6 +66,17 @@ export const router = createBrowserRouter([
               { path: 'products/:productId', element: <ProductDetailPage /> },
               { path: 'categories', element: <CategoriesPage /> },
               { path: 'tax-classes', element: <TaxClassesPage /> },
+            ],
+          },
+
+          {
+            // CanSell, matching the API: looking a sale up is something that
+            // happens at the counter with a customer holding a receipt.
+            path: 'sales',
+            element: <RequirePolicy policy="CanSell" />,
+            children: [
+              { index: true, element: <SaleListPage /> },
+              { path: ':saleId', element: <SaleDetailPage /> },
             ],
           },
 

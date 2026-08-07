@@ -89,11 +89,13 @@ Per shift and per business day:
 - Search by sale number — the reference a customer reads off their receipt, and therefore the only search that matters at a counter
 
 **Exit criteria**
-- [ ] Filters work and compose
-- [ ] Detail shows snapshots and refund linkage both ways
-- [ ] Refund initiation gated and audited
-- [ ] Search by sale number
-- [ ] Cursor pagination handles a large history without slowing down
+- [x] Filters work and compose — ANDed, with a test that uses two at once, which is the case a handler that reassigned its query instead of chaining would get wrong and one-filter-each would never catch
+- [x] Detail shows snapshots and refund linkage both ways — and a **voided** refund drops off the original's list, because it reversed nothing
+- [x] Refund initiation gated on `CanRefund`, in an in-page dialog, with the idempotency key minted when the dialog opens and reused on every attempt. Falsified: minting per render makes the two attempts carry different keys and the test goes red. *Audited* in the Phase 7.2 sense is still 7.2's — the reason and the actor are on the refund row, which is the whole trail until the audit log exists.
+- [x] Search by sale number, as the prominent control rather than one filter among six
+- [x] Cursor pagination handles a large history — a page-walk test sees every sale exactly once
+
+**Newest first**, unlike every other list in this API — added after looking at the screen, which opened on the shop's first ever sale. `CursorPaging` gained a per-endpoint direction rather than a global one, so the catalog still reads A to Z and the stock ledger still reads forwards. The keyset predicate flips with the ordering: two templates rather than a negation, because `NOT (a > b)` also admits the row the cursor is sitting on and the page would repeat itself for ever. Falsified — a predicate pointing the wrong way loses four of seven sales.
 
 ---
 

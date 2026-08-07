@@ -45,6 +45,7 @@ export function AppLayout() {
               <NavItem to="/">Overview</NavItem>
               <IfPolicy policy="CanSell">
                 <NavItem to="/register">Register</NavItem>
+                <NavItem to="/sales">Sales</NavItem>
               </IfPolicy>
               <IfPolicy policy="CanManageCatalog">
                 <NavItem to="/catalog">Catalog</NavItem>

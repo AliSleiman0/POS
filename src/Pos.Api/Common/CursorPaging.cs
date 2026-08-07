@@ -53,16 +53,29 @@ internal static class CursorPaging
     /// about the response type; the caller hands over an expression and gets a page of
     /// whatever it produces.
     /// </remarks>
+    /// <param name="descending">
+    /// Which way the total order runs. <b>Off by default</b>, so every list built before Phase
+    /// 6.4 keeps the order it had — a catalog reads A to Z and a stock ledger reads as the story
+    /// of what happened to a product, oldest first.
+    /// <para>
+    /// Sale history is the one that wants the other direction: the sale somebody is looking for
+    /// is almost always a recent one, and a history whose first page is the shop's very first
+    /// sales is unusable at a counter. Everything keyset paging promises holds either way — the
+    /// position still moves strictly in one direction and the <c>id</c> tiebreaker still makes
+    /// the order total.
+    /// </para>
+    /// </param>
     public static async Task<CursorPage<TResponse>> ToPageAsync<TEntity, TKey, TResponse>(
         this IQueryable<TEntity> source,
         Expression<Func<TEntity, TKey>> keySelector,
         Expression<Func<TEntity, TResponse>> projection,
         PageRequest<TKey> request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool descending = false)
         where TEntity : TenantEntity
         where TKey : notnull
     {
-        var rows = await PageQueryFor(source, keySelector, projection, request)
+        var rows = await PageQueryFor(source, keySelector, projection, request, descending)
             .ToListAsync(cancellationToken);
 
         var hasMore = rows.Count > request.Limit;
@@ -95,21 +108,26 @@ internal static class CursorPaging
         IQueryable<TEntity> source,
         Expression<Func<TEntity, TKey>> keySelector,
         Expression<Func<TEntity, TResponse>> projection,
-        PageRequest<TKey> request)
+        PageRequest<TKey> request,
+        bool descending = false)
         where TEntity : TenantEntity
         where TKey : notnull
     {
         if (request.After is { } after)
         {
-            source = source.Where(KeysetPredicate(keySelector, after));
+            source = source.Where(KeysetPredicate(keySelector, after, descending));
         }
+
+        // The ordering and the predicate have to agree, or a page is filtered one way and
+        // sorted the other and the walk never terminates. Both read `descending`.
+        var ordered = descending
+            ? source.OrderByDescending(keySelector).ThenByDescending(entity => entity.Id)
+            : source.OrderBy(keySelector).ThenBy(entity => entity.Id);
 
         // Limit + 1 is how hasMore is known without a COUNT(*) over the filtered set. The
         // extra row is fetched and discarded; a count would be a second pass over the whole
         // catalog on every page.
-        return source
-            .OrderBy(keySelector)
-            .ThenBy(entity => entity.Id)
+        return ordered
             .Select(PagedProjection(keySelector, projection))
             .Take(request.Limit + 1);
     }
@@ -145,7 +163,8 @@ internal static class CursorPaging
     }
 
     /// <summary>
-    /// <c>entity =&gt; (key(entity), entity.Id) &gt; (@key, @id)</c>, as a Postgres row value.
+    /// <c>entity =&gt; (key(entity), entity.Id) &gt; (@key, @id)</c>, as a Postgres row value —
+    /// or <c>&lt;</c> when the order runs the other way.
     /// </summary>
     /// <remarks>
     /// Built by rewriting a template the compiler emitted rather than by assembling
@@ -154,15 +173,23 @@ internal static class CursorPaging
     /// exactly the node Npgsql's row-value translator matches on, and <paramref name="after"/>
     /// is captured in a closure, so EF parameterises it instead of burning the values into
     /// the SQL as literals and defeating the plan cache.
+    /// <para>
+    /// Two templates rather than one with a negation: <c>NOT (a &gt; b)</c> also admits the row
+    /// the cursor is sitting on, so the page would repeat its own last row for ever.
+    /// </para>
     /// </remarks>
     private static Expression<Func<TEntity, bool>> KeysetPredicate<TEntity, TKey>(
         Expression<Func<TEntity, TKey>> keySelector,
-        PagePosition<TKey> after)
+        PagePosition<TKey> after,
+        bool descending)
         where TEntity : TenantEntity
         where TKey : notnull
     {
-        Expression<Func<TKey, Guid, bool>> template =
-            (key, id) => EF.Functions.GreaterThan(
+        Expression<Func<TKey, Guid, bool>> template = descending
+            ? (key, id) => EF.Functions.LessThan(
+                ValueTuple.Create(key, id),
+                ValueTuple.Create(after.Key, after.Id))
+            : (key, id) => EF.Functions.GreaterThan(
                 ValueTuple.Create(key, id),
                 ValueTuple.Create(after.Key, after.Id));
 
