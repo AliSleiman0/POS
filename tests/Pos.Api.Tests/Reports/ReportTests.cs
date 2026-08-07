@@ -218,6 +218,62 @@ public sealed class ReportTests(PosApiFactory factory)
     }
 
     [Fact]
+    public async Task Cash_rounding_shows_up_in_the_report_and_reconciles()
+    {
+        /*
+         * §6.3's last unchecked line: the rounding-adjustment total has to reconcile, because an
+         * unexplained one means the rule is being applied inconsistently somewhere.
+         *
+         * Every other test here runs a tenant with no rounding increment, so `rounding` was
+         * zero and the identity held trivially. A 5c shop is where it can actually fail — and
+         * the adjustment is recorded rather than absorbed precisely so the drawer is not over
+         * or short by an amount nothing explains.
+         */
+        var (client, tenant) = await factory.TradingTenantAsync(cashRoundingIncrement: 0.05m);
+
+        // Three baskets whose totals do not land on a 5c boundary: 1 × 1.20 @ 23% is 1.476,
+        // and the awkward cents are the point.
+        var first = await SellAsync(client, tenant, (tenant.Catalog.WaterProductId, 1m));
+        var second = await SellAsync(client, tenant, (tenant.Catalog.WaterProductId, 3m));
+        var third = await SellAsync(client, tenant, (tenant.Catalog.BagProductId, 7m));
+
+        var report = await ReportAsync(client, $"/api/v1/shifts/{tenant.ShiftId}/report");
+        var sales = report.GetProperty("sales");
+
+        // Non-zero, or this test is passing for the same trivial reason as the others.
+        var rounding = sales.GetProperty("rounding").GetDecimal();
+        Assert.NotEqual(0m, rounding);
+
+        // It is the sum of what the sales themselves recorded, not a figure the report invented.
+        Assert.Equal(
+            first.GetProperty("roundingAdjustment").GetDecimal()
+                + second.GetProperty("roundingAdjustment").GetDecimal()
+                + third.GetProperty("roundingAdjustment").GetDecimal(),
+            rounding);
+
+        // And the headline identity still closes with it in place.
+        Assert.Equal(
+            sales.GetProperty("total").GetDecimal(),
+            sales.GetProperty("net").GetDecimal() + sales.GetProperty("tax").GetDecimal() + rounding);
+
+        // The tax breakdown reconciles against the taxable base, which cash rounding does not
+        // touch — it moves the payable total, never the tax owed.
+        var breakdown = report.GetProperty("taxByRate").EnumerateArray().ToArray();
+
+        Assert.Equal(
+            sales.GetProperty("tax").GetDecimal(),
+            breakdown.Sum(part => part.GetProperty("tax").GetDecimal()));
+
+        // Every cash total is a multiple of 5c, which is the rule the adjustment exists to keep.
+        foreach (var sale in new[] { first, second, third })
+        {
+            var total = sale.GetProperty("total").GetDecimal();
+
+            Assert.Equal(0m, total % 0.05m);
+        }
+    }
+
+    [Fact]
     public async Task A_day_with_no_sales_is_zeroes_rather_than_an_error()
     {
         // A shop that opened and sold nothing still has to cash up against its float, and a

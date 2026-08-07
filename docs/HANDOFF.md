@@ -1,10 +1,9 @@
 # Session Handoff
 
-**Written:** 2026-08-06 · **Branch:** `phase-5/reload-recovery` · **Phase 5 is done — start 6.1**
+**Written:** 2026-08-07 · **Branch:** `phase-6/receipt-model` · **Phase 6 is done — start 7.1**
 
-> A reload no longer costs a basket, and a reload *during a payment* no longer risks charging the
-> customer twice. The till asks the server what its key bought instead of guessing.
-> **877 .NET · 159 Vitest · 35 Playwright**, all green locally.
+> A customer leaves with a receipt, and an owner can see what was sold and whether the drawer
+> balanced. **954 .NET · 181 Vitest · 48 Playwright**, all green locally.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions
 > belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
@@ -13,144 +12,132 @@
 
 ## Before anything else
 
-**Committed and pushed as `b8a8ade`; [PR #14](https://github.com/AliSleiman0/POS/pull/14) is open
-and unmerged.** Branch `phase-5/reload-recovery`, off `0c97db1` (the 5.4 merge). **Do not start 6.1
-on this branch** — either merge #14 first or branch from `main`.
+**Four commits on `phase-6/receipt-model`, off `1f3551a` (the Phase 5 merge). Nothing is pushed
+and no PR is open.** The branch name says 6.1 because that is where it started; it carries all
+four milestones. Push it, or split it, before starting 7.1.
 
-There is **one API change** this time — a new endpoint — so `pnpm generate:api` has been run and
-`src/api/schema.d.ts` is in the diff. The client-drift CI job finally has something to check, and it
-is one of the two jobs that could not get a runner. Worth seeing green rather than assumed.
+**There is one migration** — `20260807162021_ReceiptSettings`, four nullable columns on `tenant`.
+Additive, no destructive change, already applied to `pos_dev` and applied to `pos_e2e` by
+Playwright's own webServer command.
 
-**No migration.** The lookup rides an index that already existed
-(`ux_sale_tenant_client_transaction_id`).
-
-**PR #13 was merged** with `gh pr merge 13 --merge` — no `--admin` needed, so branch protection was
-never gating on the starved jobs. See the CI note below.
+**There are API changes in every milestone**, so `pnpm generate:api` has been run and
+`src/api/schema.d.ts` is committed. The CI client-drift job has something real to check.
 
 ## Read first
 
-1. [`docs/phases/PHASE-6-receipts-reporting.md`](phases/PHASE-6-receipts-reporting.md) → §6.1, which
-   is next and which owes Phase 5 a receipt action.
-2. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) → §5.5, which records
-   four decisions and the 5.4 hole this milestone closed.
-3. [`DECISIONS.md`](../DECISIONS.md) → the two new Phase 5.5 entries. The first says why recovery is
-   a **read** and not a re-POST, and that reasoning is load-bearing: it is the difference between a
-   safe page load and one that charges people.
-4. [`CLAUDE.md`](../CLAUDE.md) → invariants **6** and **11**, both amended this session. 6 now
-   covers the request-body fingerprint and the rule never to re-submit a write to find out whether
-   it worked; 11 is new and covers what the register persists and what it must never persist.
+1. [`DECISIONS.md`](../DECISIONS.md) → the three new **Phase 6.1** entries. Two are load-bearing:
+   why `InvariantGlobalization` is now off, and why reprints are marked by the client with the
+   limitation that leaves.
+2. [`docs/phases/PHASE-6-receipts-reporting.md`](phases/PHASE-6-receipts-reporting.md) → every
+   exit criterion is ticked with a note on *how*, including the three defects found on the way.
+3. [`docs/API.md`](API.md) → receipts, the two report routes, the `/sales` history contract, and
+   the two report routes that are **deferred** rather than missing.
 
 ## What landed
 
-**`GET /sales/by-client-transaction/{id}`** — the whole backend half. Reuses `ReadAsync`, so a
-recovered sale arrives with its lines, tenders and `changeGiven` and the completion panel renders
-straight from it. A key that reached the server but bought nothing (a refused under-tender still
-writes an idempotency record) is a 404, because the question is about the sale.
+**6.1 — the receipt model.** `Pos.Core/Receipts`, pure, plus `GET /sales/{id}/receipt`. Tax is
+broken down by rate with the residue placed deliberately so the parts sum to `TaxTotal` exactly.
+`Tenant` gained four nullable receipt columns.
 
-**The cart is persisted on every change** (`features/register/storage.ts`, wired in `CartProvider`
-by lazy `useReducer` init). Versioned, structurally validated on read, and every call wrapped —
-malformed storage must not stop a till from opening, because reloading is the only remedy anyone on
-a shop floor has.
+**6.2 — browser printing.** `features/sales/Receipt.tsx` renders the server's payload and decides
+nothing. The preview *is* the printed element — one render through a portal outside `#root`, so a
+preview cannot drift from the paper. 80mm roll, A4 fallback, reprints marked. The completion
+panel's receipt button — Phase 5's outstanding debt — is built.
 
-**Recovery has three outcomes, not two** (`useSaleRecovery.ts`). Taken → the completion panel with
-`provenance: 'recovered'`. Not taken → the tender pad restored with its amounts. **Unreachable → a
-banner saying so and telling the cashier not to re-ring it**, with the record kept so the question
-can be asked again.
+**6.3 — the Z-report.** `/shifts/{id}/report` and `/reports/daily`, same shape, one
+`ReportScope`, plus Owner-only `/reports/margins`. `BusinessDay` is pure and survives both clock
+changes. A closed shift's variance is **read**, never recomputed; an open one is computed live
+and labelled `isProvisional`. Screens for both, under a new `CanCloseShift` nav group.
 
-**The 5.4 dead end is closed.** `IdempotencyFilter` fingerprints the request *body*, so the same key
-with an edited basket is `409 idempotency-key-reused` — not a replay. The till now looks up what the
-key bought, names that sale, dismisses the tender pad and gives the basket a fresh identity
-(`restartSale`). It previously said "try again", which would have failed identically for ever.
+**6.4 — sale history.** List, detail and an in-page refund dialog. Filters compose, date bounds
+are trading days, and the refund link works **both ways**. The history pages newest first.
 
 ## Things that will bite you
 
 New this session:
 
-1. **`ServerDecimal` is `number | string`, and a validator that forgets it fails silently.** The
-   first version of `storage.ts` required a string for `unitPrice`, so every persisted cart was
-   rejected on read — and a rejected cart is indistinguishable from an empty till, so the feature
-   would have looked like it worked and done nothing. Caught only because the round-trip test
-   asserted the line came back. **Any structural validator against these types needs the same
-   care.**
-2. **A re-POST is not a safe way to ask a question.** It is safe when the sale landed and it
-   *creates the sale* when it did not. This is written up in `DECISIONS.md` because it is the kind
-   of shortcut that looks obviously fine.
-3. **`resolveSpentKey` deliberately dismisses the tender pad.** Money has already changed hands for
-   a different basket, so this is a stop-and-check, not a press-again. An e2e test asserts the pad
-   is gone — if you "fix" that, read the test's comment first.
-4. **One Playwright flake seen, once.** `register › …sees the server price it` expected `€2.40` and
-   read `€1.20` in a full-suite run; it passed 3/3 alone and on every subsequent full run. The
-   mechanism is `useQuote`'s `placeholderData`, which keeps the previous total on screen — so a
-   slow quote under parallel load shows a stale figure for longer than the 5s expect. **Not
-   diagnosed further, and not fixed.** If it recurs, that is where to look.
-5. **A leftover `dotnet run` locks the build.** `dotnet build` failed with MSB3027 on
-   `Pos.Data.dll` held by a `Pos.Api` process from the previous session. `Get-Process Pos.Api |
-   Stop-Process -Force`.
+1. **`InvariantGlobalization` was `true` from Phase 0 and is now `false`.** Under it Windows
+   cannot resolve an IANA time zone at all while Linux still can — so receipts and trading-day
+   reports would have passed on the runner and failed on every developer machine. Invariant 8 has
+   depended on ICU since it was written; the build was not honouring it. **If a build or a
+   container image changes, do not let this get set back.**
+2. **EF's `SqlQuery<T>` maps columns by *snake_case*, not by the alias you write.** With
+   `UseSnakeCaseNamingConvention` on, `AS "ChangeGiven"` fails with "the required column
+   'change_given' was not present" — while single-word aliases pass, because the lookup is
+   case-insensitive and only the underscore defeats it. Every alias in `ReportQueries` is
+   snake_case for that reason. It does map multi-column rows onto records, which is why the
+   reports are not raw ADO.NET.
+3. **The e2e database accumulates and that has now broken two things.** `pos_e2e` is seeded and
+   never dropped. `saleCount` read one page of 100 and saturated at the hundredth sale; the stock
+   screen's row fell off page one at the fiftieth product. **Any e2e assertion that counts, or
+   that expects a row on the first page, has a shelf life.**
+4. **Playwright now runs one worker locally as well as in CI.** Every spec trades in the same
+   shop through the same drawer. This also retires the 5.6 flake — it was parallel load.
+5. **Signing in twice without signing out does nothing.** `/login` sits outside the auth guard
+   and bounces an authenticated visitor to `/`, so the form is never used and the old identity
+   survives. It looks exactly like a session bug. `reports.spec.ts` has a `switchTo` helper.
+   (The app is fine: adopting a session refetches `/auth/me` before returning.)
+6. **A loaded machine fails this e2e suite.** Two runs went red on different specs with 1 GB of
+   16 GB free; both passed on a quiet machine. Check memory before believing a red e2e run.
 
-Carried forward and still true: the 5.4 list (the emptied-cart stale total, serial mode for the
-sale-counting block, `GET /stock/{productId}/movements` not `/stock/movements`, Playwright's
-`webServer` refusing a held :5013, the Chrome extension's broken screenshot API), the 5.3 list, and
-the Phase 4 backlog at `de7183c`.
+Carried forward and still true: a leftover `dotnet run` locks the build (`Get-Process Pos.Api |
+Stop-Process -Force`), Playwright's `webServer` refuses a held :5013, and the Phase 4 backlog.
 
 ## Verified, and not
 
-**Falsified deliberately, restored** — three separate mechanisms, each confirmed red:
+**Falsified deliberately, restored** — six mechanisms, each confirmed red:
 
-- the in-flight record write removed → the reload test comes back to an ordinary empty till;
-- the reused-key branch removed → the edited-basket test never sees the recovered panel;
-- `CartProvider`'s lazy init removed → the basket does not survive a remount.
+- the receipt's tax residue step removed → red on random basket 0 in both tax modes, **while
+  every hand-written example still passed**;
+- `BusinessDay.Of` reduced to "convert, subtract, take the date" → red on both clock changes;
+- the `/stock` search predicate removed → all three new search tests red;
+- the refund dialog's key minted per render → the two attempts carry different keys;
+- the descending keyset predicate left pointing forwards → the page walk loses four of seven;
+- `noBlockingDialogs` extended to `features/sales` → red on a planted `confirm()`.
 
-(5.4's own falsification — minting the key inside the mutation — still stands from that milestone.)
-
-**Verified end to end** by 4 new Playwright specs: a reload keeping the basket, a reload after the
-payment landed, a reload after it never arrived, and editing the basket after a lost response. Plus
-6 Vitest cases for the recovery hook, including the unreachable branch asserting that **neither**
-callback fires.
+**Looked at in a browser**, which is the only reason three defects were found: the 80mm roll
+stretching to the full page width, report table headings rendering as `NetTax` over two number
+columns, and the sales history opening on the shop's first ever sale.
 
 **Not verified:**
 
-- **The beep. Still.** Outstanding since 5.2, now four sessions. Headless has no audio device. It
-  needs a person with speakers on, and there are two places it fires.
-- **The unreachable banner in a real browser.** Its logic is covered by Vitest, but nobody has seen
-  it rendered. Devtools offline on `/register` with a marker in `sessionStorage` would do it.
+- **The beep. Still.** Outstanding since 5.2, now five sessions. Headless has no audio device.
+- **A real printer.** Print output is checked under Chromium's print emulation, which honours the
+  stylesheet but not a thermal printer's own margins. Nobody has put paper through one.
 - **Nobody who has worked a till has used any of it.** Unchanged, and still the real bar.
 
-## CI — recovered on its own, and PR #14 is fully green
+## Fixed on the way, outside Phase 6's scope
 
-**All four jobs pass on this branch**, including the two that had been starving:
+- **`GET /stock` ignored `?q=`.** The web client has sent it since Phase 4.3 and the handler never
+  declared the parameter, so the stock screen's search box has never filtered — it returned an
+  unfiltered first page, which looked right while the shop had fewer products than a page. Fixed
+  by sharing `/products`' predicate; three tests go red without it.
+- **A shift was scoped by the day it opened**, so an overnight drawer's takings appeared on
+  today's report with no float behind them and no shift to say the drawer was uncounted. It read
+  as fully reconciled.
 
-```
-backend (.NET) ✅   frontend (web) ✅   e2e (Playwright) ✅   API contract (client drift) ✅
-```
+## CI
 
-The drift job matters this time — this is the first branch since Phase 4 with an API change, so it
-had something real to check rather than passing vacuously.
+**Not yet run for this branch** — nothing is pushed. All four jobs were green on `main` at
+`1f3551a`. The drift job matters here: every milestone changed the API.
 
-**What the outage looked like, in case it returns.** It escalated in two stages. First `e2e` and
-`API contract` recorded `cancelled` with **zero steps** after exactly 15 minutes queued — three
-times, including an explicit re-run — while the other two got machines and passed on the same
-commit. Then it got worse: three consecutive triggers produced **no run at all** (a push, the merge
-of #13, and the first push of this branch). It cleared without intervention roughly twelve hours
-later. No billing change was made, so capacity is the likelier explanation after all, and the
-"Actions is disabled" reading was wrong.
-
-Two things worth keeping:
-
-- A run whose jobs were cancelled reports `conclusion: failure` at the **run** level. Inspect the
-  *jobs* before believing a red run — the first version of this diagnosis was "the code is broken".
-- Branch protection does **not** gate on these checks; #13 merged without `--admin`. A red or
-  absent CI will not stop a merge, so the discipline has to come from reading it.
+A run whose jobs were *cancelled* reports `conclusion: failure` at the **run** level — inspect the
+jobs before believing a red run. Branch protection does not gate on these checks.
 
 ## Outstanding / deferred
 
-- **The receipt action** — `GET /sales/{id}/receipt` is documented and unbuilt. It is the one Phase
-  5 exit criterion deliberately left undone, and 6.1 is where it gets built; the completion panel
-  says so rather than stubbing it.
-- **The tender pad has no "clear all"** for a mis-keyed split — each row has an ×, which is enough
-  for two entries and would not be for six.
-- Everything else from the 5.3 list stands: no percentage discounts, no audit of a refused override
-  until 7.2, `LineAdjustDialog` labelling its field with the currency *code*, and the unidentified
-  GitGuardian finding on PR #12 (it has not recurred — #13 passed that check).
+- **Server-side reprint counting.** Reprints are client-marked today. Closing it properly needs an
+  append-only receipt-issue record, which is Phase 7.2's audit-log shape — the reasoning and the
+  limitation are both in `DECISIONS.md`. **A client that chose not to send the mark would print an
+  unmarked duplicate**, and §6.2 is right that this is a refund-fraud vector.
+- **Margin cost is not snapshotted.** `SaleLine` records no cost price, so `/reports/margins`
+  restates itself when a supplier's price changes. Fixing it is a schema change and a decision,
+  not a query. Stated in `docs/API.md` rather than hidden.
+- **`/reports/sales-summary` and `/reports/top-products`** are documented and deferred; nothing
+  has a screen for them.
+- **No `PUT /settings`.** The four receipt fields and the cash-rounding increment are reachable
+  only through `tools/Pos.Seed` (`--receipt-footer`, `--cash-rounding`).
+- **The tender pad still has no "clear all"**, and everything else from the 5.3 list stands.
 
 ## Still genuinely open
 

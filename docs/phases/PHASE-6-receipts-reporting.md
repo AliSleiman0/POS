@@ -64,6 +64,7 @@ Per shift and per business day:
 **Exit criteria**
 - [x] Z-report totals reconcile with the underlying sales, verified by a test that builds sales through the real endpoints and asserts the report against them. **This is what found the report's version of the receipt bug** — the header is rounded once per sale and the lines are stored at four places, so the tax rows came to €2.8980 against a headline of €2.9000. `Reconciliation.RoundToSum` is now shared by both.
 - [x] Cash variance arithmetic correct across sales, refunds, drops and payouts — one test with all four, then a close, asserting the report switches from a live figure to the stored one
+- [x] Rounding adjustments reconcile — under a tenant with a **5c increment**, which is the only configuration where this can fail. Every other report test runs with no increment, so `rounding` was zero and the identity held trivially; the test asserts it is non-zero before asserting it adds up.
 - [x] Business-day boundary correct — the 23:30/01:30 test under a 04:00 day start, plus both clock changes; falsified against the naive "convert, subtract, take the date", which is right on 363 days a year
 - [x] Voids/refunds listed with actor and reason
 - [x] Margins Owner-only, with a negative test (a Manager gets 403)
