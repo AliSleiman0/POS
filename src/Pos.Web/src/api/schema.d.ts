@@ -1307,6 +1307,7 @@ export interface paths {
         query?: {
           cursor?: string
           limit?: number | string
+          q?: string
           belowReorderPoint?: boolean
           activeOnly?: boolean
         }
@@ -1729,6 +1730,51 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/shifts/{id}/report': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The Z-report for one shift */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ReportResponse']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/sales': {
     parameters: {
       query?: never
@@ -2125,6 +2171,101 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/reports/daily': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The trading day's report */
+    get: {
+      parameters: {
+        query?: {
+          date?: string
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ReportResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/reports/margins': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Margin by product over a window. Owner only */
+    get: {
+      parameters: {
+        query?: {
+          from?: string
+          to?: string
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['MarginReportResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
@@ -2332,6 +2473,30 @@ export interface components {
     LogoutRequest: {
       refreshToken: string
     }
+    MarginLineResponse: {
+      /** Format: uuid */
+      productId: string
+      description: string
+      /** Format: double */
+      quantity: number | string
+      /** Format: double */
+      revenue: number | string
+      /** Format: double */
+      cost: null | number | string
+      /** Format: double */
+      margin: null | number | string
+    }
+    MarginReportResponse: {
+      scope: components['schemas']['ReportScopeResponse']
+      currencyCode: string
+      /** Format: double */
+      revenue: number | string
+      /** Format: double */
+      cost: null | number | string
+      /** Format: double */
+      margin: null | number | string
+      lines: components['schemas']['MarginLineResponse'][]
+    }
     MeResponse: {
       user: components['schemas']['AuthUser']
       tenant: components['schemas']['TenantSettings']
@@ -2496,6 +2661,131 @@ export interface components {
       isEnrolled: boolean
       /** Format: date-time */
       lastSeenAt: null | string
+    }
+    ReportCashMovementResponse: {
+      /** Format: uuid */
+      id: string
+      type: string
+      /** Format: double */
+      amount: number | string
+      reason: string
+      performedBy: string
+      /** Format: date-time */
+      occurredAt: string
+    }
+    ReportCashResponse: {
+      /** Format: double */
+      openingFloat: number | string
+      /** Format: double */
+      cashSales: number | string
+      /** Format: double */
+      cashRefunds: number | string
+      /** Format: double */
+      cashMovements: number | string
+      /** Format: double */
+      expected: number | string
+      /** Format: double */
+      counted: null | number | string
+      /** Format: double */
+      variance: null | number | string
+      isProvisional: boolean
+      movements: components['schemas']['ReportCashMovementResponse'][]
+    }
+    ReportResponse: {
+      scope: components['schemas']['ReportScopeResponse']
+      currencyCode: string
+      sales: components['schemas']['ReportSalesResponse']
+      taxByRate: components['schemas']['ReportTaxLineResponse'][]
+      tenders: components['schemas']['ReportTenderResponse'][]
+      cash: components['schemas']['ReportCashResponse']
+      shifts: components['schemas']['ReportShiftResponse'][]
+      voids: components['schemas']['ReportReversalResponse'][]
+      refunds: components['schemas']['ReportReversalResponse'][]
+    }
+    ReportReversalResponse: {
+      /** Format: uuid */
+      saleId: string
+      /** Format: int64 */
+      saleNumber: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: date-time */
+      at: string
+      actor: string
+      reason: null | string
+      /** Format: int64 */
+      originalSaleNumber: null | number | string
+    }
+    ReportSalesResponse: {
+      /** Format: int32 */
+      transactionCount: number | string
+      /** Format: double */
+      gross: number | string
+      /** Format: double */
+      discounts: number | string
+      /** Format: double */
+      net: number | string
+      /** Format: double */
+      tax: number | string
+      /** Format: double */
+      rounding: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: double */
+      refundTotal: number | string
+      /** Format: int32 */
+      refundCount: number | string
+      /** Format: double */
+      averageBasket: number | string
+    }
+    ReportScopeResponse: {
+      kind: string
+      /** Format: uuid */
+      shiftId: null | string
+      /** Format: date */
+      date: null | string
+      /** Format: date-time */
+      fromUtc: string
+      /** Format: date-time */
+      toUtc: string
+      timeZoneId: string
+    }
+    ReportShiftResponse: {
+      /** Format: uuid */
+      id: string
+      registerName: string
+      status: string
+      openedBy: string
+      /** Format: date-time */
+      openedAt: string
+      closedBy: null | string
+      /** Format: date-time */
+      closedAt: null | string
+      /** Format: double */
+      openingFloat: number | string
+      /** Format: double */
+      expectedCash: null | number | string
+      /** Format: double */
+      countedCash: null | number | string
+      /** Format: double */
+      variance: null | number | string
+    }
+    ReportTaxLineResponse: {
+      /** Format: double */
+      rate: number | string
+      /** Format: double */
+      net: number | string
+      /** Format: double */
+      tax: number | string
+    }
+    ReportTenderResponse: {
+      method: string
+      /** Format: double */
+      amount: number | string
+      /** Format: double */
+      changeGiven: number | string
+      /** Format: double */
+      net: number | string
     }
     SaleLineRequest: {
       /** Format: uuid */

@@ -93,10 +93,9 @@ public static class ReceiptBuilder
     /// receipt whose tax lines do not add up to its tax total is the one a tax authority asks
     /// about.
     /// <para>
-    /// So the residue is <i>defined</i> as what is left over and placed on the largest group,
-    /// exactly as <see cref="Pricing.DiscountApportionment"/> does for a cart discount. Both
-    /// solve the same problem: independently rounded parts do not sum to the whole, and the
-    /// only fix is to make one part absorb the difference deliberately.
+    /// So the residue is <i>defined</i> as what is left over and placed on the largest group by
+    /// <see cref="Reconciliation.RoundToSum"/> — shared with the Z-report, which has the same
+    /// problem one level up and had it for the same reason.
     /// </para>
     /// </remarks>
     private static IReadOnlyList<ReceiptTaxLine> BreakDownTax(IReadOnlyList<SaleLine> lines, Sale sale)
@@ -126,66 +125,21 @@ public static class ReceiptBuilder
             return [];
         }
 
-        var taxes = Reconcile([.. groups.Select(g => g.Tax)], sale.TaxTotal);
+        var taxes = Reconciliation.RoundToSum([.. groups.Select(g => g.Tax)], sale.TaxTotal);
 
         // The net side has to reconcile too, and against a derived figure. The engine defines
         // Subtotal so that Total == Subtotal − DiscountTotal + TaxTotal + RoundingAdjustment
         // holds on the stored values, which makes (Subtotal − DiscountTotal) the taxable amount
         // the whole sale was taxed on. The groups add up to that, or the receipt shows a
         // taxable base that disagrees with its own total.
-        var nets = Reconcile([.. groups.Select(g => g.Net)], sale.Subtotal - sale.DiscountTotal);
+        var nets = Reconciliation.RoundToSum(
+            [.. groups.Select(g => g.Net)], sale.Subtotal - sale.DiscountTotal);
 
         return [.. groups.Select((group, index) => new ReceiptTaxLine(
             group.Rate,
             nets[index],
             taxes[index],
             nets[index] + taxes[index]))];
-    }
-
-    /// <summary>
-    /// Rounds each part to the payable scale and puts the leftover on the largest of them, so
-    /// that the parts sum to <paramref name="target"/> identically.
-    /// </summary>
-    /// <remarks>
-    /// Largest <b>by magnitude</b>, not by value: a refund's amounts are all negative, and
-    /// picking the greatest of those would put the residue on the smallest group. Ties go to
-    /// the lowest index, which the caller has ordered by ascending rate — so two identical
-    /// sales always produce an identical receipt, which matters because a customer may be
-    /// holding both.
-    /// <para>
-    /// The residue is at most half a unit in the last place per group, so on any real basket it
-    /// is a fraction of a cent.
-    /// </para>
-    /// </remarks>
-    private static Money[] Reconcile(IReadOnlyList<Money> parts, Money target)
-    {
-        var rounded = new Money[parts.Count];
-
-        for (var index = 0; index < parts.Count; index++)
-        {
-            rounded[index] = parts[index].Round();
-        }
-
-        var residue = target - Money.Sum(rounded);
-
-        if (residue.IsZero)
-        {
-            return rounded;
-        }
-
-        var largest = 0;
-
-        for (var index = 1; index < parts.Count; index++)
-        {
-            if (parts[index].Abs() > parts[largest].Abs())
-            {
-                largest = index;
-            }
-        }
-
-        rounded[largest] += residue;
-
-        return rounded;
     }
 
     /// <summary>

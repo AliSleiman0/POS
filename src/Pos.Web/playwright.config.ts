@@ -23,7 +23,28 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env['CI'],
   retries: process.env['CI'] ? 2 : 0,
-  workers: process.env['CI'] ? 1 : undefined,
+
+  /*
+   * One worker, locally as well as in CI.
+   *
+   * Every spec here trades in the **same seeded shop, through the same drawer**.
+   * There is one tenant, one enrolled register and one open shift, so the specs
+   * that assert "exactly one sale was written" are counting a ledger that a
+   * parallel worker may be adding to — and the quote-staleness assertions read a
+   * total that another worker's load makes arrive late.
+   *
+   * CI has always been serial. Locally this was `undefined` — half the cores —
+   * so a full local run went red on four tests that pass individually, including
+   * the €2.40-read-as-€1.20 flake docs/HANDOFF.md has carried since 5.6. Two
+   * different meanings for "the suite passes" is worse than a slower run:
+   * ROADMAP.md's rule is green locally *and* in CI, and that is only one claim
+   * if both run the same way.
+   *
+   * The fix is not "make the specs tolerate neighbours" — a count that tolerates
+   * neighbours cannot assert what these need to assert. It is a shop with one
+   * till; the tests model that.
+   */
+  workers: 1,
   reporter: process.env['CI'] ? 'blob' : 'html',
 
   // Seeds the tenant, staff and register. Runs *after* the servers are up —

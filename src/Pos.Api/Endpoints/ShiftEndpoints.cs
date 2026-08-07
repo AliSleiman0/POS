@@ -10,6 +10,7 @@ using Pos.Core.Exceptions;
 using Pos.Core.Monetary;
 using Pos.Core.Shifts;
 using Pos.Data;
+using Pos.Data.Reporting;
 using Pos.Data.Shifts;
 
 namespace Pos.Api.Endpoints;
@@ -86,6 +87,12 @@ public static class ShiftEndpoints
             .RequireAuthorization(Policies.CanSell)
             .RequireIdempotency()
             .WithSummary("Record cash into or out of the drawer");
+
+        // CanCloseShift, matching the close itself: the Z-report is the reconciliation, and
+        // whoever may read what the drawer should contain is whoever may reconcile it.
+        shifts.MapGet("/{id:guid}/report", ReportAsync)
+            .RequireAuthorization(Policies.CanCloseShift)
+            .WithSummary("The Z-report for one shift");
 
         return builder;
     }
@@ -385,6 +392,75 @@ public static class ShiftEndpoints
         });
 
         return TypedResults.Created($"/api/v1/shifts/{id}", response!);
+    }
+
+    /// <summary>
+    /// The Z-report for one shift.
+    /// </summary>
+    /// <remarks>
+    /// <b>A closed shift's reconciliation is read, not recomputed.</b> <c>Shift.ExpectedCash</c>
+    /// says why: recomputing it later would silently change a historical variance whenever
+    /// anything about the underlying sales changed, which is the same class of mistake as
+    /// joining a report to the current product price. A shift still open has no stored figure,
+    /// so one is computed live and the response says <c>isProvisional</c> — two numbers with two
+    /// meanings, never collapsed into one.
+    /// <para>
+    /// It shares every query with <c>GET /reports/daily</c> through one <see cref="ReportScope"/>.
+    /// A shift's report and the day's report that contains it have to add up to the same money,
+    /// and two sets of hand-written predicates is how that stops being true.
+    /// </para>
+    /// </remarks>
+    private static async Task<Results<Ok<ReportResponse>, NotFound>> ReportAsync(
+        Guid id,
+        AppDbContext db,
+        ReportQueries reports,
+        CancellationToken cancellationToken)
+    {
+        // Scoped by the query filter, so another tenant's shift is a 404 indistinguishable from
+        // one that does not exist.
+        if (!await db.Shifts.AnyAsync(s => s.Id == id, cancellationToken))
+        {
+            return TypedResults.NotFound();
+        }
+
+        var shop = await ReportEndpoints.ShopAsync(db, cancellationToken);
+
+        var scope = ReportScope.ForShift(id);
+        var data = await reports.ReadAsync(scope, cancellationToken);
+
+        // The shift's own window, for the header — a Z-report is read next to the drawer it
+        // reconciles, and "which shift is this?" is the first question.
+        var shift = data.Shifts.Count == 0 ? null : data.Shifts[0];
+
+        return TypedResults.Ok(ReportResponse.From(
+            new ReportScopeResponse(
+                "Shift",
+                id,
+                null,
+                shift?.OpenedAt ?? DateTimeOffset.MinValue,
+                shift?.ClosedAt ?? DateTimeOffset.MaxValue,
+                shop.TimeZoneId),
+            shop.CurrencyCode,
+            data,
+            LiveExpectedCash(data)));
+    }
+
+    /// <summary>Expected cash for a drawer nobody has counted yet. See the daily report's.</summary>
+    private static Money LiveExpectedCash(ReportData data)
+    {
+        var open = data.Shifts.Where(s => s.Status == nameof(ShiftStatus.Open)).ToArray();
+
+        if (open.Length == 0)
+        {
+            return Money.Zero;
+        }
+
+        var cash = data.Tenders.FirstOrDefault(t => t.Method == nameof(TenderMethod.Cash));
+
+        return ShiftArithmetic.ExpectedCash(
+            (Money)open.Sum(s => s.OpeningFloat),
+            (Money)(cash is null ? 0m : cash.Amount - cash.ChangeGiven),
+            (Money)data.CashMovements.Sum(m => m.Amount));
     }
 
     internal static ShiftResponse Project(Shift shift) => new(

@@ -52,6 +52,11 @@ export function AppLayout() {
                 <NavItem to="/catalog/tax-classes">Tax</NavItem>
                 <NavItem to="/stock">Stock</NavItem>
               </IfPolicy>
+              {/* A third group: reconciliation is CanCloseShift, which a Cashier
+                  does not hold and a Manager does. */}
+              <IfPolicy policy="CanCloseShift">
+                <NavItem to="/reports/daily">Reports</NavItem>
+              </IfPolicy>
             </nav>
 
             <ShiftIndicator />

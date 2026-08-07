@@ -62,12 +62,21 @@ Per shift and per business day:
 `GET /reports/margins` is Owner-only (`CanViewMargins`).
 
 **Exit criteria**
-- [ ] Z-report totals reconcile with the underlying sales, verified by a test that builds sales and asserts the report
-- [ ] Cash variance arithmetic correct across sales, refunds, drops and payouts
-- [ ] Business-day boundary correct — test a 23:30 and a 01:30 sale under a tenant with a 04:00 day start
-- [ ] Voids/refunds listed with actor and reason
-- [ ] Margins Owner-only, with a negative test
-- [ ] A day with no sales renders as zeroes, not an error
+- [x] Z-report totals reconcile with the underlying sales, verified by a test that builds sales through the real endpoints and asserts the report against them. **This is what found the report's version of the receipt bug** — the header is rounded once per sale and the lines are stored at four places, so the tax rows came to €2.8980 against a headline of €2.9000. `Reconciliation.RoundToSum` is now shared by both.
+- [x] Cash variance arithmetic correct across sales, refunds, drops and payouts — one test with all four, then a close, asserting the report switches from a live figure to the stored one
+- [x] Business-day boundary correct — the 23:30/01:30 test under a 04:00 day start, plus both clock changes; falsified against the naive "convert, subtract, take the date", which is right on 363 days a year
+- [x] Voids/refunds listed with actor and reason
+- [x] Margins Owner-only, with a negative test (a Manager gets 403)
+- [x] A day with no sales renders as zeroes, not an error
+
+**Screens** (not in the original §6.3, added because the phase's goal is a person reading the number): `features/reports/` with a daily report and a per-shift Z-report, plus a nav entry under `CanCloseShift` — the first thing in the app gated on that policy.
+
+**Scope**: `/reports/sales-summary` and `/reports/top-products` are documented in `docs/API.md` and **deferred**, marked there rather than silently skipped. `/reports/daily` covers the single-day case and nothing has a screen for the other two.
+
+**Two things found on the way out, both real and both fixed here:**
+
+1. **A shift was scoped by the day it opened.** An overnight drawer's sales fall in today's window, so the report showed a day of cash takings with no opening float behind them and no shift to say the drawer was uncounted — it read as fully reconciled. Scoped by overlap now.
+2. **`GET /stock` ignored `?q=`.** The web client has sent it since 4.3; the handler never declared the parameter. The stock screen's search box has never filtered — it returned an unfiltered first page, which looked right for as long as the shop had fewer products than a page. Fixed by sharing `/products`' predicate, with three tests that go red without it. Not Phase 6's work, but it was blocking Phase 6's suite and shipping a control that does nothing.
 
 ## 6.4 Sale history
 

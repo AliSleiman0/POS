@@ -165,12 +165,14 @@ Editing a `TaxClass.Rate` affects **future** sales only. Historical sale lines h
 
 | Method | Route | Auth | Notes |
 |---|---|---|---|
-| GET | `/stock` | `CanSell` | On-hand list, paginated; `?belowReorderPoint=`, `?activeOnly=` |
+| GET | `/stock` | `CanSell` | On-hand list, paginated; `?q=`, `?belowReorderPoint=`, `?activeOnly=` |
 | GET | `/stock/{productId}/movements` | `CanManageCatalog` | The ledger, paginated oldest-first — answers "why is this wrong?" |
 | POST 🔒 | `/stock/adjustments` | `CanManageCatalog` | `{ productId, type, quantity, reason }`. `reason` is **required** |
 | GET | `/stock/discrepancies` | `CanManageCatalog` | **Not built.** Deferred to Phase 3.6 — see below |
 
 **`GET /stock` lists products, not stock rows.** Each item's `id` is the *product's* id, because the stock row is an implementation detail that may not exist yet while every endpoint a client calls next takes a product id. A product that has never been counted therefore reads `onHand: 0` rather than being absent — the uncounted products are the ones most worth seeing. Products with `trackStock: false` are excluded entirely: a carrier bag with an on-hand of zero is noise in a report whose job is to show what needs ordering. `?activeOnly=` defaults to `true`, as elsewhere.
+
+**`?q=` on `/stock` matches exactly what it matches on `/products`** — one shared predicate, so the stock screen cannot fail to find something the catalog screen locates. It was **added in Phase 6.3, having been missing since 2.4**: the web client had sent the parameter since 4.3 and the handler never declared it, so ASP.NET dropped it and the stock screen's search box returned an unfiltered first page. It looked correct for as long as the shop had fewer products than a page.
 
 **The ledger pages oldest-first.** That is the order the index holds, the order a rebuild replays, and the order a person reads a history in. It is also the only list keyed on a timestamp rather than a name, so its cursor round-trips a `DateTimeOffset`; a page-walk test asserts every row is seen exactly once.
 
@@ -281,7 +283,7 @@ A **refund** creates a new `Sale` with `type: Refund`, its own sale number, `ori
 | POST 🔒 | `/shifts` | `CanSell` | `{ registerId, openingFloat }`. `409` if one is already open |
 | POST 🔒 | `/shifts/{id}/close` | `CanCloseShift` | `{ countedCash }` → returns expected, counted, variance |
 | POST 🔒 | `/shifts/{id}/cash-movements` | `CanSell` | Drop / payout / petty cash / correction, `reason` required |
-| GET | `/shifts/{id}/report` | `CanCloseShift` | The Z-report. **Not built** — Phase 6.3 |
+| GET | `/shifts/{id}/report` | `CanCloseShift` | The Z-report. Same shape as `/reports/daily` |
 
 A sale requires an open shift. Without one there is nothing to reconcile the drawer against, and "we're £12 short" becomes unanswerable.
 
@@ -301,11 +303,20 @@ A sale requires an open shift. Without one there is nothing to reconcile the dra
 | Method | Route | Auth | Notes |
 |---|---|---|---|
 | GET | `/reports/daily?date=` | `CanCloseShift` | Business day resolved via tenant timezone + day-start offset |
-| GET | `/reports/sales-summary?from=&to=` | `CanCloseShift` | Gross, discounts, tax, net, tender breakdown |
-| GET | `/reports/top-products?from=&to=` | `CanCloseShift` | |
 | GET | `/reports/margins?from=&to=` | `CanViewMargins` | Owner only |
+| GET | `/reports/sales-summary?from=&to=` | `CanCloseShift` | **Not built — deferred.** `/reports/daily` covers the single-day case |
+| GET | `/reports/top-products?from=&to=` | `CanCloseShift` | **Not built — deferred.** No screen needs it yet |
 
-`?date=2026-07-30` means *that tenant's* trading day, not UTC midnight. A shift closing at 02:00 belongs to the previous trading day.
+`?date=2026-07-30` means *that tenant's* trading day, not UTC midnight. A shift closing at 02:00 belongs to the previous trading day. Omitting it means the tenant's **current** trading day, which at 01:00 in a shop with a 04:00 day start is yesterday — the one the person asking is still working.
+
+`/reports/daily` and `/shifts/{id}/report` return **the same shape** and run the same aggregations over one scope object, because a shift's report and the day containing it have to add up to the same money.
+
+- **A day with no sales is a `200` of zeroes**, never a `404`. A shop that opened and sold nothing still has to cash up against its float.
+- **Tax by rate sums to the headline tax exactly.** The header was rounded once per sale and the lines are stored at four places, so the parts are reconciled deliberately — the same construction a receipt uses.
+- **Voided sales are excluded, not netted off**, and are listed individually with the actor and the reason. A void hands the cash straight back, so netting would claim takings that did not happen.
+- **A closed shift's `expected`, `counted` and `variance` are read from the row the close stored, never recomputed.** While any shift in scope is still open the response says `isProvisional`, and `counted`/`variance` are `null` — nobody has counted the drawer. The two must not be collapsed: a provisional figure read as a reconciled one is a variance nobody measured.
+- Shifts are in scope if they **overlap** the window, not if they opened in it. A drawer opened last night and still open is trading today, and scoping on the open date gave a day of cash takings with no float behind them.
+- `/reports/margins` revenue is snapshotted; **cost is not**. `SaleLine` records no cost price, so margins are computed against `Product.CostPrice` as it stands and restate themselves when a supplier's price changes. A product with no cost price reports `null` rather than zero, and one unknown cost makes the total `null` — a missing cost shown as free reads as a 100% margin.
 
 ## Employees — `/employees`
 

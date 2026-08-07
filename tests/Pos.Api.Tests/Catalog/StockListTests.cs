@@ -38,6 +38,67 @@ public sealed class StockListTests(PosApiFactory factory)
         Assert.False(row.GetProperty("belowReorderPoint").GetBoolean());
     }
 
+    /// <remarks>
+    /// <b>This is the test that was missing, and its absence shipped a search box that did
+    /// nothing.</b> The web client has sent <c>?q=</c> to this endpoint since Phase 4.3; the
+    /// handler never declared the parameter, so ASP.NET dropped it and the stock screen returned
+    /// an unfiltered first page. It looked correct for as long as the shop had fewer products
+    /// than a page — which the e2e database did, until it did not, and the catalog spec went red
+    /// on a row that was simply on page two.
+    /// <para>
+    /// Every existing test here reads <c>?limit=200</c> and picks its product out of the body,
+    /// so not one of them ever passed a term. A list endpoint's filters need a test each.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_search_term_filters_the_list_rather_than_being_ignored()
+    {
+        var shop = await NewShopAsync();
+
+        var wanted = await shop.CreateProductAsync("Marmalade Thick Cut");
+        await shop.CreateProductAsync("Blackcurrant Jam");
+
+        var found = await shop.SearchAsync("marmalade");
+
+        Assert.Contains(found, id => id == wanted);
+        Assert.Single(found);
+    }
+
+    [Fact]
+    public async Task A_wildcard_in_the_term_matches_nothing_rather_than_everything()
+    {
+        // The escaping, asserted from the outside. Unescaped, "%" is a pattern that matches
+        // every product in the shop — so a search box would look like it worked while doing the
+        // opposite of filtering.
+        var shop = await NewShopAsync();
+
+        await shop.CreateProductAsync("Marmalade Thick Cut");
+
+        Assert.Empty(await shop.SearchAsync("%"));
+    }
+
+    [Fact]
+    public async Task A_stock_search_finds_the_same_product_the_catalog_search_does()
+    {
+        // One definition of "matches", shared. Two would drift, and a shopkeeper would learn
+        // that the stock screen cannot find something the catalog screen can.
+        var shop = await NewShopAsync();
+
+        var productId = await shop.CreateProductAsync("Marmalade Thick Cut");
+
+        var catalog = await shop.Client.GetAsync(
+            new Uri("/api/v1/products?q=thick", UriKind.Relative));
+
+        var listed = (await catalog.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("items")
+            .EnumerateArray()
+            .Select(item => item.GetProperty("id").GetGuid())
+            .ToArray();
+
+        Assert.Equal(listed, await shop.SearchAsync("thick"));
+        Assert.Contains(productId, listed);
+    }
+
     [Fact]
     public async Task On_hand_follows_the_adjustments()
     {
@@ -229,6 +290,20 @@ public sealed class StockListTests(PosApiFactory factory)
                     .EnumerateArray()
                     .Select(item => item.GetProperty("id").GetGuid())
             ];
+        }
+
+        /// <summary>The product ids <c>?q=</c> returns, in order.</summary>
+        public async Task<Guid[]> SearchAsync(string term)
+        {
+            var response = await Client.GetAsync(
+                new Uri($"{Route}?q={Uri.EscapeDataString(term)}", UriKind.Relative));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            return [.. (await response.Content.ReadFromJsonAsync<JsonElement>())
+                .GetProperty("items")
+                .EnumerateArray()
+                .Select(item => item.GetProperty("id").GetGuid())];
         }
 
         public async Task<JsonElement> FindAsync(Guid productId)

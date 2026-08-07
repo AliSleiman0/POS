@@ -12,6 +12,8 @@ import { ProductListPage } from '@/features/catalog/ProductListPage'
 import { TaxClassesPage } from '@/features/catalog/TaxClassesPage'
 import { StockPage } from '@/features/catalog/StockPage'
 import { RegisterPage } from '@/features/register/RegisterPage'
+import { DailyReportPage } from '@/features/reports/DailyReportPage'
+import { ShiftReportPage } from '@/features/reports/ShiftReportPage'
 
 /**
  * Routes.
@@ -62,6 +64,19 @@ export const router = createBrowserRouter([
               { path: 'products/:productId', element: <ProductDetailPage /> },
               { path: 'categories', element: <CategoriesPage /> },
               { path: 'tax-classes', element: <TaxClassesPage /> },
+            ],
+          },
+
+          {
+            // CanCloseShift, matching the API. The expected cash in a drawer is
+            // not a cashier's business — knowing it is knowing what a till would
+            // tolerate.
+            path: 'reports',
+            element: <RequirePolicy policy="CanCloseShift" />,
+            children: [
+              { index: true, element: <Navigate to="/reports/daily" replace /> },
+              { path: 'daily', element: <DailyReportPage /> },
+              { path: 'shift/:shiftId', element: <ShiftReportPage /> },
             ],
           },
 
