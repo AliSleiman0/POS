@@ -117,7 +117,10 @@ test.describe('sale history', () => {
 
     await page.goto('/sales')
     await page.getByLabel('Sale number').fill(number)
-    await page.getByTestId('sale-row').getByRole('link', { name: `#${number}` }).click()
+    await page
+      .getByTestId('sale-row')
+      .getByRole('link', { name: `#${number}` })
+      .click()
 
     await page.getByRole('button', { name: 'Reprint receipt' }).click()
 

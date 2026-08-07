@@ -57,9 +57,7 @@ export function useReceipt(saleId: string | null) {
   return useQuery({
     queryKey: salesKeys.receipt(saleId ?? ''),
     queryFn: () =>
-      unwrap(
-        api.GET('/api/v1/sales/{id}/receipt', { params: { path: { id: saleId ?? '' } } }),
-      ),
+      unwrap(api.GET('/api/v1/sales/{id}/receipt', { params: { path: { id: saleId ?? '' } } })),
     enabled: saleId !== null,
     staleTime: Infinity,
   })

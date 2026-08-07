@@ -84,9 +84,12 @@ export function RefundDialog({
         </div>
 
         {shift.data === undefined ? (
-          <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
-            <span className="font-medium">No drawer is open.</span> Open one on the register
-            before refunding — the cash has to come from somewhere.
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+          >
+            <span className="font-medium">No drawer is open.</span> Open one on the register before
+            refunding — the cash has to come from somewhere.
           </p>
         ) : null}
 
@@ -125,8 +128,7 @@ export function RefundDialog({
                 <div className="min-w-0">
                   <p className="truncate text-sm text-foreground">{line.description}</p>
                   <p className="text-xs text-muted-foreground">
-                    {formatQuantity(line.quantity)} sold ·{' '}
-                    {formatMoney(line.lineTotal, currency)}
+                    {formatQuantity(line.quantity)} sold · {formatMoney(line.lineTotal, currency)}
                   </p>
                 </div>
                 <Input
@@ -144,8 +146,8 @@ export function RefundDialog({
               </div>
             ))}
             <p className="text-xs text-muted-foreground">
-              Leave a line blank to keep it. The server re-prices the return from what was
-              charged at the time, never from today&rsquo;s price.
+              Leave a line blank to keep it. The server re-prices the return from what was charged
+              at the time, never from today&rsquo;s price.
             </p>
           </div>
         ) : null}

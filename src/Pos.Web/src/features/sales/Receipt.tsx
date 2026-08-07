@@ -218,15 +218,7 @@ function Meta({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Amount({
-  label,
-  value,
-  className,
-}: {
-  label: string
-  value: string
-  className?: string
-}) {
+function Amount({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
     <tr className={className}>
       <td>{label}</td>

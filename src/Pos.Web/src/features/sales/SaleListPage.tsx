@@ -181,9 +181,7 @@ export function SaleListPage() {
                           manager who cannot find a transaction concludes the
                           system lost it — but it must be unmistakable. */}
                       <span
-                        className={cn(
-                          sale.status === 'Voided' && 'font-medium text-destructive',
-                        )}
+                        className={cn(sale.status === 'Voided' && 'font-medium text-destructive')}
                       >
                         {sale.status === 'Voided' ? 'Voided' : sale.type}
                       </span>
@@ -262,20 +260,9 @@ function Th({ children, align = 'left' }: { children: string; align?: 'left' | '
   )
 }
 
-function Td({
-  children,
-  align = 'left',
-}: {
-  children: React.ReactNode
-  align?: 'left' | 'right'
-}) {
+function Td({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
   return (
-    <td
-      className={cn(
-        'px-3 py-2 text-foreground',
-        align === 'right' && 'text-right tabular-nums',
-      )}
-    >
+    <td className={cn('px-3 py-2 text-foreground', align === 'right' && 'text-right tabular-nums')}>
       {children}
     </td>
   )

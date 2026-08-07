@@ -124,9 +124,7 @@ export function SaleCompletePanel({
         </Button>
       ) : null}
 
-      <p className="text-xs text-muted-foreground">
-        Scan the next item to start a new sale.
-      </p>
+      <p className="text-xs text-muted-foreground">Scan the next item to start a new sale.</p>
 
       {/* An original, not a reprint: this is the sale that was just rung, and
           the copy the customer is handed at the counter. Anything printed from

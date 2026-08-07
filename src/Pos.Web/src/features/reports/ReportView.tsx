@@ -36,7 +36,10 @@ export function ReportView({ report }: { report: Report }) {
             emphasis
             testId="report-total"
           />
-          <Figure label="Average basket" value={formatMoney(report.sales.averageBasket, currency)} />
+          <Figure
+            label="Average basket"
+            value={formatMoney(report.sales.averageBasket, currency)}
+          />
           {/* `refundCount` is an int32 and the generated client still types it
               `number | string` — the same union `ServerDecimal` documents, which
               a `> 0` on the raw value does not compile against and a `Number()`
@@ -96,8 +99,8 @@ export function ReportView({ report }: { report: Report }) {
             className="mb-3 rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
           >
             <span className="font-medium text-foreground">A drawer is still open.</span> The
-            expected figure is what should be in it right now. Nothing has been counted, so there
-            is no variance yet.
+            expected figure is what should be in it right now. Nothing has been counted, so there is
+            no variance yet.
           </p>
         ) : null}
 

@@ -38,15 +38,19 @@ describe('RefundDialog', () => {
 
       if (url.includes('/shifts/current')) {
         return Promise.resolve(
-          Response.json({ id: SHIFT_ID, registerId: REGISTER_ID, status: 'Open', openingFloat: 100 }),
+          Response.json({
+            id: SHIFT_ID,
+            registerId: REGISTER_ID,
+            status: 'Open',
+            openingFloat: 100,
+          }),
         )
       }
 
       if (url.includes('/refund')) {
         // From whichever of the two the client used: `openapi-fetch` may hand
         // the headers over on the init or already folded into a `Request`.
-        const headers =
-          input instanceof Request ? input.headers : new Headers(init?.headers)
+        const headers = input instanceof Request ? input.headers : new Headers(init?.headers)
 
         keys.push(headers.get('Idempotency-Key') ?? '')
         attempts++

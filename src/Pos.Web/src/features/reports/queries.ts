@@ -26,9 +26,7 @@ export function useShiftReport(shiftId: string | null) {
   return useQuery({
     queryKey: reportKeys.shift(shiftId ?? ''),
     queryFn: () =>
-      unwrap(
-        api.GET('/api/v1/shifts/{id}/report', { params: { path: { id: shiftId ?? '' } } }),
-      ),
+      unwrap(api.GET('/api/v1/shifts/{id}/report', { params: { path: { id: shiftId ?? '' } } })),
     enabled: shiftId !== null,
     ...LIVE_QUERY_OPTIONS,
   })

@@ -95,8 +95,7 @@ export function SaleDetailPage() {
           data-testid="sale-voided"
           className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm"
         >
-          <span className="font-medium">This sale was voided.</span>{' '}
-          {data.voidReason ?? ''}
+          <span className="font-medium">This sale was voided.</span> {data.voidReason ?? ''}
           {data.voidedByName === null ? '' : ` — ${data.voidedByName}`}
         </p>
       ) : null}
@@ -184,7 +183,9 @@ export function SaleDetailPage() {
         {data.tenders.map((tender, index) => (
           <Row
             key={index}
-            label={data.tenders.length === 1 ? tender.method : `${tender.method} ${String(index + 1)}`}
+            label={
+              data.tenders.length === 1 ? tender.method : `${tender.method} ${String(index + 1)}`
+            }
             value={formatMoney(tender.amount, currency)}
           />
         ))}
