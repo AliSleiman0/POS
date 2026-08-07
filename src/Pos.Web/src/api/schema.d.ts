@@ -1862,6 +1862,51 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/sales/by-client-transaction/{clientTransactionId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The sale a client transaction id produced, if it produced one */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          clientTransactionId: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['SaleResponse']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/sales/quote': {
     parameters: {
       query?: never

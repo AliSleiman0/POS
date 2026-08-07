@@ -8,6 +8,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, unwrap, unwrapWithResponse } from '@/api/client'
 import { wasReplayed } from '@/api/idempotency'
+import { isProblemError } from '@/api/problem'
 import type { components } from '@/api/schema'
 import { LIVE_QUERY_OPTIONS } from '@/app/queryClient'
 import { getEnrolledRegisterId } from '@/auth/deviceToken'
@@ -18,6 +19,7 @@ export const registerKeys = {
   currentShift: (registerId: string | null) => ['shifts', 'current', registerId] as const,
   quote: (signature: string) => ['sales', 'quote', signature] as const,
   barcode: (code: string) => ['products', 'by-barcode', code] as const,
+  byClientTransaction: (saleKey: string) => ['sales', 'by-client-transaction', saleKey] as const,
 }
 
 /**
@@ -123,17 +125,56 @@ export function useQuote(cart: Cart, grant: string | null) {
   })
 }
 
-/** A completed sale, plus whether the server had already recorded it. */
+/**
+ * How the till came to be holding this sale.
+ *
+ * Three different sentences for a cashier, and the distinction matters most to
+ * whoever reconciles the drawer at the end of the day:
+ *
+ * - `fresh` — this press wrote it.
+ * - `replayed` — the server had seen the key. What a successful retry looks
+ *   like, and the only evidence that a second press did not take a second
+ *   payment.
+ * - `recovered` — it was found afterwards, by asking what the key bought. The
+ *   till never saw the original answer.
+ */
+export type SaleProvenance = 'fresh' | 'replayed' | 'recovered'
+
+/** A completed sale, and how the till learned about it. */
 export interface CompletedSale {
   sale: components['schemas']['SaleResponse']
-  /**
-   * True when this request replayed a key the server had seen.
-   *
-   * Not an error. It is what a successful retry looks like, and the only
-   * evidence a cashier has that their second press did not take a second
-   * payment.
-   */
-  replayed: boolean
+  provenance: SaleProvenance
+}
+
+/**
+ * What a client transaction id bought, if it bought anything.
+ *
+ * **A read, deliberately.** The till calls this after a reload interrupted a
+ * payment, holding the GUID it submitted and nothing else. Re-POSTing would
+ * answer the same question by *doing* the thing — fine when the sale landed, and
+ * a charge nobody authorised when it did not.
+ *
+ * `null` for a 404, which is not a failure here: it is the answer "nothing was
+ * taken", and it is half the reason the endpoint exists.
+ */
+export async function fetchSaleByKey(
+  saleKey: string,
+): Promise<components['schemas']['SaleResponse'] | null> {
+  try {
+    return await unwrap(
+      api.GET('/api/v1/sales/by-client-transaction/{clientTransactionId}', {
+        params: { path: { clientTransactionId: saleKey } },
+      }),
+    )
+  } catch (caught) {
+    if (isProblemError(caught) && caught.status === 404) {
+      return null
+    }
+
+    // Anything else — offline, a 500 — is *not* an answer, and must not be
+    // rendered as one. The caller says so rather than guessing.
+    throw caught
+  }
 }
 
 /**
@@ -197,7 +238,7 @@ export function useCompleteSale() {
         }),
       )
 
-      return { sale: data, replayed: wasReplayed(response) }
+      return { sale: data, provenance: wasReplayed(response) ? 'replayed' : 'fresh' }
     },
 
     onSuccess: async () => {

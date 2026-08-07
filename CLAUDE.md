@@ -56,7 +56,10 @@ dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
 # Dev data. There is no onboarding endpoint by decision, so a migrated database has no
 # tenant and nothing can be exercised by hand. Safe to re-run: existing rows are left alone.
 # Prints the credentials and the register's device token — the token is shown ONCE.
-dotnet run --project tools/Pos.Seed              # --help for slug/password/PIN options
+# --help for slug/password/PIN options, and --cash-rounding, which is the one option that
+# changes an EXISTING tenant (there is no PUT /settings, so it is the only way to reach the
+# cash-rounding path from a browser).
+dotnet run --project tools/Pos.Seed
 
 pnpm --dir src/Pos.Web dev
 pnpm --dir src/Pos.Web build
@@ -99,6 +102,13 @@ A `Completed` sale is never updated or deleted. Voids are a status flag plus com
 
 Client-generated GUID, unique index enforcing it, replay returns the original response. Applies to sales, voids, refunds, stock adjustments, shift open/close.
 
+**A key belongs to one request body, not to one operation.** `IdempotencyFilter` fingerprints the raw body, so the same key with different content is `409 idempotency-key-reused` — not a replay. Two consequences for any client:
+
+- Mint the key when the operation *begins* and reuse it unchanged. A key minted per attempt makes the header decorative and charges the customer twice.
+- If the content has to change, that is new work and needs a new key. Reaching the `409` means an earlier attempt **landed**, so resolve what it wrote before sending anything else.
+
+**Never re-submit a write in order to discover whether it succeeded.** It answers by doing the thing: correct when the write landed, and a charge nobody authorised when it did not. Ask instead — `GET /sales/by-client-transaction/{id}` is the pattern, and a page load is not a person pressing Complete.
+
 ### 7. Authorization is by named policy
 
 `RequireAuthorization("CanRefund")`, never `[Authorize(Roles = "Manager")]`. Policies are listed in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#authorization). Every endpoint has one — a test fails the build on any endpoint with no authorization metadata.
@@ -119,6 +129,14 @@ This scales up to the phase: **each phase is fully tested and green — locally 
 
 No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. Use in-page confirmations.
 
+### 11. The register survives a reload; credentials do not
+
+A tablet on a counter gets reloaded, slept and crashed. What a cashier would otherwise have to rebuild goes to `sessionStorage` — the cart, and with it the sale's GUID, so a retry after a reload is still the same sale.
+
+What must **not** go there: the manager's override grant, and anything else that is a live credential. It is React state in `OverrideProvider` and a test fails if it reaches storage. `sessionStorage` over `localStorage` throughout, so a shared till hands the next shift nothing.
+
+**Everything read back out is untrusted input** — same class as a response body. Parse defensively, validate the shape, and drop what does not match rather than throwing: a till that crashes on load cannot be fixed by the only remedy a shop floor has, which is reloading. Version the payload and drop old versions instead of migrating them.
+
 ---
 
 ## Style
@@ -136,6 +154,7 @@ No `alert()`, `confirm()` or `prompt()`. They block the page and stall a queue. 
 - Server state in TanStack Query; local state in React. No global store for server-owned data.
 - **Never hand-write API types** — run `pnpm generate:api`.
 - Feature-first folders (`features/register/`), shared primitives in `components/`
+- `ServerDecimal` is `number | string`, deliberately. A type guard that accepts only one of them compiles, passes review and rejects every value at runtime — which looks identical to having no data. Check against the type, not against what the API happens to send today.
 
 **SQL / migrations**
 - Review every generated migration before committing; EF sometimes generates a destructive change for an innocuous model edit

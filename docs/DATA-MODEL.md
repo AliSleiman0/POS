@@ -146,7 +146,11 @@ Contract for every money- or stock-moving write:
 1. Client generates a GUID **before** the first attempt and reuses it for every retry.
 2. Server, in the same transaction as the work: insert the key or detect the conflict.
 3. Key already present with a matching request hash → return the **stored original response**, same status. No second sale.
-4. Key present with a *different* request hash → `409 Conflict`. The same key was reused for different content, which is a client bug worth surfacing loudly.
+4. Key present with a *different* request hash → `409 Conflict`. The same key was reused for different content, which is surfaced loudly rather than absorbed: answering with the stored response would show a till a sale that succeeded, for a basket the customer never had.
+
+**The hash is over the raw request body**, not a re-serialisation of the bound DTO — a client that changed a field this server currently ignores has still changed the request. It requires `EnableBuffering()` in `Program.cs` plus a rewind in the filter, because minimal-API endpoint filters run *after* model binding: without them every fingerprint would be computed over zero bytes, every key would look like a match, and the system would replay a stored response for an unrelated request. That failure is silent, which is why the differing-body test was written first.
+
+**A `409` here is also information, not only a bug.** It means an earlier attempt with that key *landed*. A client that reaches it should find out what the key bought — `GET /sales/by-client-transaction/{id}` — rather than retrying, which will fail identically for ever. The corollary is that a key is bound to one request body: if the content legitimately changes, that is new work and needs a new key.
 
 **Why from day one:** a cashier double-tapping on a slow connection must not charge a customer twice, and the offline outbox in Phase 9 is nothing more than this contract plus a retry loop. Retrofitting it later means revisiting every write path.
 

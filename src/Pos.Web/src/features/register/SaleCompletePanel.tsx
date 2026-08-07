@@ -1,5 +1,6 @@
 import type { components } from '@/api/schema'
 import { formatMoney, parseServerDecimal } from '@/lib/money'
+import type { SaleProvenance } from './queries'
 
 type SaleResponse = components['schemas']['SaleResponse']
 
@@ -22,12 +23,12 @@ type SaleResponse = components['schemas']['SaleResponse']
 export function SaleCompletePanel({
   sale,
   currency,
-  replayed,
+  provenance,
 }: {
   sale: SaleResponse
   currency: string
-  /** The server had already recorded this sale: a retry, not a second charge. */
-  replayed: boolean
+  /** How the till came to be holding this sale. See `SaleProvenance`. */
+  provenance: SaleProvenance
 }) {
   const change = parseServerDecimal(sale.changeGiven)
   const rounding = parseServerDecimal(sale.roundingAdjustment)
@@ -54,17 +55,27 @@ export function SaleCompletePanel({
         {formatMoney(sale.changeGiven, currency)}
       </p>
 
-      {replayed ? (
+      {/* The visible half of invariant 6, in the two shapes it takes. A cashier
+          who pressed twice or retried after a dropped connection needs to know
+          the second attempt took no second payment; one who reloaded needs to
+          know the payment happened at all, because they did not see it. */}
+      {provenance === 'replayed' ? (
         <p
           data-testid="sale-replayed"
           role="status"
           className="rounded-md bg-muted px-3 py-2 text-sm text-foreground"
         >
-          {/* The visible half of invariant 6. A cashier who pressed twice, or
-              retried after the connection dropped, needs to know the second
-              attempt took no second payment. */}
           <span className="font-medium">Already recorded.</span> This sale had gone through — it has
           not been charged again.
+        </p>
+      ) : provenance === 'recovered' ? (
+        <p
+          data-testid="sale-recovered"
+          role="status"
+          className="rounded-md bg-muted px-3 py-2 text-sm text-foreground"
+        >
+          <span className="font-medium">Taken before this page reloaded.</span> The payment went
+          through and was charged once. Nothing else is owed.
         </p>
       ) : null}
 

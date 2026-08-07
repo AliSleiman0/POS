@@ -218,6 +218,23 @@ Pos.Web/src/
 - **The register screen must be fully keyboard-operable.** Scanners are keyboards; staff are fast; mouse-only flows fail at a real counter.
 - Phase 9 adds the service worker, IndexedDB mirror and outbox. Until then the app is online-only **by design** — proving the product first, per `DECISIONS.md`.
 
+### What survives a reload, and what must not
+
+A counter tablet gets reloaded, slept and crashed, so the register is built to come back rather than to avoid going away.
+
+| | Where | Why there |
+|---|---|---|
+| Cart, selection, cart discount, **sale GUID** | `sessionStorage`, written by `CartProvider` on every change | The basket is expensive to rebuild with a queue waiting, and the GUID riding along is what keeps a post-reload retry the *same* sale rather than a second charge |
+| In-flight sale record | `sessionStorage`, written immediately **before** `POST /sales` | The only thing that can answer "was that payment taken?" afterwards. Written after the response it would exist only in the cases that do not need it |
+| Manager override grant | React state in `OverrideProvider`, **nowhere else** | A five-minute credential on a shared device. It is mounted *beside* the cart rather than in it precisely so cart persistence cannot write it to disk as a side effect; a Vitest case fails if it ever reaches storage |
+| Access token | Memory | Short-lived, never readable after a reload |
+| Refresh token | `sessionStorage` | Trade-off written up in `DECISIONS.md`; revisited in 8.2 |
+| Device token, register id | `localStorage` | A device credential — it must survive a browser restart, unlike a session |
+
+`sessionStorage` over `localStorage` throughout, so a shared till hands the next shift nothing. **Everything read back is untrusted input**: versioned, structurally validated, and dropped rather than thrown on when it does not match — a till that crashes on load cannot be fixed by reloading, which is the only remedy a shop floor has.
+
+**An interrupted payment is resolved by asking, never by re-submitting.** `GET /sales/by-client-transaction/{id}` on load, with three outcomes: taken (show the sale), not taken (restore the tender pad), and *cannot be determined* (say so, tell the cashier not to re-ring it, keep the record). Re-POSTing to find out is correct when the sale landed and takes the money when it did not.
+
 ## Environments & configuration
 
 | | Local | Production |

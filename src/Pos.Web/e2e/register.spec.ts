@@ -658,4 +658,194 @@ test.describe('cash payment', () => {
     await expect(page.getByTestId('sale-complete')).toBeVisible()
     expect(await saleCount(page)).toBe(before + 1)
   })
+
+  test('a reload keeps the basket', async ({ page }) => {
+    // The cheap half of persistence, and the one a cashier meets weekly. Twenty
+    // items into a shop rather than one, this is a minute of a queue's time.
+    await scan(page, WATER)
+    await scan(page, CHEDDAR)
+    await expect(page.getByTestId('cart-line')).toHaveCount(2)
+
+    await page.reload()
+
+    await expect(page.getByTestId('cart-line')).toHaveCount(2)
+    await expect(page.getByTestId('cart-total')).toHaveText('€14.15')
+  })
+
+  test('a reload after the payment landed shows the sale, and charges once', async ({ page }) => {
+    /*
+     * The milestone.
+     *
+     * The request reaches the server and commits; the answer is thrown away and
+     * the page is reloaded before anyone can retry. The till comes back holding
+     * nothing but the GUID it sent — and asks what that GUID bought, rather
+     * than re-submitting to find out. Re-submitting would be safe *here*, where
+     * the sale landed, and would take the money in the case below where it did
+     * not.
+     *
+     * Falsify by removing the `writeSaleInFlight` call in `RegisterPage`: the
+     * reload then comes back to an ordinary empty till, the cashier concludes
+     * the payment failed, and rings the basket again as a second sale.
+     */
+    const before = await saleCount(page)
+
+    await scan(page, WATER)
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+
+    let swallowed = false
+
+    await page.route('**/api/v1/sales', async (route) => {
+      if (route.request().method() !== 'POST' || swallowed) {
+        await route.continue()
+        return
+      }
+
+      swallowed = true
+      await route.fetch()
+      await route.abort('connectionaborted')
+    })
+
+    await page.getByTestId('complete-sale').click()
+    await expect(page.getByText(/Could not complete the sale/)).toBeVisible()
+
+    await page.reload()
+
+    // Found, and said plainly: this was paid for, you did not see it happen.
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+    await expect(page.getByTestId('sale-recovered')).toBeVisible()
+    await expect(page.getByTestId('change-due')).toHaveText('€0.00')
+
+    // The cart is cleared, because that sale is over.
+    await expect(page.getByTestId('cart-line')).toHaveCount(0)
+
+    expect(await saleCount(page)).toBe(before + 1)
+  })
+
+  test('a reload after the payment never arrived restores the tender pad', async ({ page }) => {
+    /*
+     * The other answer, and the reason this is a read rather than a re-POST.
+     *
+     * The request never reaches the server, so nothing was charged. A till that
+     * assumed the worst and re-submitted on load would take money for a sale
+     * nobody had finished — on a page load, with the customer possibly gone.
+     */
+    const before = await saleCount(page)
+
+    await scan(page, WATER)
+    await takeCash(page)
+    await page.getByRole('button', { name: '€5.00' }).click()
+
+    let blocked = false
+
+    await page.route('**/api/v1/sales', async (route) => {
+      if (route.request().method() !== 'POST' || blocked) {
+        await route.continue()
+        return
+      }
+
+      // Killed before the server sees it, unlike the test above.
+      blocked = true
+      await route.abort('connectionrefused')
+    })
+
+    await page.getByTestId('complete-sale').click()
+    await expect(page.getByText(/Could not complete the sale/)).toBeVisible()
+
+    await page.reload()
+
+    // Back on the tender pad with the same amount counted, so finishing is one
+    // press rather than a rebuild.
+    await expect(page.getByTestId('tender-panel')).toBeVisible()
+    await expect(page.getByTestId('tender-line')).toHaveCount(1)
+    await expect(page.getByText(/That payment was not taken/)).toBeVisible()
+
+    // Nothing was charged while the till worked that out.
+    expect(await saleCount(page)).toBe(before)
+
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+    await expect(page.getByTestId('change-due')).toHaveText('€3.80')
+
+    // And exactly one sale, from the key that survived the reload.
+    expect(await saleCount(page)).toBe(before + 1)
+  })
+
+  test('editing the basket after a lost response says what was already paid for', async ({
+    page,
+  }) => {
+    /*
+     * The dead end 5.4 left, which nothing had ever walked into.
+     *
+     * The server fingerprints the request body, so the same key with a
+     * *different* basket is `idempotency-key-reused` rather than a replay. A
+     * cashier reaches it by retrying a submit whose response was lost and then
+     * changing the cart — and until this branch existed the till said "try
+     * again", advice that would have failed identically for ever.
+     *
+     * What it must do instead: find out what the key bought, say so, and let
+     * the basket on the screen be sold as its own sale.
+     */
+    const before = await saleCount(page)
+
+    await scan(page, WATER)
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+
+    let swallowed = false
+
+    await page.route('**/api/v1/sales', async (route) => {
+      if (route.request().method() !== 'POST' || swallowed) {
+        await route.continue()
+        return
+      }
+
+      swallowed = true
+      await route.fetch()
+      await route.abort('connectionaborted')
+    })
+
+    await page.getByTestId('complete-sale').click()
+    await expect(page.getByText(/Could not complete the sale/)).toBeVisible()
+
+    // The cashier backs out and adds an item — the customer changed their mind
+    // while the till was failing. The key in hand is now for a basket that no
+    // longer exists.
+    await page.keyboard.press('Escape')
+    await scan(page, CHEDDAR)
+    await expect(page.getByTestId('cart-line')).toHaveCount(2)
+
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+    await page.getByTestId('complete-sale').click()
+
+    // Not "try again": the sale that key bought, named, with the warning that
+    // money has already changed hands.
+    await expect(page.getByTestId('sale-recovered')).toBeVisible()
+    await expect(page.getByText(/was already paid for/)).toBeVisible()
+
+    // One sale so far — the first one. The 409 wrote nothing.
+    expect(await saleCount(page)).toBe(before + 1)
+
+    /*
+     * The tender pad is deliberately dismissed, and the counted amounts with it.
+     *
+     * This is not a "press again" — money has already changed hands for a
+     * different basket, and the cashier has to settle that with the customer
+     * before taking more. Making them start the tender again is the point:
+     * one more press is cheap, and a Complete button still sitting under their
+     * thumb is an invitation to charge twice.
+     */
+    await expect(page.getByTestId('tender-panel')).toHaveCount(0)
+
+    // But the basket is not stuck. It has an identity of its own now, so when
+    // the cashier does decide to sell it, it goes through.
+    await takeCash(page)
+    await page.getByRole('button', { name: 'Exact' }).click()
+    await page.getByTestId('complete-sale').click()
+
+    await expect(page.getByTestId('sale-complete')).toBeVisible()
+    expect(await saleCount(page)).toBe(before + 2)
+  })
 })

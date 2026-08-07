@@ -199,6 +199,7 @@ The endpoint that must not get this wrong.
 | POST 🔒 | `/sales` | `CanSell` | Create a completed sale |
 | GET | `/sales` | `CanSell` | `?registerId=&shiftId=&cashierId=`, paginated on `completedAt` |
 | GET | `/sales/{id}` | `CanSell` | Full detail with lines and tenders |
+| GET | `/sales/by-client-transaction/{id}` | `CanSell` | The sale a `clientTransactionId` produced, or `404` |
 | GET | `/sales/{id}/receipt` | `CanSell` | Render payload for print/reprint. **Not built** — Phase 6.1 |
 | POST 🔒 | `/sales/{id}/void` | `CanVoidSale` | `{ reason }`. Status flag + compensating stock movements |
 | POST 🔒 | `/sales/{id}/refund` | `CanRefund` | Creates a **new** linked `Refund` sale |
@@ -207,6 +208,8 @@ The endpoint that must not get this wrong.
 `GET /sales` returns **every** sale regardless of type or status — voids and refunds included. A history that quietly hid them is how a manager fails to find the transaction they are looking for and concludes the system lost it. `?from=`/`?to=` are not implemented; date-range reporting is Phase 6.
 
 `POST /sales/quote` needs no register, shift, tenders or `Idempotency-Key`: it writes nothing, and a register showing a running total has not chosen a shift or taken money yet.
+
+`GET /sales/by-client-transaction/{id}` answers **"did this key buy anything?"** It exists for a till that lost the answer to a `POST /sales` — a reload mid-payment, a dropped response — and holds nothing but the GUID it sent. The two possible truths need opposite actions from the cashier: read the change out, or take the payment again. The alternative is re-POSTing and letting idempotency reply, which works when the sale landed and *takes the money* when it did not, on a page load, with nobody having pressed anything. A key that reached the server but bought nothing — a refused under-tender, say, which still writes an idempotency record — is a `404` here, because the question is about the sale and not about the key.
 
 ### `POST /sales`
 

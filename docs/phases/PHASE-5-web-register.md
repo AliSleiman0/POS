@@ -144,10 +144,19 @@ Where a running subtotal must appear before the quote returns, it is computed in
 **A disabled submit button is not the mechanism.** It does not survive a reload, a flaky connection, or a double-tap that registers before React re-renders. The idempotency key is the mechanism; the disabled button is a courtesy.
 
 **Exit criteria**
-- [ ] Rapid double-click produces exactly one sale
-- [ ] Reload mid-submit recovers and does not duplicate
-- [ ] Retry after a simulated timeout returns the original sale
-- [ ] Cart survives a failed submit and can be retried
+- [x] Rapid double-click produces exactly one sale — done in 5.4 and falsified there
+- [x] Reload mid-submit recovers and does not duplicate — and it recovers by **asking**, not by re-submitting; see below
+- [x] Retry after a simulated timeout returns the original sale — done in 5.4
+- [x] Cart survives a failed submit and can be retried — including the case where it is *edited* first, which used to dead-end (see below)
+
+**What this milestone decided, worth not relitigating:**
+
+1. **A reload asks the server what happened; it does not re-POST to find out.** `GET /sales/by-client-transaction/{id}` is new for this. Re-submitting would answer the same question by *doing* the thing — correct when the sale landed, and a charge nobody authorised when it did not, on a page load, with the customer possibly gone. A page load is not a person pressing Complete.
+2. **There are three answers, not two.** Taken, not taken, and *cannot be determined* — the server is unreachable. The third gets a banner of its own saying "do not ring it up again" and keeps the in-flight record so the question can be put again. Collapsing it into either real answer charges a customer twice or gives goods away.
+3. **The cart is persisted on every change, not only at submit.** The exit criterion needed only the latter, but the former subsumes it and is what a real till wants: an accidental F5 twenty items into a shop otherwise costs a minute of a queue's time.
+4. **Signing out clears the persisted cart; a session expiring does not.** An expiry is the same person still serving the same customer, and `RequireAuth` deliberately renders over the tree rather than unmounting it. Signing out at a shared till means the next person.
+
+**A hole 5.4 left, closed here.** `IdempotencyFilter` fingerprints the request *body*, so the same key with a different basket is `409 idempotency-key-reused` rather than a replay. A cashier reaches that by retrying a submit whose response was lost and then editing the cart — and the till said "Could not complete the sale. Try again", advice that would have failed identically for ever. It now looks up what the key bought, names that sale, dismisses the tender pad (money has already changed hands; this is a stop-and-check, not a press-again) and gives the basket a fresh identity via `restartSale` so it is not stuck. `ErrorType.idempotencyKeyReused` had been declared in `api/problem.ts` since Phase 4 and never handled.
 
 ## 5.6 Tests
 
@@ -157,8 +166,8 @@ Where a running subtotal must appear before the quote returns, it is computed in
 - **Playwright** — a Cashier cannot reach discount or override controls
 
 **Exit criteria**
-- [ ] All of the above green in CI
-- [ ] The double-submit test would fail if idempotency were removed (verify by temporarily removing it)
+- [x] All of the above green in CI — **877 .NET · 159 Vitest · 35 Playwright**, with one clause unmeetable: "reprint the receipt" is deferred to 6.1 with the rest of the receipt work
+- [x] The double-submit test would fail if idempotency were removed — verified three times over: minting the key inside the mutation (5.4), removing the in-flight record, and removing the reused-key branch. Each was confirmed red and restored.
 
 ---
 

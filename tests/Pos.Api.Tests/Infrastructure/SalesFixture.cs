@@ -13,7 +13,12 @@ public sealed record SeededSales(
     Guid SecondSaleId,
     Guid VoidedSaleId,
     Guid RefundSaleId,
-    Guid DiscrepancyId)
+    Guid DiscrepancyId,
+    /// <summary>
+    /// The client transaction id <see cref="FirstSaleId"/> was written with, for
+    /// <c>GET /sales/by-client-transaction/{id}</c>.
+    /// </summary>
+    Guid FirstClientTransactionId)
 {
     /// <summary>
     /// Everything <c>GET /sales</c> must return for this tenant.
@@ -166,7 +171,14 @@ internal static class SalesFixture
             await db.SaveChangesAsync();
 
             seeded = new SeededSales(
-                closed.Id, open.Id, first.Id, second.Id, voided.Id, refund.Id, discrepancy.Id);
+                closed.Id,
+                open.Id,
+                first.Id,
+                second.Id,
+                voided.Id,
+                refund.Id,
+                discrepancy.Id,
+                first.ClientTransactionId);
         });
 
         return seeded!;
