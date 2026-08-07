@@ -115,25 +115,31 @@ callback fires.
   it rendered. Devtools offline on `/register` with a marker in `sessionStorage` would do it.
 - **Nobody who has worked a till has used any of it.** Unchanged, and still the real bar.
 
-## CI — Actions is not running, and this is the blocker
+## CI — recovered on its own, and PR #14 is fully green
 
-**Three separate triggers produced zero runs**: the push of `0511477`, the merge of PR #13 into
-`main`, and the push and PR for this branch. The newest run on the repo is still from 2026-08-06
-18:03. Before that, `e2e (Playwright)` and `API contract (client drift)` recorded `cancelled` with
-zero steps after 15 minutes queued, three times, while the other two jobs got machines and passed on
-the same commit.
+**All four jobs pass on this branch**, including the two that had been starving:
 
-Starvation escalating to *no runs created at all* is not capacity — it is Actions being stopped for
-the repository. **github.com/settings/billing** (minutes, spending limit) is the first and probably
-only place to look; only the account owner can see it.
+```
+backend (.NET) ✅   frontend (web) ✅   e2e (Playwright) ✅   API contract (client drift) ✅
+```
 
-Two things to remember when it comes back:
+The drift job matters this time — this is the first branch since Phase 4 with an API change, so it
+had something real to check rather than passing vacuously.
+
+**What the outage looked like, in case it returns.** It escalated in two stages. First `e2e` and
+`API contract` recorded `cancelled` with **zero steps** after exactly 15 minutes queued — three
+times, including an explicit re-run — while the other two got machines and passed on the same
+commit. Then it got worse: three consecutive triggers produced **no run at all** (a push, the merge
+of #13, and the first push of this branch). It cleared without intervention roughly twelve hours
+later. No billing change was made, so capacity is the likelier explanation after all, and the
+"Actions is disabled" reading was wrong.
+
+Two things worth keeping:
 
 - A run whose jobs were cancelled reports `conclusion: failure` at the **run** level. Inspect the
-  *jobs* before believing a red run.
-- `gh pr merge --admin` is not needed here — #13 merged without it, so branch protection is not
-  gating on these checks. That means a red or absent CI will **not** stop a merge; the discipline
-  has to come from reading it.
+  *jobs* before believing a red run — the first version of this diagnosis was "the code is broken".
+- Branch protection does **not** gate on these checks; #13 merged without `--admin`. A red or
+  absent CI will not stop a merge, so the discipline has to come from reading it.
 
 ## Outstanding / deferred
 
