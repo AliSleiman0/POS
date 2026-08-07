@@ -8,6 +8,8 @@ using Pos.Api.Idempotency;
 using Pos.Core.Entities;
 using Pos.Core.Monetary;
 using Pos.Core.Pricing;
+using Pos.Core.Receipts;
+using Pos.Core.Reporting;
 using Pos.Core.Sales;
 using Pos.Core.Tenders;
 using Pos.Data;
@@ -64,8 +66,26 @@ public sealed record SaleLineResponse(
 public sealed record SaleTenderResponse(TenderMethod Method, decimal Amount, decimal? ChangeGiven);
 
 /// <summary>
+/// A refund made against a sale, as the original sale's detail lists it.
+/// </summary>
+/// <remarks>
+/// <b>The half of the link that is easy to leave out.</b> A refund knows its original through
+/// <c>OriginalSaleId</c>; without the reverse direction, somebody looking at a sale a customer
+/// has brought back cannot see it was already refunded — and refunds it again.
+/// </remarks>
+public sealed record LinkedRefundResponse(
+    Guid Id,
+    long SaleNumber,
+    decimal Total,
+    DateTimeOffset CompletedAt);
+
+/// <summary>
 /// A priced cart. <c>POST /sales/quote</c> returns this with the sale-identity fields null.
 /// </summary>
+/// <remarks>
+/// The fields below <c>Tenders</c> arrived with Phase 6.4's history detail and are all nullable
+/// or empty for a quote, which has no sale behind it to answer them.
+/// </remarks>
 public sealed record SaleResponse(
     Guid? Id,
     long? SaleNumber,
@@ -79,7 +99,24 @@ public sealed record SaleResponse(
     decimal ChangeGiven,
     DateTimeOffset? CompletedAt,
     IReadOnlyList<SaleLineResponse> Lines,
-    IReadOnlyList<SaleTenderResponse> Tenders);
+    IReadOnlyList<SaleTenderResponse> Tenders,
+    Guid? RegisterId = null,
+    Guid? ShiftId = null,
+    Guid? CashierId = null,
+
+    /// <summary>Current values, like a receipt's. A renamed cashier is the same person.</summary>
+    string? CashierName = null,
+    string? RegisterName = null,
+    TaxMode? TaxMode = null,
+    Guid? OriginalSaleId = null,
+    long? OriginalSaleNumber = null,
+    DateTimeOffset? VoidedAt = null,
+    string? VoidedByName = null,
+    string? VoidReason = null,
+    string? RefundReason = null,
+
+    /// <summary>Refunds written against this sale. Empty on a refund and on a quote.</summary>
+    IReadOnlyList<LinkedRefundResponse>? Refunds = null);
 
 /// <summary>Why a sale is being reversed. Required — see the endpoint.</summary>
 public sealed record VoidSaleRequest(string? Reason);
@@ -102,6 +139,11 @@ public sealed record RefundSaleRequest(
     IReadOnlyList<RefundLineRequest>? Lines);
 
 /// <summary>A sale as the history list shows it, without its lines.</summary>
+/// <remarks>
+/// <c>CashierName</c> and <c>RegisterName</c> are here rather than left to the client because a
+/// list of GUIDs is not a history anybody can read, and a client that resolved them itself would
+/// issue one request per row.
+/// </remarks>
 public sealed record SaleSummaryResponse(
     Guid Id,
     long SaleNumber,
@@ -110,6 +152,9 @@ public sealed record SaleSummaryResponse(
     Guid RegisterId,
     Guid ShiftId,
     Guid CashierId,
+    string CashierName,
+    string RegisterName,
+    Guid? OriginalSaleId,
     decimal Total,
     DateTimeOffset CompletedAt);
 
@@ -136,6 +181,12 @@ public static class SaleEndpoints
         sales.MapGet("/by-client-transaction/{clientTransactionId:guid}", GetByClientTransactionAsync)
             .RequireAuthorization(Policies.CanSell)
             .WithSummary("The sale a client transaction id produced, if it produced one");
+
+        // CanSell, like the sale itself: handing a customer their receipt is the last step of
+        // serving them, and a reprint is asked for at a counter by whoever is standing there.
+        sales.MapGet("/{id:guid}/receipt", ReceiptAsync)
+            .RequireAuthorization(Policies.CanSell)
+            .WithSummary("The receipt payload for a sale, rendered server-side");
 
         // Priced but not committed, so no idempotency key: nothing is written, and a replay is
         // simply the same arithmetic again.
@@ -180,6 +231,11 @@ public static class SaleEndpoints
         Guid? registerId,
         Guid? shiftId,
         Guid? cashierId,
+        string? from,
+        string? to,
+        string? type,
+        string? status,
+        long? saleNumber,
         CancellationToken cancellationToken)
     {
         if (!PageQuery.TryRead<DateTimeOffset>(cursor, limit, Sort, out var page, out var errors))
@@ -204,6 +260,71 @@ public static class SaleEndpoints
             query = query.Where(s => s.CashierId == cashier);
         }
 
+        /*
+         * `from` and `to` are trading days, resolved exactly as the daily report resolves its
+         * `?date=` — through the tenant's zone and day-start offset, not UTC midnight.
+         *
+         * Both ends inclusive, because "7th to 7th" plainly means that one day. A shop with a
+         * 04:00 day start otherwise finds its history and its daily report disagreeing by a few
+         * hours' sales, which is how staff stop trusting both.
+         */
+        if (from is not null || to is not null)
+        {
+            var shop = await ReportEndpoints.ShopAsync(db, cancellationToken);
+            var zone = TenantTimeZone.Resolve(shop.TimeZoneId);
+
+            if (TryReadDay(from, "from", errors, out var firstDay))
+            {
+                var start = BusinessDay.Range(firstDay, zone, shop.BusinessDayStartOffset).StartUtc;
+                query = query.Where(s => s.CompletedAt >= start);
+            }
+
+            if (TryReadDay(to, "to", errors, out var lastDay))
+            {
+                var end = BusinessDay.Range(lastDay, zone, shop.BusinessDayStartOffset).EndUtc;
+                query = query.Where(s => s.CompletedAt < end);
+            }
+        }
+
+        // Parsed rather than bound, so an unknown value is a 400 naming the field instead of a
+        // silently ignored filter — a history quietly showing more than was asked for is a
+        // manager concluding the shop sold things it did not.
+        if (type is not null)
+        {
+            if (Enum.TryParse<SaleType>(type, ignoreCase: false, out var parsed) && Enum.IsDefined(parsed))
+            {
+                query = query.Where(s => s.Type == parsed);
+            }
+            else
+            {
+                errors["type"] = [$"One of {string.Join(", ", Enum.GetNames<SaleType>())} is required."];
+            }
+        }
+
+        if (status is not null)
+        {
+            if (Enum.TryParse<SaleStatus>(status, ignoreCase: false, out var parsed) && Enum.IsDefined(parsed))
+            {
+                query = query.Where(s => s.Status == parsed);
+            }
+            else
+            {
+                errors["status"] = [$"One of {string.Join(", ", Enum.GetNames<SaleStatus>())} is required."];
+            }
+        }
+
+        // The reference a customer reads off their receipt, and therefore the only search that
+        // matters at a counter. Index-backed by ux_sale_tenant_sale_number.
+        if (saleNumber is { } number)
+        {
+            query = query.Where(s => s.SaleNumber == number);
+        }
+
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
         var results = await query.ToPageAsync(
             s => s.CompletedAt,
             s => new SaleSummaryResponse(
@@ -214,12 +335,61 @@ public static class SaleEndpoints
                 s.RegisterId,
                 s.ShiftId,
                 s.CashierId,
+
+                // Left joins in LINQ form, so a cashier or register that has since been removed
+                // leaves a readable row rather than dropping the sale out of its own history.
+                db.Users.Where(u => u.Id == s.CashierId).Select(u => u.DisplayName).FirstOrDefault()
+                    ?? "Unknown",
+                db.Registers.Where(r => r.Id == s.RegisterId).Select(r => r.Name).FirstOrDefault()
+                    ?? "Unknown",
+                s.OriginalSaleId,
                 (decimal)s.Total,
                 s.CompletedAt),
             page,
-            cancellationToken);
+            cancellationToken,
+
+            // Newest first, unlike every other list in this API. A history whose first page is
+            // the shop's very first sales is unusable at a counter: the transaction anybody is
+            // looking for happened today, and the stock ledger's oldest-first rule is for a
+            // different question — "why is this number wrong?" is read forwards.
+            descending: true);
 
         return TypedResults.Ok(results);
+    }
+
+    /// <summary>
+    /// Reads a <c>yyyy-MM-dd</c> filter bound, recording a field error if it is not one.
+    /// </summary>
+    /// <remarks>
+    /// Absent is not an error — it means "no bound". A malformed one <b>is</b>, rather than
+    /// being dropped: a date filter that silently does nothing returns more history than was
+    /// asked for, and every row in it looks legitimate.
+    /// </remarks>
+    private static bool TryReadDay(
+        string? value,
+        string field,
+        Dictionary<string, string[]> errors,
+        out DateOnly day)
+    {
+        day = default;
+
+        if (value is null)
+        {
+            return false;
+        }
+
+        if (DateOnly.TryParseExact(
+                value,
+                "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out day))
+        {
+            return true;
+        }
+
+        errors[field] = ["A date in the form 2026-08-07 is required."];
+        return false;
     }
 
     private static async Task<Results<Ok<SaleResponse>, NotFound>> GetAsync(
@@ -271,6 +441,93 @@ public static class SaleEndpoints
         }
 
         return TypedResults.Ok(await ReadAsync(db, sale, cancellationToken));
+    }
+
+    /// <summary>
+    /// The receipt for a sale — the same payload for a first print and for a reprint.
+    /// </summary>
+    /// <remarks>
+    /// <b>Rendered here, not in the browser.</b> Browser printing consumes this today, a
+    /// thermal printer through the desktop app will consume it later, and email later still.
+    /// Three independent renderers guarantee three subtly different receipts, and the one a tax
+    /// authority looks at is the wrong one.
+    /// <para>
+    /// Every amount and description comes from the sale's own rows. <see cref="ReceiptSource"/>
+    /// carries no product, so there is nothing here to join a current price to — invariant 5
+    /// made structural rather than remembered.
+    /// </para>
+    /// <para>
+    /// It is a pure read and takes no idempotency key: nothing is written, and in particular
+    /// <b>no count of copies is kept</b>. Marking a reprint is the client's job today; see
+    /// DECISIONS.md for why server-side counting waits for Phase 7.2's audit log rather than
+    /// being half-built here as a mutable column on an append-only sale.
+    /// </para>
+    /// </remarks>
+    private static async Task<Results<Ok<ReceiptResponse>, NotFound>> ReceiptAsync(
+        Guid id,
+        AppDbContext db,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var sale = await db.Sales.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+
+        if (sale is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var lines = await db.SaleLines
+            .AsNoTracking()
+            .Where(l => l.SaleId == sale.Id)
+            .ToListAsync(cancellationToken);
+
+        var tenders = await db.Tenders
+            .AsNoTracking()
+            .Where(t => t.SaleId == sale.Id)
+            .ToListAsync(cancellationToken);
+
+        // Not filtered by tenant in LINQ because Tenant is not tenant-owned — it is the tenant
+        // list. CurrentTenantId comes from the validated token, as everywhere else.
+        var shop = await db.Tenants
+            .AsNoTracking()
+            .FirstAsync(t => t.Id == db.CurrentTenantId, cancellationToken);
+
+        // Current values, deliberately. A renamed cashier is the same person, and invariant 5
+        // is about amounts. The fallbacks cover a user or register that has since been removed:
+        // a receipt that cannot print because somebody left the company is worse than one that
+        // says the name is unknown.
+        var cashierName = await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == sale.CashierId)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync(cancellationToken) ?? "Unknown";
+
+        var registerName = await db.Registers
+            .AsNoTracking()
+            .Where(r => r.Id == sale.RegisterId)
+            .Select(r => r.Name)
+            .FirstOrDefaultAsync(cancellationToken) ?? "Unknown";
+
+        // The number, not the id: it is printed for a human to quote back over a counter.
+        long? originalSaleNumber = null;
+
+        if (sale.OriginalSaleId is { } originalId)
+        {
+            var original = await db.Sales
+                .AsNoTracking()
+                .Where(s => s.Id == originalId)
+                .Select(s => (long?)s.SaleNumber)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            originalSaleNumber = original;
+        }
+
+        var receipt = ReceiptBuilder.Build(
+            new ReceiptSource(sale, lines, tenders, shop, cashierName, registerName, originalSaleNumber),
+            TenantTimeZone.Resolve(shop.TimeZoneId),
+            timeProvider.GetUtcNow());
+
+        return TypedResults.Ok(ReceiptResponse.From(receipt, sale.Id, sale.OriginalSaleId));
     }
 
     /// <summary>
@@ -984,6 +1241,51 @@ public static class SaleEndpoints
             .Select(t => new SaleTenderResponse(t.Method, (decimal)t.Amount, (decimal?)t.ChangeGiven))
             .ToListAsync(cancellationToken);
 
+        /*
+         * The refunds written against this sale — the direction that is easy to leave out.
+         *
+         * A refund knows its original through OriginalSaleId. Without the reverse, somebody
+         * looking at a sale a customer has brought back cannot see it was already refunded, and
+         * refunds it a second time. Voided refunds are excluded: they reversed nothing.
+         */
+        var refunds = await db.Sales
+            .AsNoTracking()
+            .Where(s => s.OriginalSaleId == sale.Id && s.Status != SaleStatus.Voided)
+            .OrderBy(s => s.SaleNumber)
+            .Select(s => new LinkedRefundResponse(
+                s.Id, s.SaleNumber, (decimal)s.Total, s.CompletedAt))
+            .ToListAsync(cancellationToken);
+
+        var originalSaleNumber = sale.OriginalSaleId is { } originalId
+            ? await db.Sales
+                .AsNoTracking()
+                .Where(s => s.Id == originalId)
+                .Select(s => (long?)s.SaleNumber)
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+
+        // Current values, like a receipt's. Invariant 5 is about amounts; a renamed cashier is
+        // the same person, and a history naming who they used to be helps nobody.
+        var names = await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == sale.CashierId)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var registerName = await db.Registers
+            .AsNoTracking()
+            .Where(r => r.Id == sale.RegisterId)
+            .Select(r => r.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var voidedByName = sale.VoidedBy is { } voidedBy
+            ? await db.Users
+                .AsNoTracking()
+                .Where(u => u.Id == voidedBy)
+                .Select(u => u.DisplayName)
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+
         return new SaleResponse(
             sale.Id,
             sale.SaleNumber,
@@ -997,6 +1299,19 @@ public static class SaleEndpoints
             tenders.Sum(t => t.ChangeGiven ?? 0m),
             sale.CompletedAt,
             lines,
-            tenders);
+            tenders,
+            sale.RegisterId,
+            sale.ShiftId,
+            sale.CashierId,
+            names ?? "Unknown",
+            registerName ?? "Unknown",
+            sale.TaxMode,
+            sale.OriginalSaleId,
+            originalSaleNumber,
+            sale.VoidedAt,
+            voidedByName,
+            sale.VoidReason,
+            sale.RefundReason,
+            refunds);
     }
 }

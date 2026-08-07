@@ -12,6 +12,10 @@ import { ProductListPage } from '@/features/catalog/ProductListPage'
 import { TaxClassesPage } from '@/features/catalog/TaxClassesPage'
 import { StockPage } from '@/features/catalog/StockPage'
 import { RegisterPage } from '@/features/register/RegisterPage'
+import { SaleDetailPage } from '@/features/sales/SaleDetailPage'
+import { SaleListPage } from '@/features/sales/SaleListPage'
+import { DailyReportPage } from '@/features/reports/DailyReportPage'
+import { ShiftReportPage } from '@/features/reports/ShiftReportPage'
 
 /**
  * Routes.
@@ -62,6 +66,30 @@ export const router = createBrowserRouter([
               { path: 'products/:productId', element: <ProductDetailPage /> },
               { path: 'categories', element: <CategoriesPage /> },
               { path: 'tax-classes', element: <TaxClassesPage /> },
+            ],
+          },
+
+          {
+            // CanSell, matching the API: looking a sale up is something that
+            // happens at the counter with a customer holding a receipt.
+            path: 'sales',
+            element: <RequirePolicy policy="CanSell" />,
+            children: [
+              { index: true, element: <SaleListPage /> },
+              { path: ':saleId', element: <SaleDetailPage /> },
+            ],
+          },
+
+          {
+            // CanCloseShift, matching the API. The expected cash in a drawer is
+            // not a cashier's business — knowing it is knowing what a till would
+            // tolerate.
+            path: 'reports',
+            element: <RequirePolicy policy="CanCloseShift" />,
+            children: [
+              { index: true, element: <Navigate to="/reports/daily" replace /> },
+              { path: 'daily', element: <DailyReportPage /> },
+              { path: 'shift/:shiftId', element: <ShiftReportPage /> },
             ],
           },
 

@@ -18,7 +18,14 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
             .HasBoundedText(t => t.Slug, "slug", Tenant.SlugMaxLength)
             .HasBoundedText(t => t.CurrencyCode, "currency_code", 3)
             .HasBoundedText(t => t.TimeZoneId, "time_zone_id", 64)
-            .HasEnumAsText(t => t.TaxMode, "tax_mode");
+            .HasEnumAsText(t => t.TaxMode, "tax_mode")
+
+            // The receipt header block. All nullable: a shop that has not filled them in
+            // still prints a receipt, with the lines it has no content for simply absent.
+            .HasBoundedText(t => t.AddressLine, "address_line", Tenant.AddressLineMaxLength)
+            .HasBoundedText(t => t.TaxNumber, "tax_number", Tenant.TaxNumberMaxLength)
+            .HasBoundedText(t => t.ReceiptHeader, "receipt_header", Tenant.ReceiptTextMaxLength)
+            .HasBoundedText(t => t.ReceiptFooter, "receipt_footer", Tenant.ReceiptTextMaxLength);
 
         // Unique across the platform, not per tenant — it is the pre-authentication
         // handle a client presents at login, so two tenants sharing one is not a

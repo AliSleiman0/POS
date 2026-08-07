@@ -74,6 +74,18 @@ export const MANAGER_NAME = 'Sam Cole'
  */
 export const PASSWORD = process.env['POS_SEED_PASSWORD'] ?? 'Dev-Password-1'
 
+/**
+ * The receipt footer this run's shop prints.
+ *
+ * Set on every run rather than only at creation, because `pos_e2e` is seeded and
+ * not dropped: a tenant created before Phase 6.1 would otherwise have nulls in
+ * the four receipt columns for ever, and the receipt spec would be asserting
+ * against an unconfigured shop. Passing it also exercises the seeder's
+ * change-an-existing-tenant branch, which is the only way the field can be
+ * reached at all until there is a `PUT /settings`.
+ */
+export const RECEIPT_FOOTER = 'Returns within 30 days with this receipt.'
+
 export const OWNER_EMAIL = `owner@${TENANT_SLUG}.test`
 export const MANAGER_EMAIL = `manager@${TENANT_SLUG}.test`
 export const CASHIER_EMAIL = `cashier@${TENANT_SLUG}.test`
@@ -125,6 +137,8 @@ export function seedDatabase(): SeedResult {
     PASSWORD,
     '--cashier-pin',
     CASHIER_PIN,
+    '--receipt-footer',
+    RECEIPT_FOOTER,
     '--rotate-device-token',
   ])
 

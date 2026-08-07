@@ -139,7 +139,8 @@ public static class ProductEndpoints
     private const string BarcodeConstraint = "ux_barcode_tenant_code";
 
     /// <summary>Longest <c>?q=</c> accepted, so a pathological pattern cannot be handed to the index.</summary>
-    private const int MaxSearchTermLength = 200;
+    /// <summary>Shared with <c>GET /stock</c>, so both refuse an over-long term the same way.</summary>
+    internal const int MaxSearchTermLength = 200;
 
     public static IEndpointRouteBuilder MapProductEndpoints(this IEndpointRouteBuilder builder)
     {
@@ -243,18 +244,7 @@ public static class ProductEndpoints
 
         if (!string.IsNullOrEmpty(term))
         {
-            // Escaped before it becomes a pattern. Without this, q=% matches every product
-            // and q=_ matches every single-character name — the caller would be writing the
-            // LIKE pattern rather than searching with it.
-            var pattern = $"%{Escape(term)}%";
-
-            // Name is a case-insensitive contains, served by ix_product_tenant_name_trgm.
-            // SKU is an exact match on the normalised term against ux_product_tenant_sku:
-            // SKUs are short, trigrams need three non-wildcard characters to be selective,
-            // and what staff actually do with a SKU is type or scan the whole thing.
-            var sku = Product.NormalizeSku(term);
-
-            query = query.Where(p => EF.Functions.ILike(p.Name, pattern, "\\") || p.Sku == sku);
+            query = query.Where(MatchesSearchTerm(term));
         }
 
         var canViewMargins = await CanViewMarginsAsync(caller, authorization);
@@ -769,6 +759,32 @@ public static class ProductEndpoints
             string.IsNullOrEmpty(trimmedDescription) ? null : trimmedDescription,
             parsedUnit,
             errors);
+    }
+
+    /// <summary>
+    /// What <c>?q=</c> matches — <b>the one definition</b>, shared with <c>GET /stock</c>.
+    /// </summary>
+    /// <remarks>
+    /// Name is a case-insensitive contains, served by <c>ix_product_tenant_name_trgm</c>. SKU is
+    /// an exact match on the normalised term against <c>ux_product_tenant_sku</c>: SKUs are
+    /// short, trigrams need three non-wildcard characters to be selective, and what staff do
+    /// with a SKU is type or scan the whole thing.
+    /// <para>
+    /// Shared rather than copied because the stock screen and the catalog screen search the same
+    /// products, and two implementations would eventually disagree — a shopkeeper would find
+    /// that one screen locates an item the other cannot, which reads as data missing rather than
+    /// as a search behaving differently.
+    /// </para>
+    /// </remarks>
+    internal static Expression<Func<Product, bool>> MatchesSearchTerm(string term)
+    {
+        // Escaped before it becomes a pattern. Without this, q=% matches every product and q=_
+        // matches every single-character name — the caller would be writing the LIKE pattern
+        // rather than searching with it.
+        var pattern = $"%{Escape(term)}%";
+        var sku = Product.NormalizeSku(term);
+
+        return p => EF.Functions.ILike(p.Name, pattern, "\\") || p.Sku == sku;
     }
 
     /// <summary>

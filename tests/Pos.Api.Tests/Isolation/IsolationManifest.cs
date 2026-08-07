@@ -333,6 +333,21 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "GET api/v1/sales/{id:guid}/receipt",
+            Kind = IsolationKind.ById,
+
+            // A Cashier: CanSell, because handing a customer their receipt is the last step of
+            // serving them and a reprint is asked for at the counter.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+
+            // A read, so the 404 is the whole assertion — and it has teeth here: tenant B's own
+            // first sale has lines and a tender, so an unscoped handler would answer 200 with
+            // somebody else's takings, cashier name and shop address on it.
+        },
+        new()
+        {
             Key = "GET api/v1/stock/discrepancies",
             Kind = IsolationKind.Collection,
             Paginated = true,
@@ -429,6 +444,50 @@ public static class IsolationManifest
             VictimId = w => w.A.Sales.OpenShiftId,
             Body = _ => new { type = "Drop", amount = -50m, reason = "Attempt" },
             AssertUntouched = AssertNeitherTenantGainedACashMovement,
+        },
+        new()
+        {
+            Key = "GET api/v1/shifts/{id:guid}/report",
+            Kind = IsolationKind.ById,
+
+            // CanCloseShift, so a Cashier is turned away as well as another tenant. The
+            // expected cash in a drawer is not a cashier's business — knowing it is knowing
+            // what a till would tolerate.
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.ClosedShiftId,
+
+            // The 404 has teeth: tenant B's own closed shift has four sales and a tender
+            // behind it, so an unscoped handler would answer 200 with another shop's takings.
+        },
+        new()
+        {
+            Key = "GET api/v1/reports/daily",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "No id in the URL — the date is a query parameter — and the response is "
+                      + "one object rather than a list, so neither shape fits. The tenancy "
+                      + "question for it is whether one shop's day can contain another's "
+                      + "takings, which the by-id theory could not ask: both tenants trade on "
+                      + "the same dates, so the answer is a 200 with the caller's own figures "
+                      + "rather than a 404. Covered by "
+                      + "ReportTests.A_days_report_contains_none_of_another_tenants_takings, "
+                      + "which seeds identical sales in both and asserts the totals do not double.",
+        },
+        new()
+        {
+            Key = "GET api/v1/reports/margins",
+            Kind = IsolationKind.Exempt,
+
+            // The only endpoint in the manifest a Manager must be refused from. CanViewMargins
+            // is Owner-only because cost prices are the owner's commercial position.
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A window in query parameters, like the daily report, and the same "
+                      + "reasoning. Covered for tenancy by "
+                      + "ReportTests.A_margin_report_contains_none_of_another_tenants_products "
+                      + "and for authorization by ReportTests.A_manager_cannot_read_margins — "
+                      + "the manifest's Refused actors cannot express 'Manager', because the "
+                      + "two-tenant world has no manager in it.",
         },
         new()
         {

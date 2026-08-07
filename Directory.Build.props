@@ -29,7 +29,20 @@
     <NuGetAuditLevel>low</NuGetAuditLevel>
 
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      ICU on, deliberately. This was the ASP.NET template's default (true) until Phase 6.1,
+      and it is incompatible with what this product is: every tenant carries an IANA
+      TimeZoneId, and under invariant globalization Windows cannot resolve one at all
+      (TimeZoneNotFoundException on "Europe/Dublin") while Linux still can from its own tz
+      files. That is worse than either answer on its own — receipts and trading-day reports
+      would work on the runner and fail on a developer's machine.
+
+      CLAUDE.md invariant 8 depends on this: UTC in storage, the tenant's zone at the edge.
+      Culture-sensitive comparisons are not a new risk, because the analyzers already require
+      an explicit StringComparison or CultureInfo everywhere and warnings are errors.
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
   <!-- Test projects are never packed and never shipped -->

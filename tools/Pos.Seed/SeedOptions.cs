@@ -35,6 +35,24 @@ public sealed record SeedOptions
     public const string DefaultCashierPin = "4821";
     public const string DefaultManagerPin = "7391";
 
+    /// <summary>
+    /// The receipt header block a newly seeded shop gets.
+    /// </summary>
+    /// <remarks>
+    /// Filled in rather than left null, because a receipt with no address and no tax number
+    /// looks finished when it is not — the fields are optional in the column and legally
+    /// required on the paper, and a dev shop that never exercises them is how the gap survives
+    /// to a real customer. Multi-line on purpose: the renderer has to cope with that.
+    /// </remarks>
+    public const string DefaultAddressLine = "14 Harbour Road\nDún Laoghaire\nCo. Dublin A96 X2P4";
+
+    public const string DefaultTaxNumber = "IE1234567FA";
+
+    public const string DefaultReceiptHeader = "Open 7 days · 01 555 0134";
+
+    public const string DefaultReceiptFooter =
+        "Thank you. Returns within 30 days with this receipt.";
+
     public required string ConnectionString { get; init; }
 
     /// <summary>Already normalised through <see cref="Tenant.NormalizeSlug"/>.</summary>
@@ -72,6 +90,17 @@ public sealed record SeedOptions
     public required decimal? CashRoundingIncrement { get; init; }
 
     /// <summary>
+    /// The receipt footer, or null to leave it alone.
+    /// </summary>
+    /// <remarks>
+    /// Nullable for exactly the reason <see cref="CashRoundingIncrement"/> is: supplying it
+    /// <b>changes an existing tenant</b>, and there is still no <c>PUT /settings</c>, so this
+    /// is the only way to see a different footer come out of the renderer without dropping the
+    /// database. A new tenant gets <see cref="DefaultReceiptFooter"/>.
+    /// </remarks>
+    public required string? ReceiptFooter { get; init; }
+
+    /// <summary>
     /// Reissue the enrolled register's device token.
     /// </summary>
     /// <remarks>
@@ -105,6 +134,8 @@ public sealed record SeedOptions
           --cashier-pin <digits>   4-6 digits. Default: 4821
           --manager-pin <digits>   4-6 digits. Default: 7391
           --cash-rounding <amount> Smallest coin cash is rounded to, e.g. 0.05. Default: 0 (off)
+          --receipt-footer <text>  Footer printed under the totals. Applies to an existing
+                                   tenant too, like --cash-rounding.
           --rotate-device-token    Reissue the front register's device token and print it.
                                    A token is only shown at enrollment, so a re-run cannot
                                    reprint the previous one.
@@ -185,6 +216,9 @@ public sealed record SeedOptions
             CashRoundingIncrement = values.TryGetValue("cash-rounding", out var rounding)
                 ? Increment(rounding)
                 : null,
+            ReceiptFooter = values.TryGetValue("receipt-footer", out var footer)
+                ? Footer(footer)
+                : null,
             RotateDeviceToken = rotate,
             SkipCatalog = skipCatalog,
         };
@@ -193,7 +227,7 @@ public sealed record SeedOptions
     private static readonly HashSet<string> ValueOptions = new(StringComparer.Ordinal)
     {
         "connection", "slug", "name", "currency", "timezone", "password", "cashier-pin",
-        "manager-pin", "cash-rounding",
+        "manager-pin", "cash-rounding", "receipt-footer",
     };
 
     private static string Value(Dictionary<string, string> values, string name, string fallback) =>
@@ -220,6 +254,24 @@ public sealed record SeedOptions
         }
 
         return increment;
+    }
+
+    /// <summary>
+    /// A footer the column will accept.
+    /// </summary>
+    /// <remarks>
+    /// Checked here so an over-long footer fails before anything is written, rather than as a
+    /// check-constraint violation from Postgres halfway through the seed.
+    /// </remarks>
+    private static string Footer(string candidate)
+    {
+        if (candidate.Length > Tenant.ReceiptTextMaxLength)
+        {
+            throw new SeedException(
+                $"--receipt-footer must be at most {Tenant.ReceiptTextMaxLength} characters.");
+        }
+
+        return candidate;
     }
 
     private static string Pin(string candidate, string option)

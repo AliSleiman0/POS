@@ -7,6 +7,7 @@ using Pos.Core.Sales;
 using Pos.Core.Tenancy;
 using Pos.Data.Interceptors;
 using Pos.Data.Inventory;
+using Pos.Data.Reporting;
 using Pos.Data.Sales;
 using Pos.Data.Shifts;
 
@@ -84,6 +85,11 @@ public static class ServiceCollectionExtensions
         // own. The arithmetic is already pure in ShiftArithmetic, and what is left is three
         // queries and a lock.
         services.AddScoped<ShiftWriter>();
+
+        // Reads only, and behind no port either: aggregating money has to be raw SQL because
+        // EF cannot sum a value-converted property, and a port would exist only to hide a type
+        // from a project that already references this one.
+        services.AddScoped<ReportQueries>();
 
         return services;
     }

@@ -45,12 +45,18 @@ export function AppLayout() {
               <NavItem to="/">Overview</NavItem>
               <IfPolicy policy="CanSell">
                 <NavItem to="/register">Register</NavItem>
+                <NavItem to="/sales">Sales</NavItem>
               </IfPolicy>
               <IfPolicy policy="CanManageCatalog">
                 <NavItem to="/catalog">Catalog</NavItem>
                 <NavItem to="/catalog/categories">Categories</NavItem>
                 <NavItem to="/catalog/tax-classes">Tax</NavItem>
                 <NavItem to="/stock">Stock</NavItem>
+              </IfPolicy>
+              {/* A third group: reconciliation is CanCloseShift, which a Cashier
+                  does not hold and a Manager does. */}
+              <IfPolicy policy="CanCloseShift">
+                <NavItem to="/reports/daily">Reports</NavItem>
               </IfPolicy>
             </nav>
 

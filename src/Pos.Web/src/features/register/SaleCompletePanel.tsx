@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import type { components } from '@/api/schema'
+import { Button } from '@/components/ui/button'
+import { ReceiptDialog } from '@/features/sales/ReceiptDialog'
 import { formatMoney, parseServerDecimal } from '@/lib/money'
 import type { SaleProvenance } from './queries'
 
@@ -32,6 +35,8 @@ export function SaleCompletePanel({
 }) {
   const change = parseServerDecimal(sale.changeGiven)
   const rounding = parseServerDecimal(sale.roundingAdjustment)
+
+  const [printing, setPrinting] = useState(false)
 
   return (
     <section
@@ -102,12 +107,37 @@ export function SaleCompletePanel({
         ) : null}
       </dl>
 
-      <p className="text-xs text-muted-foreground">
-        {/* Honest about what is not here yet, as `Take cash` was before this
-            milestone built it. A stub that pretended to print would be worse. */}
-        Scan the next item to start a new sale. Printed receipts arrive in a later milestone; the
-        sale is in the history meanwhile.
-      </p>
+      {/* Offered, never automatic. Most customers do not want paper, and a till
+          that printed on every sale would spool a roll a day into a bin — but
+          more to the point, `window.print()` blocks the tab, and a queue does
+          not wait for a dialog nobody asked for. */}
+      {sale.id !== null ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          onClick={() => {
+            setPrinting(true)
+          }}
+        >
+          Print receipt
+        </Button>
+      ) : null}
+
+      <p className="text-xs text-muted-foreground">Scan the next item to start a new sale.</p>
+
+      {/* An original, not a reprint: this is the sale that was just rung, and
+          the copy the customer is handed at the counter. Anything printed from
+          history afterwards is marked. */}
+      {printing && sale.id !== null ? (
+        <ReceiptDialog
+          saleId={sale.id}
+          isReprint={false}
+          onClose={() => {
+            setPrinting(false)
+          }}
+        />
+      ) : null}
     </section>
   )
 }

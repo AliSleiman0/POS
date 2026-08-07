@@ -17,11 +17,13 @@ Contents: tenant header (name, address, tax number), sale number, timestamp in t
 Reads only snapshotted `SaleLine` data — never current catalog prices (Phase 3.3).
 
 **Exit criteria**
-- [ ] Structured payload, all amounts from snapshots
-- [ ] Tax broken down by rate, and the parts sum to `TaxTotal`
-- [ ] Timestamp in the tenant's timezone, not UTC
-- [ ] Refund and voided-sale receipts render correctly (a refund receipt is not just a negative sale receipt — it needs to say what it is)
-- [ ] Configurable header/footer per tenant
+- [x] Structured payload, all amounts from snapshots — `ReceiptSource` carries no product, so there is nothing to join a current price to
+- [x] Tax broken down by rate, and the parts sum to `TaxTotal` — residue placed on the largest group, as `DiscountApportionment` does; pinned by a property test over 400 random mixed-rate baskets in both tax modes, and falsified (removing the residue step went red on basket 0 while every hand-written example still passed)
+- [x] Timestamp in the tenant's timezone, not UTC — and this is what found `InvariantGlobalization=true`, latent since Phase 0, which made an IANA zone unresolvable on Windows. See `DECISIONS.md`.
+- [x] Refund and voided-sale receipts render correctly — `ReceiptKind`, with status checked before type so a voided refund prints as a void
+- [x] Configurable header/footer per tenant — `AddressLine`, `TaxNumber`, `ReceiptHeader`, `ReceiptFooter`, all nullable so a shop that has filled none of them in still prints
+
+**Not done here:** the register's receipt *button*, which is 6.2's — the payload has to exist before there is anything to print.
 
 ## 6.2 Browser printing
 
@@ -33,10 +35,14 @@ Reads only snapshotted `SaleLine` data — never current catalog prices (Phase 3
 - Also offer a plain-A4 fallback for shops printing to an office printer before they buy a thermal one
 
 **Exit criteria**
-- [ ] Print preview correct at 80mm
-- [ ] Reprint works and is labelled
-- [ ] No layout overflow on long product names (wrap, don't clip — a clipped name on a receipt is a dispute)
-- [ ] A4 fallback readable
+- [x] Print preview correct at 80mm — and the preview *is* the printed element, rendered once through a portal outside `#root`, so it cannot drift from the output. Checked with real print-media pixels, which is what caught the roll stretching to the full page width: `@page { size: 80mm auto }` is ignored by emulation and by "save as PDF" at a chosen paper size, so the width is stated rather than inferred.
+- [x] Reprint works and is labelled — `REPRINT` plus `issuedAtLocal`. Client-decided; see `DECISIONS.md` for why, and for the limitation that leaves.
+- [x] No layout overflow on long product names — `overflow-wrap: anywhere`, with a Vitest case asserting an 80-character name reaches the DOM whole
+- [x] A4 fallback readable — a toggle that swaps the `@page` box, since `@page` is document-level and cannot be selected by class
+
+**Also here, and owed from Phase 5:** the completion panel's receipt action. It said "printed receipts arrive in a later milestone" rather than stubbing a button; it now prints, and prints an *original*.
+
+**`window.print()` blocks the tab, and that is accepted narrowly.** Invariant 10 bans `alert`/`confirm`/`prompt` because they stall a queue while a scanner types into whatever has focus afterwards; the difference is that a cashier pressed a button marked Print and is looking at the printer. The rule that follows: nothing auto-prints, pinned by an e2e test that stubs `window.print` and asserts the count is still zero after a sale completes and the preview opens.
 
 ## 6.3 Z-report / daily sales
 
@@ -56,12 +62,22 @@ Per shift and per business day:
 `GET /reports/margins` is Owner-only (`CanViewMargins`).
 
 **Exit criteria**
-- [ ] Z-report totals reconcile with the underlying sales, verified by a test that builds sales and asserts the report
-- [ ] Cash variance arithmetic correct across sales, refunds, drops and payouts
-- [ ] Business-day boundary correct — test a 23:30 and a 01:30 sale under a tenant with a 04:00 day start
-- [ ] Voids/refunds listed with actor and reason
-- [ ] Margins Owner-only, with a negative test
-- [ ] A day with no sales renders as zeroes, not an error
+- [x] Z-report totals reconcile with the underlying sales, verified by a test that builds sales through the real endpoints and asserts the report against them. **This is what found the report's version of the receipt bug** — the header is rounded once per sale and the lines are stored at four places, so the tax rows came to €2.8980 against a headline of €2.9000. `Reconciliation.RoundToSum` is now shared by both.
+- [x] Cash variance arithmetic correct across sales, refunds, drops and payouts — one test with all four, then a close, asserting the report switches from a live figure to the stored one
+- [x] Rounding adjustments reconcile — under a tenant with a **5c increment**, which is the only configuration where this can fail. Every other report test runs with no increment, so `rounding` was zero and the identity held trivially; the test asserts it is non-zero before asserting it adds up.
+- [x] Business-day boundary correct — the 23:30/01:30 test under a 04:00 day start, plus both clock changes; falsified against the naive "convert, subtract, take the date", which is right on 363 days a year
+- [x] Voids/refunds listed with actor and reason
+- [x] Margins Owner-only, with a negative test (a Manager gets 403)
+- [x] A day with no sales renders as zeroes, not an error
+
+**Screens** (not in the original §6.3, added because the phase's goal is a person reading the number): `features/reports/` with a daily report and a per-shift Z-report, plus a nav entry under `CanCloseShift` — the first thing in the app gated on that policy.
+
+**Scope**: `/reports/sales-summary` and `/reports/top-products` are documented in `docs/API.md` and **deferred**, marked there rather than silently skipped. `/reports/daily` covers the single-day case and nothing has a screen for the other two.
+
+**Two things found on the way out, both real and both fixed here:**
+
+1. **A shift was scoped by the day it opened.** An overnight drawer's sales fall in today's window, so the report showed a day of cash takings with no opening float behind them and no shift to say the drawer was uncounted — it read as fully reconciled. Scoped by overlap now.
+2. **`GET /stock` ignored `?q=`.** The web client has sent it since 4.3; the handler never declared the parameter. The stock screen's search box has never filtered — it returned an unfiltered first page, which looked right for as long as the shop had fewer products than a page. Fixed by sharing `/products`' predicate, with three tests that go red without it. Not Phase 6's work, but it was blocking Phase 6's suite and shipping a control that does nothing.
 
 ## 6.4 Sale history
 
@@ -74,11 +90,13 @@ Per shift and per business day:
 - Search by sale number — the reference a customer reads off their receipt, and therefore the only search that matters at a counter
 
 **Exit criteria**
-- [ ] Filters work and compose
-- [ ] Detail shows snapshots and refund linkage both ways
-- [ ] Refund initiation gated and audited
-- [ ] Search by sale number
-- [ ] Cursor pagination handles a large history without slowing down
+- [x] Filters work and compose — ANDed, with a test that uses two at once, which is the case a handler that reassigned its query instead of chaining would get wrong and one-filter-each would never catch
+- [x] Detail shows snapshots and refund linkage both ways — and a **voided** refund drops off the original's list, because it reversed nothing
+- [x] Refund initiation gated on `CanRefund`, in an in-page dialog, with the idempotency key minted when the dialog opens and reused on every attempt. Falsified: minting per render makes the two attempts carry different keys and the test goes red. *Audited* in the Phase 7.2 sense is still 7.2's — the reason and the actor are on the refund row, which is the whole trail until the audit log exists.
+- [x] Search by sale number, as the prominent control rather than one filter among six
+- [x] Cursor pagination handles a large history — a page-walk test sees every sale exactly once
+
+**Newest first**, unlike every other list in this API — added after looking at the screen, which opened on the shop's first ever sale. `CursorPaging` gained a per-endpoint direction rather than a global one, so the catalog still reads A to Z and the stock ledger still reads forwards. The keyset predicate flips with the ordering: two templates rather than a negation, because `NOT (a > b)` also admits the row the cursor is sitting on and the page would repeat itself for ever. Falsified — a predicate pointing the wrong way loses four of seven sales.
 
 ---
 

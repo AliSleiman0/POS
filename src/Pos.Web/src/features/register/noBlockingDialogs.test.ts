@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
 /**
- * Every source file in this folder, as text.
+ * Every source file in the register and the receipt, as text.
  *
  * `import.meta.glob` rather than `node:fs`: `tsconfig.app.json` covers `src`
  * only and deliberately excludes Node's globals, because application code must
  * not be able to reach them. Vite resolves this at build time and it stays
  * inside the same project as the code it reads.
+ *
+ * `features/sales` joined the scan in 6.2. It is reached *from* the register —
+ * the completion panel opens a receipt with a customer at the counter — so it is
+ * the same screen as far as a stalled queue is concerned, and it is where the
+ * temptation comes back: `confirm('Print this receipt?')` is a one-liner.
  */
-const SOURCES = import.meta.glob('./*.{ts,tsx}', {
+const SOURCES = import.meta.glob(['./*.{ts,tsx}', '../sales/*.{ts,tsx}'], {
   query: '?raw',
   eager: true,
   import: 'default',
@@ -27,8 +32,8 @@ const SOURCES = import.meta.glob('./*.{ts,tsx}', {
  * the rule gets a test in the milestone that would have broken it. Both are
  * in-page dialogs instead: `LineAdjustDialog` and `ManagerAuthorizationDialog`.
  */
-describe('the register', () => {
-  it('opens no blocking browser dialogs', () => {
+describe('the register and the receipt', () => {
+  it('open no blocking browser dialogs', () => {
     const offenders: string[] = []
 
     for (const [file, contents] of Object.entries(SOURCES)) {

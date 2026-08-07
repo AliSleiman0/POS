@@ -1307,6 +1307,7 @@ export interface paths {
         query?: {
           cursor?: string
           limit?: number | string
+          q?: string
           belowReorderPoint?: boolean
           activeOnly?: boolean
         }
@@ -1729,6 +1730,51 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/shifts/{id}/report': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The Z-report for one shift */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ReportResponse']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/sales': {
     parameters: {
       query?: never
@@ -1745,6 +1791,11 @@ export interface paths {
           registerId?: string
           shiftId?: string
           cashierId?: string
+          from?: string
+          to?: string
+          type?: string
+          status?: string
+          saleNumber?: number | string
         }
         header?: never
         path?: never
@@ -1888,6 +1939,51 @@ export interface paths {
           }
           content: {
             'application/json': components['schemas']['SaleResponse']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/sales/{id}/receipt': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The receipt payload for a sale, rendered server-side */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ReceiptResponse']
           }
         }
         /** @description Not Found */
@@ -2074,6 +2170,101 @@ export interface paths {
         }
       }
     }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/reports/daily': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The trading day's report */
+    get: {
+      parameters: {
+        query?: {
+          date?: string
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ReportResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/reports/margins': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Margin by product over a window. Owner only */
+    get: {
+      parameters: {
+        query?: {
+          from?: string
+          to?: string
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['MarginReportResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
     delete?: never
     options?: never
     head?: never
@@ -2279,6 +2470,16 @@ export interface components {
         [key: string]: string[]
       }
     }
+    LinkedRefundResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: int64 */
+      saleNumber: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: date-time */
+      completedAt: string
+    }
     LoginRequest: {
       tenantSlug: string
       email: string
@@ -2286,6 +2487,30 @@ export interface components {
     }
     LogoutRequest: {
       refreshToken: string
+    }
+    MarginLineResponse: {
+      /** Format: uuid */
+      productId: string
+      description: string
+      /** Format: double */
+      quantity: number | string
+      /** Format: double */
+      revenue: number | string
+      /** Format: double */
+      cost: null | number | string
+      /** Format: double */
+      margin: null | number | string
+    }
+    MarginReportResponse: {
+      scope: components['schemas']['ReportScopeResponse']
+      currencyCode: string
+      /** Format: double */
+      revenue: number | string
+      /** Format: double */
+      cost: null | number | string
+      /** Format: double */
+      margin: null | number | string
+      lines: components['schemas']['MarginLineResponse'][]
     }
     MeResponse: {
       user: components['schemas']['AuthUser']
@@ -2344,6 +2569,86 @@ export interface components {
       /** Format: date-time */
       updatedAt: null | string
     }
+    /** @enum {unknown} */
+    ReceiptKind: 'Sale' | 'Refund' | 'VoidedSale'
+    ReceiptLineResponse: {
+      /** Format: int32 */
+      lineNumber: number | string
+      description: string
+      /** Format: double */
+      quantity: number | string
+      /** Format: double */
+      unitPrice: number | string
+      /** Format: double */
+      taxRate: number | string
+      /** Format: double */
+      discount: number | string
+      /** Format: double */
+      lineTotal: number | string
+      isPriceOverridden: boolean
+    }
+    ReceiptResponse: {
+      kind: components['schemas']['ReceiptKind']
+      shop: components['schemas']['ReceiptShopResponse']
+      /** Format: uuid */
+      saleId: string
+      /** Format: int64 */
+      saleNumber: number | string
+      /** Format: date-time */
+      completedAtLocal: string
+      /** Format: date-time */
+      issuedAtLocal: string
+      timeZoneId: string
+      cashierName: string
+      registerName: string
+      taxMode: components['schemas']['TaxMode']
+      /** Format: uuid */
+      originalSaleId: null | string
+      /** Format: int64 */
+      originalSaleNumber: null | number | string
+      voidReason: null | string
+      refundReason: null | string
+      lines: components['schemas']['ReceiptLineResponse'][]
+      taxBreakdown: components['schemas']['ReceiptTaxLineResponse'][]
+      tenders: components['schemas']['ReceiptTenderResponse'][]
+      /** Format: double */
+      subtotal: number | string
+      /** Format: double */
+      discountTotal: number | string
+      /** Format: double */
+      taxTotal: number | string
+      /** Format: double */
+      roundingAdjustment: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: double */
+      changeGiven: number | string
+    }
+    ReceiptShopResponse: {
+      name: string
+      addressLine: null | string
+      taxNumber: null | string
+      header: null | string
+      footer: null | string
+      currencyCode: string
+    }
+    ReceiptTaxLineResponse: {
+      /** Format: double */
+      rate: number | string
+      /** Format: double */
+      netAmount: number | string
+      /** Format: double */
+      taxAmount: number | string
+      /** Format: double */
+      grossAmount: number | string
+    }
+    ReceiptTenderResponse: {
+      method: components['schemas']['TenderMethod']
+      /** Format: double */
+      amount: number | string
+      /** Format: double */
+      changeGiven: null | number | string
+    }
     RefreshRequest: {
       refreshToken: string
     }
@@ -2371,6 +2676,131 @@ export interface components {
       isEnrolled: boolean
       /** Format: date-time */
       lastSeenAt: null | string
+    }
+    ReportCashMovementResponse: {
+      /** Format: uuid */
+      id: string
+      type: string
+      /** Format: double */
+      amount: number | string
+      reason: string
+      performedBy: string
+      /** Format: date-time */
+      occurredAt: string
+    }
+    ReportCashResponse: {
+      /** Format: double */
+      openingFloat: number | string
+      /** Format: double */
+      cashSales: number | string
+      /** Format: double */
+      cashRefunds: number | string
+      /** Format: double */
+      cashMovements: number | string
+      /** Format: double */
+      expected: number | string
+      /** Format: double */
+      counted: null | number | string
+      /** Format: double */
+      variance: null | number | string
+      isProvisional: boolean
+      movements: components['schemas']['ReportCashMovementResponse'][]
+    }
+    ReportResponse: {
+      scope: components['schemas']['ReportScopeResponse']
+      currencyCode: string
+      sales: components['schemas']['ReportSalesResponse']
+      taxByRate: components['schemas']['ReportTaxLineResponse'][]
+      tenders: components['schemas']['ReportTenderResponse'][]
+      cash: components['schemas']['ReportCashResponse']
+      shifts: components['schemas']['ReportShiftResponse'][]
+      voids: components['schemas']['ReportReversalResponse'][]
+      refunds: components['schemas']['ReportReversalResponse'][]
+    }
+    ReportReversalResponse: {
+      /** Format: uuid */
+      saleId: string
+      /** Format: int64 */
+      saleNumber: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: date-time */
+      at: string
+      actor: string
+      reason: null | string
+      /** Format: int64 */
+      originalSaleNumber: null | number | string
+    }
+    ReportSalesResponse: {
+      /** Format: int32 */
+      transactionCount: number | string
+      /** Format: double */
+      gross: number | string
+      /** Format: double */
+      discounts: number | string
+      /** Format: double */
+      net: number | string
+      /** Format: double */
+      tax: number | string
+      /** Format: double */
+      rounding: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: double */
+      refundTotal: number | string
+      /** Format: int32 */
+      refundCount: number | string
+      /** Format: double */
+      averageBasket: number | string
+    }
+    ReportScopeResponse: {
+      kind: string
+      /** Format: uuid */
+      shiftId: null | string
+      /** Format: date */
+      date: null | string
+      /** Format: date-time */
+      fromUtc: string
+      /** Format: date-time */
+      toUtc: string
+      timeZoneId: string
+    }
+    ReportShiftResponse: {
+      /** Format: uuid */
+      id: string
+      registerName: string
+      status: string
+      openedBy: string
+      /** Format: date-time */
+      openedAt: string
+      closedBy: null | string
+      /** Format: date-time */
+      closedAt: null | string
+      /** Format: double */
+      openingFloat: number | string
+      /** Format: double */
+      expectedCash: null | number | string
+      /** Format: double */
+      countedCash: null | number | string
+      /** Format: double */
+      variance: null | number | string
+    }
+    ReportTaxLineResponse: {
+      /** Format: double */
+      rate: number | string
+      /** Format: double */
+      net: number | string
+      /** Format: double */
+      tax: number | string
+    }
+    ReportTenderResponse: {
+      method: string
+      /** Format: double */
+      amount: number | string
+      /** Format: double */
+      changeGiven: number | string
+      /** Format: double */
+      net: number | string
     }
     SaleLineRequest: {
       /** Format: uuid */
@@ -2429,6 +2859,25 @@ export interface components {
       completedAt: null | string
       lines: components['schemas']['SaleLineResponse'][]
       tenders: components['schemas']['SaleTenderResponse'][]
+      /** Format: uuid */
+      registerId?: null | string
+      /** Format: uuid */
+      shiftId?: null | string
+      /** Format: uuid */
+      cashierId?: null | string
+      cashierName?: null | string
+      registerName?: null | string
+      taxMode?: null | components['schemas']['TaxMode']
+      /** Format: uuid */
+      originalSaleId?: null | string
+      /** Format: int64 */
+      originalSaleNumber?: null | number | string
+      /** Format: date-time */
+      voidedAt?: null | string
+      voidedByName?: null | string
+      voidReason?: null | string
+      refundReason?: null | string
+      refunds?: null | components['schemas']['LinkedRefundResponse'][]
     }
     /** @enum {unknown} */
     SaleStatus: 'Completed' | 'Voided'
@@ -2445,6 +2894,10 @@ export interface components {
       shiftId: string
       /** Format: uuid */
       cashierId: string
+      cashierName: string
+      registerName: string
+      /** Format: uuid */
+      originalSaleId: null | string
       /** Format: double */
       total: number | string
       /** Format: date-time */
@@ -2557,6 +3010,8 @@ export interface components {
       /** Format: date-time */
       updatedAt: null | string
     }
+    /** @enum {unknown} */
+    TaxMode: 'Inclusive' | 'Exclusive' | null
     TenantSettings: {
       slug: string
       name: string

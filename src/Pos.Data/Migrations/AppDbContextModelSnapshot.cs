@@ -1282,6 +1282,10 @@ namespace Pos.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("AddressLine")
+                        .HasColumnType("text")
+                        .HasColumnName("address_line");
+
                     b.Property<TimeSpan>("BusinessDayStartOffset")
                         .HasColumnType("interval")
                         .HasColumnName("business_day_start_offset");
@@ -1311,6 +1315,14 @@ namespace Pos.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("name");
 
+                    b.Property<string>("ReceiptFooter")
+                        .HasColumnType("text")
+                        .HasColumnName("receipt_footer");
+
+                    b.Property<string>("ReceiptHeader")
+                        .HasColumnType("text")
+                        .HasColumnName("receipt_header");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasColumnType("text")
@@ -1320,6 +1332,10 @@ namespace Pos.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("tax_mode");
+
+                    b.Property<string>("TaxNumber")
+                        .HasColumnType("text")
+                        .HasColumnName("tax_number");
 
                     b.Property<string>("TimeZoneId")
                         .IsRequired()
@@ -1335,17 +1351,25 @@ namespace Pos.Data.Migrations
 
                     b.ToTable("tenant", null, t =>
                         {
+                            t.HasCheckConstraint("ck_tenant_address_line_length", "length(\"address_line\") <= 500");
+
                             t.HasCheckConstraint("ck_tenant_cash_rounding_increment_range", "cash_rounding_increment >= 0");
 
                             t.HasCheckConstraint("ck_tenant_currency_code_length", "length(\"currency_code\") <= 3");
 
                             t.HasCheckConstraint("ck_tenant_name_length", "length(\"name\") <= 200");
 
+                            t.HasCheckConstraint("ck_tenant_receipt_footer_length", "length(\"receipt_footer\") <= 1000");
+
+                            t.HasCheckConstraint("ck_tenant_receipt_header_length", "length(\"receipt_header\") <= 1000");
+
                             t.HasCheckConstraint("ck_tenant_slug_format", "slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'");
 
                             t.HasCheckConstraint("ck_tenant_slug_length", "length(\"slug\") <= 63");
 
                             t.HasCheckConstraint("ck_tenant_tax_mode_allowed", "\"tax_mode\" IN ('Inclusive', 'Exclusive')");
+
+                            t.HasCheckConstraint("ck_tenant_tax_number_length", "length(\"tax_number\") <= 64");
 
                             t.HasCheckConstraint("ck_tenant_time_zone_id_length", "length(\"time_zone_id\") <= 64");
                         });

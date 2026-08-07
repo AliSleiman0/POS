@@ -142,14 +142,28 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
 
         if (existing is not null)
         {
-            // The one field a re-run may change, and only when it was asked for. There is no
-            // PUT /settings, so this is the only way to give an existing dev shop a rounding
+            // The two fields a re-run may change, and only when they were asked for. There is
+            // no PUT /settings, so this is the only way to give an existing dev shop a rounding
             // increment — and without one the register's rounding line cannot be reached from
-            // a browser at all.
+            // a browser at all. The footer is here for the same reason: it is the receipt field
+            // most worth seeing change.
+            var changed = false;
+
             if (options.CashRoundingIncrement is { } increment
                 && existing.CashRoundingIncrement != increment)
             {
                 existing.CashRoundingIncrement = increment;
+                changed = true;
+            }
+
+            if (options.ReceiptFooter is { } footer && existing.ReceiptFooter != footer)
+            {
+                existing.ReceiptFooter = footer;
+                changed = true;
+            }
+
+            if (changed)
+            {
                 await db.SaveChangesAsync();
             }
 
@@ -166,6 +180,14 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
             CurrencyCode = options.CurrencyCode,
             TimeZoneId = options.TimeZoneId,
             CashRoundingIncrement = options.CashRoundingIncrement ?? 0m,
+
+            // The receipt header block. Filled in rather than left null so a seeded shop
+            // prints a realistic receipt — a dev tenant with no address and no tax number
+            // exercises none of the lines a real one is legally required to show.
+            AddressLine = SeedOptions.DefaultAddressLine,
+            TaxNumber = SeedOptions.DefaultTaxNumber,
+            ReceiptHeader = SeedOptions.DefaultReceiptHeader,
+            ReceiptFooter = options.ReceiptFooter ?? SeedOptions.DefaultReceiptFooter,
 
             // Stamped by hand because Tenant is not a TenantEntity, so the audit
             // interceptor does not see it.

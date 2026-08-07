@@ -122,6 +122,7 @@ public static class StockEndpoints
         AppDbContext db,
         string? cursor,
         int? limit,
+        string? q,
         bool? belowReorderPoint,
         bool? activeOnly,
         CancellationToken cancellationToken)
@@ -131,6 +132,16 @@ public static class StockEndpoints
             return TypedResults.ValidationProblem(errors);
         }
 
+        var term = q?.Trim();
+
+        if (term is { Length: > ProductEndpoints.MaxSearchTermLength })
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["q"] = [$"A search term of at most {ProductEndpoints.MaxSearchTermLength} characters is required."],
+            });
+        }
+
         // Products that do not track stock are not in this list at all. A carrier bag with an
         // on-hand of zero is noise in a report whose job is to show what needs ordering.
         var query = db.Products.AsNoTracking().Where(p => p.TrackStock);
@@ -138,6 +149,16 @@ public static class StockEndpoints
         if (activeOnly ?? true)
         {
             query = query.Where(p => p.IsActive);
+        }
+
+        if (!string.IsNullOrEmpty(term))
+        {
+            // The same predicate as GET /products, through the same shared helper: a
+            // case-insensitive contains on the name served by the trigram index, plus an exact
+            // match on a normalised SKU. Two implementations of "search" would eventually
+            // disagree about what a term matches, and a shopkeeper would learn that the stock
+            // screen finds things the catalog screen does not.
+            query = query.Where(ProductEndpoints.MatchesSearchTerm(term));
         }
 
         if (belowReorderPoint ?? false)
