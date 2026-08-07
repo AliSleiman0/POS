@@ -109,7 +109,7 @@ The screen that decides whether the product is usable. Detail: [phases/PHASE-5-w
 
 Detail: [phases/PHASE-6-receipts-reporting.md](phases/PHASE-6-receipts-reporting.md)
 
-- [ ] **6.1 Receipt model** — one server-rendered payload feeding browser print, future thermal printer and email.
+- [ ] **6.1 Receipt model** — one server-rendered payload feeding browser print, future thermal printer and email. **Carries a debt from Phase 5:** the register's completion panel has no receipt action and says so, because `GET /sales/{id}/receipt` is documented and unbuilt. 6.1 builds both halves — the endpoint and the button that uses it.
 - [ ] **6.2 Browser printing** — 80mm print stylesheet; reprint from history.
 - [ ] **6.3 Z-report** — per shift and per business day: gross, discounts, tax, net, tender breakdown, cash variance, voids/refunds.
 - [ ] **6.4 Sale history** — search, filter, detail view, permission-gated refund initiation.

@@ -626,11 +626,17 @@ Called out because they are cheap now and expensive-to-impossible later:
 
 ## Current State
 
-**Phases 0–4 are complete, and Phase 5 is through 5.4.** A cashier can open the drawer, scan,
-adjust and discount a cart the server prices — with a manager's PIN authorising what they cannot
-approve alone — and take cash for it, exactly once, with change read off the server's figure.
-871 .NET tests, 138 Vitest and 31 Playwright specs — the last against a real API and a real
+**Phases 0–5 are complete.** A cashier can open the drawer, scan, adjust and discount a cart the
+server prices — with a manager's PIN authorising what they cannot approve alone — and take cash for
+it, exactly once, with change read off the server's figure. **Exactly once now holds across a
+reload**: the till comes back with the basket and the sale's GUID, and resolves an interrupted
+payment by asking the server what that GUID bought rather than submitting it again.
+877 .NET tests, 159 Vitest and 35 Playwright specs — the last against a real API and a real
 Postgres, not mocks.
 
-Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 5.5, and read
+One Phase 5 exit criterion is deliberately unmet: the receipt action on the completion panel. There
+is nothing to print until `GET /sales/{id}/receipt` exists, so the panel says so rather than
+stubbing it, and 6.1 builds both halves.
+
+Pick up at [`docs/ROADMAP.md`](docs/ROADMAP.md) → Phase 6.1, and read
 [`docs/HANDOFF.md`](docs/HANDOFF.md) first for session state.

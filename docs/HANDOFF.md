@@ -13,9 +13,13 @@
 
 ## Before anything else
 
-**Nothing is committed.** The branch is `phase-5/reload-recovery`, off `0c97db1` (the 5.4 merge).
+**Committed and pushed as `b8a8ade`; [PR #14](https://github.com/AliSleiman0/POS/pull/14) is open
+and unmerged.** Branch `phase-5/reload-recovery`, off `0c97db1` (the 5.4 merge). **Do not start 6.1
+on this branch** — either merge #14 first or branch from `main`.
+
 There is **one API change** this time — a new endpoint — so `pnpm generate:api` has been run and
-`src/api/schema.d.ts` is part of the diff. The client-drift CI job finally has something to check.
+`src/api/schema.d.ts` is in the diff. The client-drift CI job finally has something to check, and it
+is one of the two jobs that could not get a runner. Worth seeing green rather than assumed.
 
 **No migration.** The lookup rides an index that already existed
 (`ux_sale_tenant_client_transaction_id`).
@@ -25,11 +29,16 @@ never gating on the starved jobs. See the CI note below.
 
 ## Read first
 
-1. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) → §5.5, which records
+1. [`docs/phases/PHASE-6-receipts-reporting.md`](phases/PHASE-6-receipts-reporting.md) → §6.1, which
+   is next and which owes Phase 5 a receipt action.
+2. [`docs/phases/PHASE-5-web-register.md`](phases/PHASE-5-web-register.md) → §5.5, which records
    four decisions and the 5.4 hole this milestone closed.
-2. [`DECISIONS.md`](../DECISIONS.md) → the two new Phase 5.5 entries. The first says why recovery is
+3. [`DECISIONS.md`](../DECISIONS.md) → the two new Phase 5.5 entries. The first says why recovery is
    a **read** and not a re-POST, and that reasoning is load-bearing: it is the difference between a
    safe page load and one that charges people.
+4. [`CLAUDE.md`](../CLAUDE.md) → invariants **6** and **11**, both amended this session. 6 now
+   covers the request-body fingerprint and the rule never to re-submit a write to find out whether
+   it worked; 11 is new and covers what the register persists and what it must never persist.
 
 ## What landed
 
@@ -106,13 +115,25 @@ callback fires.
   it rendered. Devtools offline on `/register` with a marker in `sessionStorage` would do it.
 - **Nobody who has worked a till has used any of it.** Unchanged, and still the real bar.
 
-## CI
+## CI — Actions is not running, and this is the blocker
 
-Actions was not creating runs at all for a while yesterday — a push produced no run whatsoever, and
-before that `e2e` and `API contract` recorded `cancelled` with zero steps after 15 minutes queued
-while the other two jobs passed on the same commit. **Check `gh run list` before assuming this
-branch's CI means anything**, and remember that a run whose jobs were cancelled reports
-`conclusion: failure` at the *run* level. github.com/settings/billing is the first place to look.
+**Three separate triggers produced zero runs**: the push of `0511477`, the merge of PR #13 into
+`main`, and the push and PR for this branch. The newest run on the repo is still from 2026-08-06
+18:03. Before that, `e2e (Playwright)` and `API contract (client drift)` recorded `cancelled` with
+zero steps after 15 minutes queued, three times, while the other two jobs got machines and passed on
+the same commit.
+
+Starvation escalating to *no runs created at all* is not capacity — it is Actions being stopped for
+the repository. **github.com/settings/billing** (minutes, spending limit) is the first and probably
+only place to look; only the account owner can see it.
+
+Two things to remember when it comes back:
+
+- A run whose jobs were cancelled reports `conclusion: failure` at the **run** level. Inspect the
+  *jobs* before believing a red run.
+- `gh pr merge --admin` is not needed here — #13 merged without it, so branch protection is not
+  gating on these checks. That means a red or absent CI will **not** stop a merge; the discipline
+  has to come from reading it.
 
 ## Outstanding / deferred
 
