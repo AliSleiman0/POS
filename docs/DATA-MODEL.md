@@ -52,9 +52,10 @@ A `Money` value object in `Pos.Core` owns this. Raw `decimal` arithmetic on pric
 ### Tenancy & identity
 
 **`Tenant`** — a customer business. Not a `TenantEntity` (it *is* the tenant).
-`Id`, `Name`, `Slug` (unique), `IsActive`, `CurrencyCode`, `TimeZoneId`, `TaxMode` (`Inclusive`|`Exclusive`), `BusinessDayStartOffset`, `CreatedAt`.
+`Id`, `Name`, `Slug` (unique), `IsActive`, `CurrencyCode`, `TimeZoneId`, `TaxMode` (`Inclusive`|`Exclusive`), `BusinessDayStartOffset`, `AddressLine?`, `TaxNumber?`, `ReceiptHeader?`, `ReceiptFooter?`, `CreatedAt`.
 
 - `TimeZoneId` + `BusinessDayStartOffset` are what let a shift closing at 02:00 land on the correct trading day.
+- The four receipt fields (Phase 6.1) are all nullable, so a shop that has filled none of them in still prints a receipt — the lines it has no content for are simply absent. `AddressLine` is deliberately **one unstructured multi-line field**: a receipt prints it verbatim, nothing parses it, and street/city/postcode columns would have to be right for every country the product is sold in. `TaxNumber` is separate rather than folded into `ReceiptHeader` because it is a distinct fact a tax authority looks for and the renderer has to label it.
 - **`TaxMode` is set at onboarding and effectively immutable.** Flipping it reinterprets every stored price. EU retail quotes tax-inclusive shelf prices; US retail adds tax at the till. Getting this wrong is not a display bug, it is a wrong-price bug.
 
 **`ApplicationUser`** — `IdentityUser<Guid>` + `TenantId`, `DisplayName`, `PinHash`, `IsActive`, `LastLoginAt`.

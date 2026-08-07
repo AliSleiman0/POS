@@ -200,7 +200,7 @@ The endpoint that must not get this wrong.
 | GET | `/sales` | `CanSell` | `?registerId=&shiftId=&cashierId=`, paginated on `completedAt` |
 | GET | `/sales/{id}` | `CanSell` | Full detail with lines and tenders |
 | GET | `/sales/by-client-transaction/{id}` | `CanSell` | The sale a `clientTransactionId` produced, or `404` |
-| GET | `/sales/{id}/receipt` | `CanSell` | Render payload for print/reprint. **Not built** — Phase 6.1 |
+| GET | `/sales/{id}/receipt` | `CanSell` | Render payload for print/reprint |
 | POST 🔒 | `/sales/{id}/void` | `CanVoidSale` | `{ reason }`. Status flag + compensating stock movements |
 | POST 🔒 | `/sales/{id}/refund` | `CanRefund` | Creates a **new** linked `Refund` sale |
 | POST | `/sales/quote` | `CanSell` | Price a cart without committing |
@@ -208,6 +208,14 @@ The endpoint that must not get this wrong.
 `GET /sales` returns **every** sale regardless of type or status — voids and refunds included. A history that quietly hid them is how a manager fails to find the transaction they are looking for and concludes the system lost it. `?from=`/`?to=` are not implemented; date-range reporting is Phase 6.
 
 `POST /sales/quote` needs no register, shift, tenders or `Idempotency-Key`: it writes nothing, and a register showing a running total has not chosen a shift or taken money yet.
+
+`GET /sales/{id}/receipt` returns **one payload, rendered server-side**, for every consumer: browser print now, a thermal printer through the desktop app later, email later still. Three independent renderers guarantee three subtly different receipts, and the one a tax authority looks at is the wrong one.
+
+- **Tax is broken down by rate**, and the parts sum to `taxTotal` **exactly**. Line amounts are stored at four decimal places and the header is rounded to two, so the residue is placed on the largest group deliberately — the same construction `DiscountApportionment` uses for a cart discount. A basket of zero-rated bread and standard-rated wine has one tax total and two rates behind it, and the split is what a VAT return is filed on.
+- `completedAtLocal` and `issuedAtLocal` are in the **tenant's** zone and carry its offset. Everything else in this API is UTC; a receipt is the edge where a trading day is decided, and 23:15 printed as 22:15 is a dispute about which day something was bought on.
+- Every amount and description comes from the sale's own snapshotted rows. Nothing joins to the catalog, so a price raised on Tuesday cannot reprint Monday's receipt at the new one.
+- `kind` is `Sale`, `Refund` or `VoidedSale`, and it is not cosmetic. A refund names the sale it reverses; a voided sale says so, because an unmarked one could be presented as proof of purchase.
+- It is a pure read and **keeps no count of copies**. Marking a reprint is the client's job — see [`DECISIONS.md`](../DECISIONS.md#receipt-reprints-are-marked-by-the-client-phase-62).
 
 `GET /sales/by-client-transaction/{id}` answers **"did this key buy anything?"** It exists for a till that lost the answer to a `POST /sales` — a reload mid-payment, a dropped response — and holds nothing but the GUID it sent. The two possible truths need opposite actions from the cashier: read the change out, or take the payment again. The alternative is re-POSTing and letting idempotency reply, which works when the sale landed and *takes the money* when it did not, on a page load, with nobody having pressed anything. A key that reached the server but bought nothing — a refused under-tender, say, which still writes an idempotency record — is a `404` here, because the question is about the sale and not about the key.
 

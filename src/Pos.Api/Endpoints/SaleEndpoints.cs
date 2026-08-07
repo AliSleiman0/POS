@@ -8,6 +8,7 @@ using Pos.Api.Idempotency;
 using Pos.Core.Entities;
 using Pos.Core.Monetary;
 using Pos.Core.Pricing;
+using Pos.Core.Receipts;
 using Pos.Core.Sales;
 using Pos.Core.Tenders;
 using Pos.Data;
@@ -136,6 +137,12 @@ public static class SaleEndpoints
         sales.MapGet("/by-client-transaction/{clientTransactionId:guid}", GetByClientTransactionAsync)
             .RequireAuthorization(Policies.CanSell)
             .WithSummary("The sale a client transaction id produced, if it produced one");
+
+        // CanSell, like the sale itself: handing a customer their receipt is the last step of
+        // serving them, and a reprint is asked for at a counter by whoever is standing there.
+        sales.MapGet("/{id:guid}/receipt", ReceiptAsync)
+            .RequireAuthorization(Policies.CanSell)
+            .WithSummary("The receipt payload for a sale, rendered server-side");
 
         // Priced but not committed, so no idempotency key: nothing is written, and a replay is
         // simply the same arithmetic again.
@@ -271,6 +278,93 @@ public static class SaleEndpoints
         }
 
         return TypedResults.Ok(await ReadAsync(db, sale, cancellationToken));
+    }
+
+    /// <summary>
+    /// The receipt for a sale — the same payload for a first print and for a reprint.
+    /// </summary>
+    /// <remarks>
+    /// <b>Rendered here, not in the browser.</b> Browser printing consumes this today, a
+    /// thermal printer through the desktop app will consume it later, and email later still.
+    /// Three independent renderers guarantee three subtly different receipts, and the one a tax
+    /// authority looks at is the wrong one.
+    /// <para>
+    /// Every amount and description comes from the sale's own rows. <see cref="ReceiptSource"/>
+    /// carries no product, so there is nothing here to join a current price to — invariant 5
+    /// made structural rather than remembered.
+    /// </para>
+    /// <para>
+    /// It is a pure read and takes no idempotency key: nothing is written, and in particular
+    /// <b>no count of copies is kept</b>. Marking a reprint is the client's job today; see
+    /// DECISIONS.md for why server-side counting waits for Phase 7.2's audit log rather than
+    /// being half-built here as a mutable column on an append-only sale.
+    /// </para>
+    /// </remarks>
+    private static async Task<Results<Ok<ReceiptResponse>, NotFound>> ReceiptAsync(
+        Guid id,
+        AppDbContext db,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var sale = await db.Sales.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+
+        if (sale is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var lines = await db.SaleLines
+            .AsNoTracking()
+            .Where(l => l.SaleId == sale.Id)
+            .ToListAsync(cancellationToken);
+
+        var tenders = await db.Tenders
+            .AsNoTracking()
+            .Where(t => t.SaleId == sale.Id)
+            .ToListAsync(cancellationToken);
+
+        // Not filtered by tenant in LINQ because Tenant is not tenant-owned — it is the tenant
+        // list. CurrentTenantId comes from the validated token, as everywhere else.
+        var shop = await db.Tenants
+            .AsNoTracking()
+            .FirstAsync(t => t.Id == db.CurrentTenantId, cancellationToken);
+
+        // Current values, deliberately. A renamed cashier is the same person, and invariant 5
+        // is about amounts. The fallbacks cover a user or register that has since been removed:
+        // a receipt that cannot print because somebody left the company is worse than one that
+        // says the name is unknown.
+        var cashierName = await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == sale.CashierId)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync(cancellationToken) ?? "Unknown";
+
+        var registerName = await db.Registers
+            .AsNoTracking()
+            .Where(r => r.Id == sale.RegisterId)
+            .Select(r => r.Name)
+            .FirstOrDefaultAsync(cancellationToken) ?? "Unknown";
+
+        // The number, not the id: it is printed for a human to quote back over a counter.
+        long? originalSaleNumber = null;
+
+        if (sale.OriginalSaleId is { } originalId)
+        {
+            var original = await db.Sales
+                .AsNoTracking()
+                .Where(s => s.Id == originalId)
+                .Select(s => (long?)s.SaleNumber)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            originalSaleNumber = original;
+        }
+
+        var receipt = ReceiptBuilder.Build(
+            new ReceiptSource(sale, lines, tenders, shop, cashierName, registerName, originalSaleNumber),
+            TenantTimeZone.Resolve(shop.TimeZoneId),
+            timeProvider.GetUtcNow());
+
+        return TypedResults.Ok(ReceiptResponse.From(receipt, sale.Id, sale.OriginalSaleId));
     }
 
     /// <summary>

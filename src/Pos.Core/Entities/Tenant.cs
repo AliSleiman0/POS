@@ -18,6 +18,22 @@ public sealed partial class Tenant
     /// <summary>Maximum length of <see cref="Slug"/>; also the check constraint in the database.</summary>
     public const int SlugMaxLength = 63;
 
+    /// <summary>Maximum length of <see cref="AddressLine"/>.</summary>
+    public const int AddressLineMaxLength = 500;
+
+    /// <summary>Maximum length of <see cref="TaxNumber"/>.</summary>
+    public const int TaxNumberMaxLength = 64;
+
+    /// <summary>
+    /// Maximum length of <see cref="ReceiptHeader"/> and <see cref="ReceiptFooter"/>.
+    /// </summary>
+    /// <remarks>
+    /// Generous, because 80mm paper is cheap and a shop's returns policy is not short — but
+    /// bounded, because this text is printed on every receipt and an unbounded column is a way
+    /// to make a till spool a metre of paper per sale.
+    /// </remarks>
+    public const int ReceiptTextMaxLength = 1000;
+
     public Guid Id { get; set; }
 
     public required string Name { get; set; }
@@ -69,6 +85,32 @@ public sealed partial class Tenant
     /// Applied at query and presentation time; storage stays UTC.
     /// </remarks>
     public TimeSpan BusinessDayStartOffset { get; set; }
+
+    /// <summary>
+    /// The trading address, as it appears on a receipt. Free-form and multi-line.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately one unstructured field rather than street/city/postcode columns. A receipt
+    /// prints it verbatim and nothing in this system parses it, so structure would buy nothing
+    /// and would have to be right for every country the product is sold in.
+    /// </remarks>
+    public string? AddressLine { get; set; }
+
+    /// <summary>
+    /// The shop's VAT or tax registration number, printed on the receipt.
+    /// </summary>
+    /// <remarks>
+    /// Legally required on a receipt in most jurisdictions, which is why it lives here rather
+    /// than inside <see cref="ReceiptHeader"/> as free text: it is a distinct fact a tax
+    /// authority looks for, and a renderer needs to be able to label it.
+    /// </remarks>
+    public string? TaxNumber { get; set; }
+
+    /// <summary>Free text above the sale on a receipt — a strapline, a phone number.</summary>
+    public string? ReceiptHeader { get; set; }
+
+    /// <summary>Free text below the totals — "returns within 30 days with this receipt".</summary>
+    public string? ReceiptFooter { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 

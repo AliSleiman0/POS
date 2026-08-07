@@ -17,11 +17,13 @@ Contents: tenant header (name, address, tax number), sale number, timestamp in t
 Reads only snapshotted `SaleLine` data — never current catalog prices (Phase 3.3).
 
 **Exit criteria**
-- [ ] Structured payload, all amounts from snapshots
-- [ ] Tax broken down by rate, and the parts sum to `TaxTotal`
-- [ ] Timestamp in the tenant's timezone, not UTC
-- [ ] Refund and voided-sale receipts render correctly (a refund receipt is not just a negative sale receipt — it needs to say what it is)
-- [ ] Configurable header/footer per tenant
+- [x] Structured payload, all amounts from snapshots — `ReceiptSource` carries no product, so there is nothing to join a current price to
+- [x] Tax broken down by rate, and the parts sum to `TaxTotal` — residue placed on the largest group, as `DiscountApportionment` does; pinned by a property test over 400 random mixed-rate baskets in both tax modes, and falsified (removing the residue step went red on basket 0 while every hand-written example still passed)
+- [x] Timestamp in the tenant's timezone, not UTC — and this is what found `InvariantGlobalization=true`, latent since Phase 0, which made an IANA zone unresolvable on Windows. See `DECISIONS.md`.
+- [x] Refund and voided-sale receipts render correctly — `ReceiptKind`, with status checked before type so a voided refund prints as a void
+- [x] Configurable header/footer per tenant — `AddressLine`, `TaxNumber`, `ReceiptHeader`, `ReceiptFooter`, all nullable so a shop that has filled none of them in still prints
+
+**Not done here:** the register's receipt *button*, which is 6.2's — the payload has to exist before there is anything to print.
 
 ## 6.2 Browser printing
 

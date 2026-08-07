@@ -1907,6 +1907,51 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/sales/{id}/receipt': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The receipt payload for a sale, rendered server-side */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ReceiptResponse']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/sales/quote': {
     parameters: {
       query?: never
@@ -2344,6 +2389,86 @@ export interface components {
       /** Format: date-time */
       updatedAt: null | string
     }
+    /** @enum {unknown} */
+    ReceiptKind: 'Sale' | 'Refund' | 'VoidedSale'
+    ReceiptLineResponse: {
+      /** Format: int32 */
+      lineNumber: number | string
+      description: string
+      /** Format: double */
+      quantity: number | string
+      /** Format: double */
+      unitPrice: number | string
+      /** Format: double */
+      taxRate: number | string
+      /** Format: double */
+      discount: number | string
+      /** Format: double */
+      lineTotal: number | string
+      isPriceOverridden: boolean
+    }
+    ReceiptResponse: {
+      kind: components['schemas']['ReceiptKind']
+      shop: components['schemas']['ReceiptShopResponse']
+      /** Format: uuid */
+      saleId: string
+      /** Format: int64 */
+      saleNumber: number | string
+      /** Format: date-time */
+      completedAtLocal: string
+      /** Format: date-time */
+      issuedAtLocal: string
+      timeZoneId: string
+      cashierName: string
+      registerName: string
+      taxMode: components['schemas']['TaxMode']
+      /** Format: uuid */
+      originalSaleId: null | string
+      /** Format: int64 */
+      originalSaleNumber: null | number | string
+      voidReason: null | string
+      refundReason: null | string
+      lines: components['schemas']['ReceiptLineResponse'][]
+      taxBreakdown: components['schemas']['ReceiptTaxLineResponse'][]
+      tenders: components['schemas']['ReceiptTenderResponse'][]
+      /** Format: double */
+      subtotal: number | string
+      /** Format: double */
+      discountTotal: number | string
+      /** Format: double */
+      taxTotal: number | string
+      /** Format: double */
+      roundingAdjustment: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: double */
+      changeGiven: number | string
+    }
+    ReceiptShopResponse: {
+      name: string
+      addressLine: null | string
+      taxNumber: null | string
+      header: null | string
+      footer: null | string
+      currencyCode: string
+    }
+    ReceiptTaxLineResponse: {
+      /** Format: double */
+      rate: number | string
+      /** Format: double */
+      netAmount: number | string
+      /** Format: double */
+      taxAmount: number | string
+      /** Format: double */
+      grossAmount: number | string
+    }
+    ReceiptTenderResponse: {
+      method: components['schemas']['TenderMethod']
+      /** Format: double */
+      amount: number | string
+      /** Format: double */
+      changeGiven: null | number | string
+    }
     RefreshRequest: {
       refreshToken: string
     }
@@ -2557,6 +2682,8 @@ export interface components {
       /** Format: date-time */
       updatedAt: null | string
     }
+    /** @enum {unknown} */
+    TaxMode: 'Inclusive' | 'Exclusive'
     TenantSettings: {
       slug: string
       name: string

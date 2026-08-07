@@ -90,6 +90,55 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 - **Refresh token in an `httpOnly` cookie** — deferred to [Phase 8.2](docs/phases/PHASE-8-deployment.md) along with hosting, because the right answer depends on the topology that phase picks. See the Phase 4.2 entry below for what ships until then.
 
+### Resolved 2026-08-07 (during Phase 6.1)
+
+- **`InvariantGlobalization` is off.** It was `true` from Phase 0 — the ASP.NET template's
+  default, carried in without a decision — and it is incompatible with what this product is.
+  Every tenant carries an IANA `TimeZoneId`, and under invariant globalization Windows cannot
+  resolve one at all (`TimeZoneNotFoundException` on `"Europe/Dublin"`) while Linux still reads
+  its own tz files and succeeds. That split is worse than either answer on its own: receipts and
+  trading-day reports would have passed on the CI runner and failed on every developer machine,
+  which is the failure mode that survives longest.
+
+  It was found the way these things are found — the first receipt test returned 500 — and it had
+  been latent since Phase 0 because nothing before 6.1 ever converted a timestamp out of UTC.
+  Invariant 8 ("UTC everywhere, business day at the edge") has depended on ICU since it was
+  written; the build was simply not honouring it yet.
+
+  The usual objection to turning it on is that culture-sensitive string comparisons become
+  possible. That is not a new risk here: `AnalysisLevel` is `latest-recommended` with warnings as
+  errors, so an implicit-culture comparison already fails the build, and the codebase passes
+  `StringComparison.Ordinal` or `CultureInfo.InvariantCulture` explicitly throughout. The full
+  suite was green either side of the change.
+
+- **The time zone reaches `Pos.Core` as a `TimeZoneInfo`, never as an id to look up.**
+  `FindSystemTimeZoneById` reads the OS zone database, which is file access, and invariant 1
+  keeps that out of the domain layer. `Pos.Api/Common/TenantTimeZone.Resolve` does the lookup and
+  hands the zone in. The side benefit is the one that matters day to day: `ReceiptBuilder` and
+  Phase 6.3's business-day arithmetic can be tested against a zone a test invents, instead of
+  depending on what the machine running the suite happens to have installed.
+
+  An unknown id **throws** rather than falling back to UTC. A silent fallback prints a receipt an
+  hour out and puts a late sale on the wrong trading day — both look entirely plausible on paper,
+  and neither would ever be reported as a bug.
+
+- **Receipt reprints are marked by the client (Phase 6.2).** <a id="receipt-reprints-are-marked-by-the-client-phase-62"></a>
+  `GET /sales/{id}/receipt` is a pure read that keeps no count of copies. The completion panel
+  prints an original; anything printed from history is stamped `REPRINT` with `issuedAtLocal`.
+
+  The alternative is server-side truth, and it was rejected on sequencing rather than on merit.
+  Counting copies means an append-only record of each issue, written by a `POST` — which is
+  exactly the shape of Phase 7.2's audit log, and building a private one-off version of it now
+  means writing it twice. The two cheaper options are both worse: a print counter on `Sale`
+  breaks invariant 4, which says a completed sale is never updated, and a write on a `GET` is a
+  side effect on a route that a page load, a prefetch or a retry may fire.
+
+  **The limitation is real and should be stated plainly:** a client that chose not to send the
+  mark would print an unmarked duplicate, and §6.2 is right that an unmarked duplicate receipt is
+  a refund-fraud vector. What closes it is 7.2 recording each issue as an audit entry, at which
+  point the copy number comes from the server and the client's mark becomes a display of it. Until
+  then the control is that the refund path reads the sale, not the paper.
+
 ### Resolved 2026-08-02 (during Phase 4)
 
 - **The refresh token lives in `sessionStorage`; the access token lives in memory only.**

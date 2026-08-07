@@ -333,6 +333,21 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "GET api/v1/sales/{id:guid}/receipt",
+            Kind = IsolationKind.ById,
+
+            // A Cashier: CanSell, because handing a customer their receipt is the last step of
+            // serving them and a reprint is asked for at the counter.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Sales.FirstSaleId,
+
+            // A read, so the 404 is the whole assertion — and it has teeth here: tenant B's own
+            // first sale has lines and a tender, so an unscoped handler would answer 200 with
+            // somebody else's takings, cashier name and shop address on it.
+        },
+        new()
+        {
             Key = "GET api/v1/stock/discrepancies",
             Kind = IsolationKind.Collection,
             Paginated = true,
