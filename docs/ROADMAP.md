@@ -109,8 +109,8 @@ The screen that decides whether the product is usable. Detail: [phases/PHASE-5-w
 
 Detail: [phases/PHASE-6-receipts-reporting.md](phases/PHASE-6-receipts-reporting.md)
 
-- [ ] **6.1 Receipt model** — one server-rendered payload feeding browser print, future thermal printer and email. **Carries a debt from Phase 5:** the register's completion panel has no receipt action and says so, because `GET /sales/{id}/receipt` is documented and unbuilt. 6.1 builds both halves — the endpoint and the button that uses it.
-- [ ] **6.2 Browser printing** — 80mm print stylesheet; reprint from history.
+- [x] **6.1 Receipt model** — one server-rendered payload feeding browser print, future thermal printer and email. Tax broken down by rate with the residue placed deliberately, so the parts sum to `TaxTotal` exactly; timestamps in the tenant's zone. **Found that `InvariantGlobalization` had been `true` since Phase 0**, which made an IANA zone unresolvable on Windows and would have split behaviour between the runner and every developer machine — invariant 8 had depended on ICU since it was written. See `DECISIONS.md`.
+- [x] **6.2 Browser printing** — 80mm stylesheet with an A4 fallback, and the receipt action Phase 5 left owing on the completion panel. The preview *is* the printed element. Reprints are marked; the mark is client-decided and the limitation is recorded. Reprint *from history* arrives with 6.4, which is where history exists.
 - [ ] **6.3 Z-report** — per shift and per business day: gross, discounts, tax, net, tender breakdown, cash variance, voids/refunds.
 - [ ] **6.4 Sale history** — search, filter, detail view, permission-gated refund initiation.
 

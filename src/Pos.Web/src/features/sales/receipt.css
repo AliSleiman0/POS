@@ -1,0 +1,157 @@
+/*
+ * The receipt, on screen and on paper.
+ *
+ * Two rules carry this file. The first is that what a cashier sees in the
+ * preview is literally the element that prints — one render, not a screen copy
+ * and a print copy that drift apart. The second is that at print time the
+ * application is hidden rather than laid out, so no part of the register bleeds
+ * onto an 80mm roll.
+ *
+ * Imported by Receipt.tsx rather than from index.css: it is feature-local, and
+ * routing it through the global stylesheet would put it before Tailwind's
+ * utilities in a way that is easy to get subtly wrong.
+ */
+
+/* The portal target. On screen it is an overlay; in print it is the page. */
+.receipt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 1rem;
+  background: rgb(0 0 0 / 0.55);
+}
+
+/*
+ * The paper itself.
+ *
+ * Monospace and black on white in both media, because that is what it will be
+ * on a thermal printer and a preview that flatters the output is not a preview.
+ * 80mm minus the printer's unprintable margins is about 72mm of usable width.
+ */
+.receipt-paper {
+  width: 80mm;
+  max-width: 100%;
+  padding: 4mm;
+  background: #fff;
+  color: #000;
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.receipt-paper--a4 {
+  width: 210mm;
+  padding: 12mm;
+  font-size: 12px;
+}
+
+/*
+ * Long names wrap; they never clip.
+ *
+ * A clipped product name on a receipt is a dispute nobody can settle, which is
+ * why §6.2 makes it an exit criterion. `anywhere` rather than `break-word` so a
+ * single 40-character unbroken token still fits 72mm of roll.
+ */
+.receipt-paper td,
+.receipt-paper th,
+.receipt-paper .receipt-wrap {
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.receipt-paper table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.receipt-paper td,
+.receipt-paper th {
+  padding: 0;
+  text-align: left;
+  vertical-align: top;
+  font-weight: inherit;
+}
+
+.receipt-paper .receipt-amount {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  padding-left: 2mm;
+}
+
+.receipt-rule {
+  border: 0;
+  border-top: 1px dashed #000;
+  margin: 2mm 0;
+}
+
+.receipt-centre {
+  text-align: center;
+}
+
+.receipt-strong {
+  font-weight: 700;
+}
+
+.receipt-banner {
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border: 1px solid #000;
+  padding: 1.5mm;
+  margin-bottom: 2mm;
+}
+
+@media print {
+  /*
+   * The application does not print. Hidden outright rather than positioned off
+   * the page: a hidden element still paginates, and an 80mm roll would spool
+   * blank paper for the register's full height before reaching the receipt.
+   */
+  #root {
+    display: none !important;
+  }
+
+  /* Buttons, backdrop, anything that is chrome rather than paper. */
+  .print-hide {
+    display: none !important;
+  }
+
+  .receipt-overlay {
+    position: static;
+    display: block;
+    padding: 0;
+    background: none;
+    overflow: visible;
+  }
+
+  /*
+   * The roll keeps its width in print; it is not reset to `auto`.
+   *
+   * `@page { size: 80mm auto }` ought to make `auto` come out at 80mm, and in a
+   * real print dialog it does — but only if the printer honours the page size,
+   * and it is ignored outright by print emulation and by "save as PDF" at a
+   * paper size the user picked. Stating the width means the paper is 80mm wide
+   * whatever the page box turns out to be, which is the failure this catches:
+   * every line stretched to the full width of an A4 sheet, amounts flung to the
+   * far right, unreadable.
+   *
+   * The 2mm of side padding stays because thermal printers have an unprintable
+   * margin, and text flush to the edge of the roll loses its first character.
+   */
+  .receipt-paper {
+    max-width: none;
+    padding: 0 2mm;
+  }
+
+  /* A4 fills its page box, and the 12mm @page margin is the whitespace. */
+  .receipt-paper--a4 {
+    width: auto;
+    padding: 0;
+  }
+}

@@ -6,7 +6,7 @@ import { MANAGER_NAME, MANAGER_PIN, OWNER_EMAIL, PASSWORD, TENANT_SLUG } from '.
  * The register, end to end against a real API and a real Postgres.
  *
  * Phases 5.1 to 5.4: the drawer, the cart, the scanner, the adjustments and the
- * money. The receipt is 6.1 and is deliberately not asserted here.
+ * money. The receipt has its own spec — `receipt.spec.ts`, Phase 6.2.
  *
  * The barcodes are the seeded catalog's own (`tools/Pos.Seed/CatalogSeeder.cs`):
  * `5099999000011` is Still Water 500ml at €1.20, tax-inclusive.
@@ -437,13 +437,39 @@ test.describe('cash payment', () => {
     return ((await login.json()) as { accessToken: string }).accessToken
   }
 
-  /** How many sales this shop has, straight from the API. */
+  /**
+   * How many sales this shop has, straight from the API.
+   *
+   * **Paged to the end, not one request.** This read one page of 100 until 6.2,
+   * which was fine while `pos_e2e` held fewer than that — and `pos_e2e` is
+   * seeded but never dropped, so every run adds to it. The moment the hundredth
+   * sale landed the count saturated, and "one sale was written" started failing
+   * as `expected 101, received 100`: a test that had quietly stopped being able
+   * to observe the thing it asserts. `limit` is capped at 200 server-side, so
+   * raising the number only moves the cliff.
+   */
   async function saleCount(page: Page): Promise<number> {
-    const sales = await page.request.get('/api/v1/sales?limit=100', {
-      headers: { Authorization: `Bearer ${await ownerToken(page)}` },
-    })
+    const token = await ownerToken(page)
 
-    return ((await sales.json()) as { items: unknown[] }).items.length
+    let cursor: string | null = null
+    let total = 0
+
+    do {
+      const url =
+        '/api/v1/sales?limit=200' + (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`)
+
+      const response = await page.request.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      const page_: { items: unknown[]; nextCursor: string | null; hasMore: boolean } =
+        await response.json()
+
+      total += page_.items.length
+      cursor = page_.hasMore ? page_.nextCursor : null
+    } while (cursor !== null)
+
+    return total
   }
 
   async function takeCash(page: Page): Promise<void> {

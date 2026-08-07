@@ -35,10 +35,14 @@ Reads only snapshotted `SaleLine` data — never current catalog prices (Phase 3
 - Also offer a plain-A4 fallback for shops printing to an office printer before they buy a thermal one
 
 **Exit criteria**
-- [ ] Print preview correct at 80mm
-- [ ] Reprint works and is labelled
-- [ ] No layout overflow on long product names (wrap, don't clip — a clipped name on a receipt is a dispute)
-- [ ] A4 fallback readable
+- [x] Print preview correct at 80mm — and the preview *is* the printed element, rendered once through a portal outside `#root`, so it cannot drift from the output. Checked with real print-media pixels, which is what caught the roll stretching to the full page width: `@page { size: 80mm auto }` is ignored by emulation and by "save as PDF" at a chosen paper size, so the width is stated rather than inferred.
+- [x] Reprint works and is labelled — `REPRINT` plus `issuedAtLocal`. Client-decided; see `DECISIONS.md` for why, and for the limitation that leaves.
+- [x] No layout overflow on long product names — `overflow-wrap: anywhere`, with a Vitest case asserting an 80-character name reaches the DOM whole
+- [x] A4 fallback readable — a toggle that swaps the `@page` box, since `@page` is document-level and cannot be selected by class
+
+**Also here, and owed from Phase 5:** the completion panel's receipt action. It said "printed receipts arrive in a later milestone" rather than stubbing a button; it now prints, and prints an *original*.
+
+**`window.print()` blocks the tab, and that is accepted narrowly.** Invariant 10 bans `alert`/`confirm`/`prompt` because they stall a queue while a scanner types into whatever has focus afterwards; the difference is that a cashier pressed a button marked Print and is looking at the printer. The rule that follows: nothing auto-prints, pinned by an e2e test that stubs `window.print` and asserts the count is still zero after a sale completes and the preview opens.
 
 ## 6.3 Z-report / daily sales
 
