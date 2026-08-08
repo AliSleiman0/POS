@@ -21,6 +21,17 @@ public sealed record IsolatedTenant(
     /// <summary>Everything <c>GET /employees/pin-eligible</c> must return: staff with a PIN.</summary>
     public IReadOnlyList<Guid> PinEligibleIds => [CashierId, SecondCashierId];
 
+    /// <summary>
+    /// Everything <c>GET /employees</c> must return: everybody, PIN or not.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the users the world already seeds, so this adds no rows and the
+    /// pin-eligible counts are untouched. The owner is here and absent from
+    /// <see cref="PinEligibleIds"/>, which is what makes the two lists distinguishable — a
+    /// handler that served one from the other's query would pass against a single list.
+    /// </remarks>
+    public IReadOnlyList<Guid> EmployeeIds => [OwnerId, CashierId, SecondCashierId];
+
     /// <summary>Everything <c>GET /products</c> must return. All three are active.</summary>
     /// <remarks>
     /// Active on purpose. <c>?activeOnly=</c> defaults to <c>true</c>, so a deactivated

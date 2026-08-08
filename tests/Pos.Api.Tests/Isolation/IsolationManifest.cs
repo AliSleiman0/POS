@@ -232,6 +232,18 @@ public static class IsolationManifest
             Expected = w => w.B.PinEligibleIds,
             Forbidden = w => w.A.PinEligibleIds,
         },
+        new()
+        {
+            Key = "GET api/v1/employees",
+            Kind = IsolationKind.Collection,
+
+            // Not paginated, and that is the endpoint's decision rather than an omission
+            // here: ApplicationUser is not a TenantEntity, so CursorPaging cannot serve it.
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Expected = w => w.B.EmployeeIds,
+            Forbidden = w => w.A.EmployeeIds,
+        },
 
         new()
         {
@@ -694,6 +706,34 @@ public static class IsolationManifest
             Body = _ => new { pin = "9999" },
             AssertUntouched = AssertTheCashiersPinIsStillTheOneTheWorldSet,
         },
+        new()
+        {
+            Key = "PUT api/v1/employees/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.CashierId,
+
+            // Valid in tenant B, on the same reasoning as the set-pin row above: the handler
+            // validates the body before it looks the user up, so a malformed one would be
+            // answered 400 and the cross-tenant lookup this row exists to test would not run.
+            Body = _ => new { displayName = "Renamed By B", role = RoleNames.Manager, isActive = true },
+            AssertUntouched = AssertTheCashierIsStillACashierCalledRobin,
+        },
+        new()
+        {
+            Key = "POST api/v1/employees/{id:guid}/deactivate",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+
+            // The *second* cashier, so this row and the PUT row above cannot mask each other:
+            // if both aimed at the same victim, one handler writing and the other refusing
+            // would leave an assertion that passes for the wrong reason.
+            VictimId = w => w.A.SecondCashierId,
+            Body = _ => new { },
+            AssertUntouched = AssertTheSecondCashierIsStillActiveInBothTenants,
+        },
 
         // ---- Exempt, each saying where the coverage is --------------------------------
         new()
@@ -761,6 +801,19 @@ public static class IsolationManifest
             Exemption = "A write with no id, so neither shape fits. The tenancy question for "
                       + "it is whether a TenantId in the body is honoured: "
                       + "ForgedTenancyTests.A_tenant_id_in_the_request_body_is_never_honoured.",
+        },
+        new()
+        {
+            Key = "POST api/v1/employees",
+            Kind = IsolationKind.Exempt,
+
+            // Stated even though the row is exempt, because RefusedCallers() keys off this
+            // rather than off Kind — an exempt route still has to turn the wrong caller away.
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A write with no id, so neither shape fits. Which tenant the new user "
+                      + "lands in is covered by "
+                      + "EmployeeCrudTests.A_created_employee_belongs_to_the_calling_tenant, and "
+                      + "the email uniqueness that makes it observable is per-tenant by index.",
         },
         new()
         {
@@ -1136,5 +1189,55 @@ public static class IsolationManifest
                 PasswordVerificationResult.Success,
                 users.PasswordHasher.VerifyHashedPassword(
                     cashier, cashier.PinHash, TwoTenantWorld.CashierPin));
+        });
+
+    /// <summary>
+    /// Tenant A's cashier still has their own name and their own role, so the PUT from tenant
+    /// B neither renamed them nor promoted them to Manager.
+    /// </summary>
+    /// <remarks>
+    /// The role is checked as well as the name because they are written by different
+    /// mechanisms — the name by a tracked property, the role by Identity's own join table —
+    /// and a handler that ordered its work badly could get one right and the other wrong.
+    /// </remarks>
+    private static Task AssertTheCashierIsStillACashierCalledRobin(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var users = services.GetRequiredService<UserManager<ApplicationUser>>();
+            var cashier = await users.Users.FirstAsync(u => u.Id == world.A.CashierId);
+
+            Assert.Equal(TwoTenantWorld.CashierName, cashier.DisplayName);
+            Assert.True(cashier.IsActive);
+            Assert.True(await users.IsInRoleAsync(cashier, RoleNames.Cashier));
+            Assert.False(await users.IsInRoleAsync(cashier, RoleNames.Manager));
+        });
+
+    /// <summary>
+    /// The second cashier is still active <b>in both tenants</b>.
+    /// </summary>
+    /// <remarks>
+    /// Both, deliberately. Tenant A's row is the one the request reached for, but the
+    /// reachable failure is the other one: a handler that deactivates by id without scoping
+    /// first would hit its <i>own</i> tenant's user of the same id — and since the ids differ
+    /// that is not possible here, so what this really catches is a handler that writes
+    /// something before discovering the target is not there. Checking B costs one query and
+    /// removes the assumption.
+    /// </remarks>
+    private static Task AssertTheSecondCashierIsStillActiveInBothTenants(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        Task.WhenAll(
+            AssertSecondCashierIsActiveAsync(factory, world.A),
+            AssertSecondCashierIsActiveAsync(factory, world.B));
+
+    private static Task AssertSecondCashierIsActiveAsync(PosApiFactory factory, IsolatedTenant tenant) =>
+        factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var users = services.GetRequiredService<UserManager<ApplicationUser>>();
+            var cashier = await users.Users.FirstAsync(u => u.Id == tenant.SecondCashierId);
+
+            Assert.True(cashier.IsActive);
         });
 }

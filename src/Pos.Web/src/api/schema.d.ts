@@ -440,6 +440,178 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/employees': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Every member of staff at this shop */
+    get: {
+      parameters: {
+        query?: {
+          activeOnly?: boolean
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['EmployeeSummary'][]
+          }
+        }
+      }
+    }
+    put?: never
+    /** Add a member of staff */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['CreateEmployeeRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['EmployeeSummary']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/employees/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** Change a member of staff's name, role or active status */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['UpdateEmployeeRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['EmployeeSummary']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/employees/{id}/deactivate': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Withdraw a member of staff's access */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description No Content */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/employees/{id}/set-pin': {
     parameters: {
       query?: never
@@ -2375,6 +2547,13 @@ export interface components {
       /** Format: int32 */
       sortOrder: null | number | string
     }
+    CreateEmployeeRequest: {
+      displayName: string
+      email: string
+      role: string
+      password: string
+      pin: null | string
+    }
     CreateProductRequest: {
       sku: null | string
       name: null | string
@@ -2453,6 +2632,17 @@ export interface components {
       items: components['schemas']['TaxClassResponse'][]
       nextCursor: null | string
       hasMore: boolean
+    }
+    EmployeeSummary: {
+      /** Format: uuid */
+      id: string
+      displayName: string
+      email: string
+      role: null | string
+      isActive: boolean
+      hasPin: boolean
+      /** Format: date-time */
+      lastLoginAt: null | string
     }
     EnrollmentResponse: {
       /** Format: uuid */
@@ -3029,6 +3219,11 @@ export interface components {
       parentCategoryId: null | string
       /** Format: int32 */
       sortOrder: null | number | string
+    }
+    UpdateEmployeeRequest: {
+      displayName: string
+      role: string
+      isActive: boolean
     }
     UpdateProductRequest: {
       sku: null | string

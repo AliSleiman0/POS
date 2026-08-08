@@ -6,6 +6,8 @@ import { RequireAuth, RequirePolicy } from '@/auth/guards'
 import { DeviceEnrollmentPage } from '@/auth/DeviceEnrollmentPage'
 import { LoginPage } from '@/auth/LoginPage'
 import { PinSwapPage } from '@/auth/PinSwapPage'
+import { EmployeeListPage } from '@/features/admin/employees/EmployeeListPage'
+import { RegisterListPage } from '@/features/admin/registers/RegisterListPage'
 import { CategoriesPage } from '@/features/catalog/CategoriesPage'
 import { ProductDetailPage } from '@/features/catalog/ProductDetailPage'
 import { ProductListPage } from '@/features/catalog/ProductListPage'
@@ -100,6 +102,19 @@ export const router = createBrowserRouter([
                 <StockPage />
               </RequirePolicy>
             ),
+          },
+
+          {
+            // Owner-only, matching the API. Whoever manages staff can create a
+            // user who sells and can hand out a PIN, so this is the same
+            // authority as the till itself.
+            path: 'admin',
+            element: <RequirePolicy policy="CanManageEmployees" />,
+            children: [
+              { index: true, element: <Navigate to="/admin/people" replace /> },
+              { path: 'people', element: <EmployeeListPage /> },
+              { path: 'tills', element: <RegisterListPage /> },
+            ],
           },
 
           {

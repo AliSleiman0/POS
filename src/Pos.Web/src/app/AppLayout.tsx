@@ -58,6 +58,12 @@ export function AppLayout() {
               <IfPolicy policy="CanCloseShift">
                 <NavItem to="/reports/daily">Reports</NavItem>
               </IfPolicy>
+              {/* And a fourth: running the shop itself, which is Owner-only.
+                  Whoever can add a user can add one who sells. */}
+              <IfPolicy policy="CanManageEmployees">
+                <NavItem to="/admin/people">People</NavItem>
+                <NavItem to="/admin/tills">Tills</NavItem>
+              </IfPolicy>
             </nav>
 
             <ShiftIndicator />

@@ -1,6 +1,8 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
+using Pos.Core.Auditing;
 using Pos.Core.Entities;
 using Pos.Core.Security;
 using Pos.Data;
@@ -79,6 +81,7 @@ public static class RegisterEndpoints
     private static async Task<Results<Ok<EnrollmentResponse>, NotFound>> EnrollAsync(
         Guid id,
         AppDbContext db,
+        IAuditLog audit,
         CancellationToken cancellationToken)
     {
         var register = await db.Registers.FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
@@ -90,12 +93,28 @@ public static class RegisterEndpoints
             return TypedResults.NotFound();
         }
 
+        var wasEnrolled = register.DeviceTokenHash is not null;
+
         var token = OpaqueToken.Issue(register.TenantId);
 
         // Only the hash is kept. Re-enrolling replaces the old token, which is also how a
         // till that lost its token gets a new one — there is no way to read the old one back.
         register.DeviceTokenHash = OpaqueToken.Hash(token);
         register.IsActive = true;
+
+        // Staged, not saved: the SaveChangesAsync below is one implicit transaction, so the
+        // entry and the new hash land together with no explicit transaction needed. The token
+        // itself is never recorded — an audit trail that stores credentials is a credential
+        // store with worse access control.
+        audit.Record(
+            AuditAction.DeviceEnrolled,
+            nameof(Register),
+            register.Id,
+            after: new Dictionary<string, string?>
+            {
+                ["name"] = register.Name,
+                ["replacedAnExistingToken"] = wasEnrolled.ToString(CultureInfo.InvariantCulture),
+            });
 
         await db.SaveChangesAsync(cancellationToken);
 
@@ -105,6 +124,7 @@ public static class RegisterEndpoints
     private static async Task<Results<NoContent, NotFound>> RevokeAsync(
         Guid id,
         AppDbContext db,
+        IAuditLog audit,
         CancellationToken cancellationToken)
     {
         var register = await db.Registers.FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
@@ -116,6 +136,12 @@ public static class RegisterEndpoints
 
         // Clearing the hash is the revocation. The row stays, because sales reference it.
         register.DeviceTokenHash = null;
+
+        audit.Record(
+            AuditAction.DeviceRevoked,
+            nameof(Register),
+            register.Id,
+            after: new Dictionary<string, string?> { ["name"] = register.Name });
 
         await db.SaveChangesAsync(cancellationToken);
 

@@ -339,6 +339,24 @@ A sale requires an open shift. Without one there is nothing to reconcile the dra
 
 `/employees/pin-eligible` is deliberately thin: the PIN screen needs names to show, and must not become a way to read the staff roster with roles and contact details from a counter device.
 
+`GET /employees` returns a **bare array**, not the paged envelope. `ApplicationUser` is an `IdentityUser` rather than a `TenantEntity`, so the cursor helper cannot serve it — and a shop has tens of staff, not thousands. **Deactivated staff are included by default** (`?activeOnly=true` excludes them), which is the opposite of the catalog's lists: there is no reactivate route, so you bring somebody back by `PUT`-ing them with `isActive: true`, and hiding them would make the only way back invisible.
+
+`POST /employees` takes `displayName`, `email`, `role`, `password` and an optional `pin`. There is no email invite — no mail infrastructure exists — so the owner sets an initial password and passes it on. Identity's own password-rule messages are surfaced under `errors.password` rather than replaced, because "a password is required" when the real problem is the length rule tells an owner to try the same thing again. Email is unique **per tenant**, so one person can hold accounts at two shops.
+
+**PIN uniqueness is deliberately not enforced.** An error saying "that PIN is taken" hands whoever asked a working PIN for somebody else's account. Identity is picking your own name *and* entering a PIN.
+
+Three refusals protect a shop from locking itself out, all `409`:
+
+| `type` | When |
+|---|---|
+| `self-demotion` | An owner removing their own owner role |
+| `self-deactivation` | Anyone deactivating themselves, by either route |
+| `last-owner` | A change that would leave no active owner |
+
+`409` rather than `400` because the body is well-formed and would be accepted if the shop had one more owner in it — the caller's next move is to promote somebody, not to correct a field. The last-owner count is taken under `SELECT … FOR UPDATE` inside the same transaction as the write, so two owners deactivating each other simultaneously cannot both read "there are two of us". There is no platform admin tool by decision, so a tenant with no active owner is only recoverable by direct database access.
+
+**Deactivation revokes the user's refresh tokens** but cannot revoke an access token already issued. `IsActive` is checked at login, at PIN entry, on `/auth/me` and on refresh — not while validating a JWT — so a deactivated user's session survives for up to the access token's ~15-minute lifetime. Closing that window needs a per-request liveness read or a token-version claim; neither is built.
+
 ## Registers — `/registers`
 
 | Method | Route | Auth |
