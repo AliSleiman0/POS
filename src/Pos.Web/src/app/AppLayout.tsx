@@ -63,6 +63,8 @@ export function AppLayout() {
               <IfPolicy policy="CanManageEmployees">
                 <NavItem to="/admin/people">People</NavItem>
                 <NavItem to="/admin/tills">Tills</NavItem>
+                <NavItem to="/admin/activity">Activity</NavItem>
+                <NavItem to="/admin/settings">Settings</NavItem>
               </IfPolicy>
             </nav>
 

@@ -90,6 +90,63 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 - **Refresh token in an `httpOnly` cookie** — deferred to [Phase 8.2](docs/phases/PHASE-8-deployment.md) along with hosting, because the right answer depends on the topology that phase picks. See the Phase 4.2 entry below for what ships until then.
 
+### Resolved 2026-08-09 (during Phase 7)
+
+- **Audit entries are *staged* on the shared scoped `DbContext`, not saved by the audit log.**
+  `IAuditLog.Record` adds an entry and returns; whatever transaction the audited action is
+  already running is what commits it. That is what makes "an entry cannot exist for work that
+  rolled back, nor be missing for work that succeeded" true by construction rather than by
+  every call site remembering to be careful — the sale writer's `onCommitting` callbacks, the
+  stock endpoint's explicit transaction and the plain-`SaveChanges` endpoints all get it for
+  free, because `AppDbContext` is scoped and every writer resolves the same one.
+
+  The one place with no transaction to join is a *refusal*, which is why
+  `RecordStandaloneAsync` exists as a separately named method rather than an overload. Staging
+  and forgetting to save is then only reachable by calling `Record` in a handler that never
+  saves, which the per-action tests catch immediately.
+
+  The hazard worth knowing about: `SaleWriter` and `StockLedger` run inside
+  `CreateExecutionStrategy().ExecuteAsync`, and a transient-failure retry replays the block with
+  the change tracker still holding the previous attempt's additions — so `onCommitting` fires
+  twice. The idempotency record has a unique index that catches its own version of this loudly;
+  an audit entry has nothing, so `AuditLog` de-duplicates against its own tracked set.
+
+- **`audit_entry` is append-only at the database, not by convention.** The migration revokes
+  `UPDATE` and `DELETE` on it from `pos_app`. Every other append-only table here —
+  `stock_movement`, `sale` — relies on no code path existing that would rewrite it, which is a
+  real guarantee and not this one: an audit log's value is that the people it records cannot
+  edit it.
+
+  This is **not** free, and the trap is worth stating: the Phase 1.6 RLS migration runs
+  `ALTER DEFAULT PRIVILEGES … GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pos_app` for the
+  role that runs every later migration, so the table was created *with* both. Falsified by
+  removing the revoke — four tests went red and the `UPDATE` genuinely succeeded. Any future
+  table that needs a privilege withheld must revoke it explicitly.
+
+- **Employee creation sets an initial password; there is no email invite.** No mail
+  infrastructure exists, and adding one to send a single message is a dependency, a deliverability
+  problem and a secret to manage. The owner sets a password and reads it out. A forced-change
+  flow was considered and dropped as its own feature: it needs a screen, a route and an auth
+  state, and none of that is Phase 7's job.
+
+- **A deactivated user's access token is not revoked.** Deactivation revokes their refresh
+  tokens, and `IsActive` is checked at login, at PIN entry and on `/auth/me` — but not while
+  validating a JWT, so an already-issued access token keeps working for up to ~15 minutes.
+  Closing that needs either a per-request liveness read on every authenticated call or a
+  token-version claim with somewhere to store the version. Both are real designs; neither is
+  worth taking on to shorten a window that ends by itself. **Stated in `docs/API.md` rather than
+  pretended away** — an owner removing somebody after an incident should know the session does
+  not die instantly.
+
+- **The authorization matrix is derived from the policy map, and cannot check the policy map.**
+  `AuthorizationMatrixTests` crosses the routing table with `PolicyCatalog`, which makes it
+  exhaustive by construction — a route mapped tomorrow is covered the day it ships. What it
+  cannot catch is an endpoint declaring the *wrong* policy, because the expectation is read off
+  the endpoint's own metadata: verified by moving `GET /audit` from `CanManageEmployees` to
+  `CanSell`, which left all 229 cases green. That question is answered by the `Refused` lists in
+  `IsolationManifest` and by hand-written tests for the choices that matter, both of which did go
+  red. Worth knowing before trusting the matrix for something it does not do.
+
 ### Resolved 2026-08-07 (during Phase 6.1)
 
 - **`InvariantGlobalization` is off.** It was `true` from Phase 0 — the ASP.NET template's
@@ -122,22 +179,27 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
   hour out and puts a late sale on the wrong trading day — both look entirely plausible on paper,
   and neither would ever be reported as a bug.
 
-- **Receipt reprints are marked by the client (Phase 6.2).** <a id="receipt-reprints-are-marked-by-the-client-phase-62"></a>
-  `GET /sales/{id}/receipt` is a pure read that keeps no count of copies. The completion panel
-  prints an original; anything printed from history is stamped `REPRINT` with `issuedAtLocal`.
+- **~~Receipt reprints are marked by the client (Phase 6.2).~~ Superseded in Phase 7.2 — the
+  server counts issues.** <a id="receipt-reprints-are-marked-by-the-client-phase-62"></a>
 
-  The alternative is server-side truth, and it was rejected on sequencing rather than on merit.
-  Counting copies means an append-only record of each issue, written by a `POST` — which is
-  exactly the shape of Phase 7.2's audit log, and building a private one-off version of it now
-  means writing it twice. The two cheaper options are both worse: a print counter on `Sale`
-  breaks invariant 4, which says a completed sale is never updated, and a write on a `GET` is a
-  side effect on a route that a page load, a prefetch or a retry may fire.
+  6.2 left the mark to whoever was rendering, and said plainly why: counting copies means an
+  append-only record of each issue, which is the shape of the audit log, and building a private
+  one-off version first meant writing it twice. The stated limitation was that a client which
+  chose not to send the mark would print an unmarked duplicate — a refund-fraud vector.
 
-  **The limitation is real and should be stated plainly:** a client that chose not to send the
-  mark would print an unmarked duplicate, and §6.2 is right that an unmarked duplicate receipt is
-  a refund-fraud vector. What closes it is 7.2 recording each issue as an audit entry, at which
-  point the copy number comes from the server and the client's mark becomes a display of it. Until
-  then the control is that the refund path reads the sale, not the paper.
+  **7.2 closed it.** `GET /sales/{id}/receipt` appends a `ReceiptIssued` entry and derives
+  `isReprint`/`issueNumber` from the count, so the mark is now the server's answer and the
+  client displays it. The two alternatives 6.2 rejected are still rejected: a print counter on
+  `Sale` would break invariant 4, and there is no `POST` because a till pressing "print" is a
+  read of the payload.
+
+  **The cost is that a `GET` writes**, which 6.2 correctly named as the objection. It is
+  accepted on a narrower reading of what is being recorded: not "this was printed" but "this was
+  *disclosed*", and opening the preview does disclose it. So a cashier who looks without
+  printing marks the next copy as a reprint — erring toward marking, which is the safe direction
+  for a fraud control. Two simultaneous requests can both call themselves the first; a unique
+  index would refuse to print a receipt a customer is waiting for, which is the worse failure,
+  and both are recorded either way.
 
 ### Resolved 2026-08-02 (during Phase 4)
 

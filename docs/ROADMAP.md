@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current phase** | **Phase 6 complete** — 6.1 to 6.4 done. 953 .NET + 181 Vitest + 48 Playwright green |
-| **Next up** | Phase 7.1, employee management. 7.2's audit log is also what closes two things Phase 6 deliberately left open: server-side receipt reprint counting, and auditing a refund beyond the reason and actor stored on the row. |
-| **MVP definition** | Phases 0–8 complete = shippable retail POS |
-| **Last updated** | 2026-08-07 |
+| **Current phase** | **Phase 7 complete** — 7.0 to 7.4 done. 1288 .NET + 207 Vitest + 60 Playwright green |
+| **Next up** | Phase 8.1, containerize. **Watch `InvariantGlobalization` when the Dockerfile lands** — it must stay `false`, or every IANA time zone stops resolving on Windows while still working on the runner. |
+| **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
+| **Last updated** | 2026-08-09 |
 
 ## Phase overview
 
@@ -27,7 +27,7 @@
 | 4 | [Web: shell, auth, catalog](phases/PHASE-4-web-shell-catalog.md) | SPA shell, login, product management UI | ✅ Done |
 | 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ✅ Done |
 | 6 | [Receipts & reporting](phases/PHASE-6-receipts-reporting.md) | Receipt render/print, Z-report, sale history | ✅ Done |
-| 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log | ⬜ Not started |
+| 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log, settings | ✅ Done |
 | 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ⬜ Not started |
 | — | **← MVP line.** Everything above ships as v1. | | |
 | 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ⬜ Not started |
@@ -118,9 +118,11 @@ Detail: [phases/PHASE-6-receipts-reporting.md](phases/PHASE-6-receipts-reporting
 
 Detail: [phases/PHASE-7-employees-audit.md](phases/PHASE-7-employees-audit.md)
 
-- [ ] **7.1 Employee management UI** — create/invite, assign role, set/reset PIN, deactivate. Owner/Manager only.
-- [ ] **7.2 Audit log** — append-only: price override, discount, void, refund, stock adjust, role change; actor + timestamp + before/after.
-- [ ] **7.3 Authorization tests** — a Cashier is proven *rejected* on every Manager/Owner endpoint. Negative paths, not just happy ones.
+- [x] **7.0 Audit seam** — `AuditEntry` + `IAuditLog`, entries *staged* on the shared scoped `DbContext` so each commits inside whatever transaction its action already runs. `UPDATE`/`DELETE` revoked from `pos_app`, which the Phase 1.6 default privileges had silently granted — falsified, and the `UPDATE` genuinely succeeded without the revoke. `ICurrentActor` gained `RegisterId`. Reordered ahead of 7.1 because six of the fifteen actions belong to 7.1's endpoints.
+- [x] **7.1 Employee management UI** — create (initial password, no email invite), assign role, set/reset PIN, deactivate. **Owner only**, not Owner/Manager: whoever sets PINs can create a user who sells. Lock-out guards are three 409s with the owner count taken under `FOR UPDATE`; dropping the lock made the concurrent race fail four runs out of four. `/admin/tills` is the first UI for `POST /registers` and revoke.
+- [x] **7.2 Audit log** — fifteen actions, each transactional with its own work. `GET /audit` filtered by action, actor and *trading-day* range. `AuditManifest` fails the build when an enum member has no covering test, so this keeps holding after the phase. Closes the Phase 6.2 reprint debt: `isReprint` is now derived server-side from `ReceiptIssued` entries a client cannot suppress.
+- [x] **7.3 Authorization tests** — a (role × endpoint) matrix **derived** from `PolicyCatalog` × the routing table, so tomorrow's endpoints are covered too. 229 cases, no writes. The limit is recorded rather than assumed: it cannot catch an endpoint declaring the *wrong* policy, which the manifest's `Refused` lists and hand-written tests do.
+- [x] **7.4 Settings** — `GET`/`PUT /settings`. Added because 7.2 audits `SettingsChanged` and there was no route to audit; it also closes a real MVP gap, since receipt fields and cash rounding were reachable only through the unshipped seeder. `taxMode` refused once sales exist.
 
 ## Phase 8 — Deployment & hardening
 

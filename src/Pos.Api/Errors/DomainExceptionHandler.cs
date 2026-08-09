@@ -147,6 +147,11 @@ public sealed partial class DomainExceptionHandler(
 
         LastOwnerException => (StatusCodes.Status409Conflict, "The shop must keep one active owner"),
 
+        // Also 409, and the one on this list with no next move at all: once a shop has traded,
+        // its tax mode is fixed for ever. Stated plainly rather than dressed up as a temporary
+        // obstacle, because pretending otherwise sends somebody looking for the override.
+        TaxModeLockedException => (StatusCodes.Status409Conflict, "Tax mode is fixed once trading starts"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }

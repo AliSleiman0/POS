@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
@@ -221,6 +222,7 @@ public static class ShiftEndpoints
         AppDbContext db,
         ShiftWriter writer,
         IIdempotencyContext idempotency,
+        IAuditLog audit,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -253,17 +255,35 @@ public static class ShiftEndpoints
         await writer.CloseAsync(
             id,
             (Money)counted,
-            closed => idempotency.Record(
-                db,
-                StatusCodes.Status200OK,
-                new
-                {
-                    id = closed.ShiftId,
-                    countedCash = (decimal)closed.CountedCash,
-                    expectedCash = (decimal)closed.ExpectedCash,
-                    variance = (decimal)closed.Variance,
-                },
-                closed.ClosedAt),
+            closed =>
+            {
+                idempotency.Record(
+                    db,
+                    StatusCodes.Status200OK,
+                    new
+                    {
+                        id = closed.ShiftId,
+                        countedCash = (decimal)closed.CountedCash,
+                        expectedCash = (decimal)closed.ExpectedCash,
+                        variance = (decimal)closed.Variance,
+                    },
+                    closed.ClosedAt);
+
+                // Inside the writer's transaction, so a close that rolls back records no
+                // variance. The variance is stored on the shift row as well and is never
+                // recomputed; this entry is what makes a *pattern* of short drawers on one
+                // person's shifts visible without reading every shift in turn.
+                audit.Record(
+                    AuditAction.ShiftClosed,
+                    nameof(Shift),
+                    closed.ShiftId,
+                    after: new Dictionary<string, string?>
+                    {
+                        ["countedCash"] = ((decimal)closed.CountedCash).ToString(CultureInfo.InvariantCulture),
+                        ["expectedCash"] = ((decimal)closed.ExpectedCash).ToString(CultureInfo.InvariantCulture),
+                        ["variance"] = ((decimal)closed.Variance).ToString(CultureInfo.InvariantCulture),
+                    });
+            },
             cancellationToken);
 
         var shift = await db.Shifts.AsNoTracking().FirstAsync(s => s.Id == id, cancellationToken);

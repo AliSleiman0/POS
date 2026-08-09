@@ -6,8 +6,10 @@ import { RequireAuth, RequirePolicy } from '@/auth/guards'
 import { DeviceEnrollmentPage } from '@/auth/DeviceEnrollmentPage'
 import { LoginPage } from '@/auth/LoginPage'
 import { PinSwapPage } from '@/auth/PinSwapPage'
+import { AuditListPage } from '@/features/admin/audit/AuditListPage'
 import { EmployeeListPage } from '@/features/admin/employees/EmployeeListPage'
 import { RegisterListPage } from '@/features/admin/registers/RegisterListPage'
+import { SettingsPage } from '@/features/admin/settings/SettingsPage'
 import { CategoriesPage } from '@/features/catalog/CategoriesPage'
 import { ProductDetailPage } from '@/features/catalog/ProductDetailPage'
 import { ProductListPage } from '@/features/catalog/ProductListPage'
@@ -114,6 +116,8 @@ export const router = createBrowserRouter([
               { index: true, element: <Navigate to="/admin/people" replace /> },
               { path: 'people', element: <EmployeeListPage /> },
               { path: 'tills', element: <RegisterListPage /> },
+              { path: 'activity', element: <AuditListPage /> },
+              { path: 'settings', element: <SettingsPage /> },
             ],
           },
 

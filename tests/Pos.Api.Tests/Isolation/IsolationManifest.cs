@@ -234,6 +234,16 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "GET api/v1/audit",
+            Kind = IsolationKind.Collection,
+            Paginated = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Expected = w => w.B.Sales.AuditEntryIds,
+            Forbidden = w => w.A.Sales.AuditEntryIds,
+        },
+        new()
+        {
             Key = "GET api/v1/employees",
             Kind = IsolationKind.Collection,
 
@@ -801,6 +811,30 @@ public static class IsolationManifest
             Exemption = "A write with no id, so neither shape fits. The tenancy question for "
                       + "it is whether a TenantId in the body is honoured: "
                       + "ForgedTenancyTests.A_tenant_id_in_the_request_body_is_never_honoured.",
+        },
+        new()
+        {
+            Key = "GET api/v1/settings",
+            Kind = IsolationKind.Exempt,
+
+            // CanSell, so a cashier is a legitimate caller here — only anonymous and the
+            // device scheme are turned away.
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "One object with no id, so neither shape fits. Tenant is not "
+                      + "tenant-owned and has no query filter, so the scoping question is "
+                      + "whether the Where on CurrentTenantId is there at all: covered by "
+                      + "SettingsTests.A_get_only_ever_reads_the_calling_tenants_row.",
+        },
+        new()
+        {
+            Key = "PUT api/v1/settings",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "One object with no id. The tenancy question is the sharper one: this "
+                      + "is the only write in the API with no query filter, no RLS policy and "
+                      + "no interceptor behind it, because Tenant is deliberately not "
+                      + "tenant-owned. Covered by "
+                      + "SettingsTests.A_put_only_ever_touches_the_calling_tenants_row.",
         },
         new()
         {

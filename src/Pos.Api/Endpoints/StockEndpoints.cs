@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.Linq.Expressions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
 using Pos.Api.Common;
 using Pos.Api.Idempotency;
+using Pos.Core.Auditing;
 using Pos.Core.Entities;
 using Pos.Core.Inventory;
 using Pos.Data;
@@ -268,6 +270,7 @@ public static class StockEndpoints
         AppDbContext db,
         IStockLedger ledger,
         IIdempotencyContext idempotency,
+        IAuditLog audit,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -320,6 +323,22 @@ public static class StockEndpoints
                 result.OnHand);
 
             idempotency.Record(db, StatusCodes.Status201Created, response, completedAt);
+
+            // Beside the idempotency record and inside the same transaction, so an adjustment
+            // that rolls back leaves no claim that stock moved. Stock walking out of a shop by
+            // hand is what this entry exists to make visible — the movement row says what
+            // changed, and this says who decided it should.
+            audit.Record(
+                AuditAction.StockAdjusted,
+                nameof(Product),
+                request.ProductId.Value,
+                after: new Dictionary<string, string?>
+                {
+                    ["type"] = fields.Type.Value.ToString(),
+                    ["quantity"] = request.Quantity.Value.ToString(CultureInfo.InvariantCulture),
+                    ["reason"] = fields.Reason,
+                    ["onHand"] = result.OnHand.ToString(CultureInfo.InvariantCulture),
+                });
 
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);

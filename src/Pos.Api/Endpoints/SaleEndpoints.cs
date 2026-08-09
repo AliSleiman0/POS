@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
@@ -5,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
 using Pos.Api.Common;
 using Pos.Api.Idempotency;
+using Pos.Core.Auditing;
 using Pos.Core.Entities;
 using Pos.Core.Monetary;
 using Pos.Core.Pricing;
@@ -365,7 +367,15 @@ public static class SaleEndpoints
     /// being dropped: a date filter that silently does nothing returns more history than was
     /// asked for, and every row in it looks legitimate.
     /// </remarks>
-    private static bool TryReadDay(
+    /// <summary>
+    /// Reads a <c>?from=</c>/<c>?to=</c> trading day, or files a field error.
+    /// </summary>
+    /// <remarks>
+    /// <c>internal</c> so <c>AuditEndpoints</c> reuses it rather than growing a second date
+    /// parser. Two of them would eventually differ on what a trading day is, and the place that
+    /// surfaces is an owner comparing the audit log against the day's report.
+    /// </remarks>
+    internal static bool TryReadDay(
         string? value,
         string field,
         Dictionary<string, string[]> errors,
@@ -463,9 +473,19 @@ public static class SaleEndpoints
     /// being half-built here as a mutable column on an append-only sale.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// <b>A GET that writes</b>, deliberately, and the one place in this API where that is
+    /// true. Each issue appends a <c>ReceiptIssued</c> audit entry, and the reprint mark is
+    /// derived from how many came before — so a client can no longer print an unmarked
+    /// duplicate by declining to send a flag, which is the refund-fraud vector §6.2 recorded
+    /// and DECISIONS.md left owing. What is recorded is that the receipt was *disclosed*;
+    /// opening the preview discloses it, so a look without a print marks the next copy as a
+    /// reprint. That is the safe direction for a control of this kind.
+    /// </remarks>
     private static async Task<Results<Ok<ReceiptResponse>, NotFound>> ReceiptAsync(
         Guid id,
         AppDbContext db,
+        IAuditLog audit,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -527,7 +547,30 @@ public static class SaleEndpoints
             TenantTimeZone.Resolve(shop.TimeZoneId),
             timeProvider.GetUtcNow());
 
-        return TypedResults.Ok(ReceiptResponse.From(receipt, sale.Id, sale.OriginalSaleId));
+        // Counted before this issue is written, so the first copy is number 1.
+        //
+        // Two simultaneous requests can both count the same number and both call themselves
+        // originals. Left as is: a unique index would refuse the second issue outright, and
+        // refusing to print a receipt a customer is waiting for is a worse failure than two
+        // rows saying "first". Both are still recorded, which is what the log is for.
+        var issueNumber = 1 + await db.AuditEntries
+            .CountAsync(
+                a => a.Action == AuditAction.ReceiptIssued && a.EntityId == sale.Id,
+                cancellationToken);
+
+        await audit.RecordStandaloneAsync(
+            AuditAction.ReceiptIssued,
+            nameof(Sale),
+            sale.Id,
+            after: new Dictionary<string, string?>
+            {
+                ["issueNumber"] = issueNumber.ToString(CultureInfo.InvariantCulture),
+                ["saleNumber"] = sale.SaleNumber.ToString(CultureInfo.InvariantCulture),
+            },
+            cancellationToken: cancellationToken);
+
+        return TypedResults.Ok(
+            ReceiptResponse.From(receipt, sale.Id, sale.OriginalSaleId, issueNumber));
     }
 
     /// <summary>
@@ -555,7 +598,11 @@ public static class SaleEndpoints
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var (cart, errors, _) = await BuildCartAsync(db, request, quoting: true, cancellationToken);
+        // The catalog prices are discarded here on purpose: a quote must not audit. The
+        // register re-quotes on every keystroke, so writing a PriceOverridden entry from this
+        // path would bury the log under a hundred rows per basket — the same reasoning that
+        // keeps the quote from *consuming* an override grant.
+        var (cart, errors, _, _) = await BuildCartAsync(db, request, quoting: true, cancellationToken);
 
         if (errors.Count > 0)
         {
@@ -590,6 +637,7 @@ public static class SaleEndpoints
         AppDbContext db,
         ISaleWriter writer,
         IIdempotencyContext idempotency,
+        IAuditLog audit,
         OverrideGrantService grants,
         System.Security.Claims.ClaimsPrincipal caller,
         IAuthorizationService authorization,
@@ -597,7 +645,8 @@ public static class SaleEndpoints
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var (cart, errors, tracked) = await BuildCartAsync(db, request, quoting: false, cancellationToken);
+        var (cart, errors, tracked, catalogPrices) =
+            await BuildCartAsync(db, request, quoting: false, cancellationToken);
 
         // Discounts and overrides are separately gated, and a Cashier sending one is refused
         // rather than silently ignored: unlike an unreadable costPrice, this changes what the
@@ -617,6 +666,22 @@ public static class SaleEndpoints
 
         if (!authorized.Succeeded)
         {
+            // Saved on its own, because there is no transaction to join — the work being
+            // recorded is precisely that no work happened. Safe to save here because nothing
+            // is tracked yet: BuildCartAsync reads AsNoTracking throughout, and the writer has
+            // not been called. A refused attempt is exactly what an owner wants to see, and it
+            // leaves no other trace anywhere.
+            await audit.RecordStandaloneAsync(
+                AuditAction.AuthorizationRefused,
+                nameof(Sale),
+                request.ClientTransactionId ?? Guid.Empty,
+                after: new Dictionary<string, string?>
+                {
+                    ["attempted"] = string.Join(", ", authorized.Missing),
+                    ["registerId"] = request.RegisterId?.ToString(),
+                },
+                cancellationToken: cancellationToken);
+
             return OverrideRequired(authorized.Missing);
         }
 
@@ -667,6 +732,10 @@ public static class SaleEndpoints
                 response = Project(priced, committed.ChangeGiven, committed, tenders);
                 idempotency.Record(db, StatusCodes.Status201Created, response, committed.CompletedAt);
 
+                // Same transaction, same reasoning as the idempotency record above: an entry
+                // for a sale that rolled back would report money moving that never moved.
+                RecordAdjustments(audit, priced, committed, catalogPrices, cart!, authorized);
+
                 // Spent here and nowhere else. Consumed before this point, a sale that then
                 // failed would leave the cashier needing the manager back for a second PIN;
                 // consumed after the commit, a crash in between would leave it spendable again.
@@ -681,6 +750,97 @@ public static class SaleEndpoints
     }
 
     /// <summary>
+    /// Records every price override and discount on a committed sale.
+    /// </summary>
+    /// <remarks>
+    /// <b>Called from inside the writer's transaction</b>, so these entries commit with the
+    /// sale or not at all.
+    /// <para>
+    /// The actor is always the session's own user — the cashier who rang it — even when a
+    /// manager's grant is what permitted the exception. Collapsing the two would make "who did
+    /// this" mean the cashier on some rows and the manager on others; the approver goes in the
+    /// payload instead, where it can be read as what it is.
+    /// </para>
+    /// </remarks>
+    private static void RecordAdjustments(
+        IAuditLog audit,
+        PricedSale priced,
+        SaleCommitResult committed,
+        IReadOnlyDictionary<Guid, Money> catalogPrices,
+        Cart cart,
+        Authorization authorized)
+    {
+        var approvedBy = authorized.Grant?.UserId.ToString();
+
+        for (var index = 0; index < priced.Lines.Count; index++)
+        {
+            var line = priced.Lines[index].Source;
+            var lineId = committed.LineIds[index];
+
+            if (line.IsPriceOverridden && catalogPrices.TryGetValue(line.ProductId, out var wasPriced))
+            {
+                audit.Record(
+                    AuditAction.PriceOverridden,
+                    nameof(SaleLine),
+                    lineId,
+                    before: new Dictionary<string, string?>
+                    {
+                        ["unitPrice"] = Amount(wasPriced),
+                    },
+                    after: new Dictionary<string, string?>
+                    {
+                        ["unitPrice"] = Amount(line.UnitPrice),
+                        ["saleId"] = committed.SaleId.ToString(),
+                        ["productId"] = line.ProductId.ToString(),
+                        ["approvedBy"] = approvedBy,
+                    });
+            }
+
+            if (line.LineDiscount != Money.Zero)
+            {
+                audit.Record(
+                    AuditAction.DiscountApplied,
+                    nameof(SaleLine),
+                    lineId,
+                    after: new Dictionary<string, string?>
+                    {
+                        ["amount"] = Amount(line.LineDiscount),
+                        ["saleId"] = committed.SaleId.ToString(),
+                        ["productId"] = line.ProductId.ToString(),
+                        ["approvedBy"] = approvedBy,
+                    });
+            }
+        }
+
+        // One more for a discount taken off the basket as a whole, which belongs to no line —
+        // this is what the phase doc's "line or cart" means.
+        if (cart.CartDiscount != Money.Zero)
+        {
+            audit.Record(
+                AuditAction.DiscountApplied,
+                nameof(Sale),
+                committed.SaleId,
+                after: new Dictionary<string, string?>
+                {
+                    ["amount"] = Amount(cart.CartDiscount),
+                    ["scope"] = "cart",
+                    ["approvedBy"] = approvedBy,
+                });
+        }
+    }
+
+    /// <summary>
+    /// A money amount as the audit log stores it.
+    /// </summary>
+    /// <remarks>
+    /// Invariant culture, explicitly. <c>InvariantGlobalization</c> is off, so a machine under
+    /// a comma-decimal culture would otherwise write "1,20" into a permanent record that
+    /// nothing can go back and correct.
+    /// </remarks>
+    private static string Amount(Money money) =>
+        money.Amount.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
     /// Turns a request into a <see cref="Cart"/>, resolving every product against the catalog.
     /// </summary>
     /// <remarks>
@@ -689,7 +849,11 @@ public static class SaleEndpoints
     /// implementations of tax and discount rules will differ eventually, and the place it
     /// surfaces is a customer disputing a receipt at a counter.
     /// </remarks>
-    private static async Task<(Cart? Cart, Dictionary<string, string[]> Errors, IReadOnlySet<Guid> Tracked)>
+    private static async Task<(
+        Cart? Cart,
+        Dictionary<string, string[]> Errors,
+        IReadOnlySet<Guid> Tracked,
+        IReadOnlyDictionary<Guid, Money> CatalogPrices)>
         BuildCartAsync(
             AppDbContext db,
             CreateSaleRequest request,
@@ -721,7 +885,7 @@ public static class SaleEndpoints
             // Refused at the endpoint, not in the engine: the engine prices an empty cart to
             // zero quite happily, and it is right to. A sale of nothing is a UI slip.
             errors["lines"] = ["At least one line is required."];
-            return (null, errors, new HashSet<Guid>());
+            return (null, errors, new HashSet<Guid>(), new Dictionary<Guid, Money>());
         }
 
         var productIds = request.Lines
@@ -748,6 +912,12 @@ public static class SaleEndpoints
 
         var lines = new List<CartLine>();
         var tracked = new HashSet<Guid>();
+
+        // Carried out of here purely so a price override can be audited against the price it
+        // replaced. The CartLine below keeps only the price that was *used*, which is the
+        // right shape for pricing and useless for "what did this cost before?" — and the
+        // dictionary this comes from is a local that dies with the function.
+        var catalogPrices = new Dictionary<Guid, Money>();
 
         for (var index = 0; index < request.Lines.Count; index++)
         {
@@ -806,6 +976,8 @@ public static class SaleEndpoints
                 (Money)discount,
                 overridden));
 
+            catalogPrices[productId] = product.UnitPrice;
+
             if (product.TrackStock)
             {
                 tracked.Add(productId);
@@ -821,7 +993,7 @@ public static class SaleEndpoints
 
         if (errors.Count > 0)
         {
-            return (null, errors, tracked);
+            return (null, errors, tracked, catalogPrices);
         }
 
         // The tenant's own settings, read once. TaxMode is snapshotted onto the sale so no
@@ -835,7 +1007,8 @@ public static class SaleEndpoints
         return (
             new Cart(lines, (Money)cartDiscount, settings.TaxMode, settings.CashRoundingIncrement),
             errors,
-            tracked);
+            tracked,
+            catalogPrices);
     }
 
     private static async Task<Results<Ok<SaleResponse>, NotFound, ValidationProblem>> VoidAsync(
@@ -844,6 +1017,7 @@ public static class SaleEndpoints
         AppDbContext db,
         ISaleWriter writer,
         IIdempotencyContext idempotency,
+        IAuditLog audit,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -880,7 +1054,25 @@ public static class SaleEndpoints
         await writer.VoidAsync(
             id,
             reason,
-            voided => idempotency.Record(db, StatusCodes.Status200OK, VoidedMarker(voided), voided.VoidedAt),
+            voided =>
+            {
+                idempotency.Record(db, StatusCodes.Status200OK, VoidedMarker(voided), voided.VoidedAt);
+
+                // A void hands the cash straight back and puts the goods on the shelf, so it
+                // is the cheapest way to make a sale disappear. The reason is on the sale row
+                // too; this is the entry an owner reads when looking for a pattern across
+                // sales rather than at one.
+                audit.Record(
+                    AuditAction.SaleVoided,
+                    nameof(Sale),
+                    voided.SaleId,
+                    before: new Dictionary<string, string?> { ["status"] = nameof(SaleStatus.Completed) },
+                    after: new Dictionary<string, string?>
+                    {
+                        ["status"] = nameof(SaleStatus.Voided),
+                        ["reason"] = reason,
+                    });
+            },
             cancellationToken);
 
         var sale = await db.Sales.AsNoTracking().FirstAsync(s => s.Id == id, cancellationToken);
@@ -907,6 +1099,7 @@ public static class SaleEndpoints
         AppDbContext db,
         ISaleWriter writer,
         IIdempotencyContext idempotency,
+        IAuditLog audit,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -988,11 +1181,29 @@ public static class SaleEndpoints
                 [.. (request.Lines ?? []).Select(l =>
                     new RefundLineInstruction(l.SaleLineId!.Value, l.Quantity!.Value))],
                 increment),
-            committed => idempotency.Record(
-                db,
-                StatusCodes.Status201Created,
-                new { id = committed.SaleId, saleNumber = committed.SaleNumber },
-                committed.CompletedAt),
+            committed =>
+            {
+                idempotency.Record(
+                    db,
+                    StatusCodes.Status201Created,
+                    new { id = committed.SaleId, saleNumber = committed.SaleNumber },
+                    committed.CompletedAt);
+
+                // Until now the entire trail for a refund was the reason and actor stored on
+                // the refund row. This is the record that survives the row being read by
+                // somebody who does not know to look for it, and it names both sales — the
+                // question is always "how much has come back against this sale?".
+                audit.Record(
+                    AuditAction.RefundIssued,
+                    nameof(Sale),
+                    committed.SaleId,
+                    after: new Dictionary<string, string?>
+                    {
+                        ["originalSaleId"] = id.ToString(),
+                        ["saleNumber"] = committed.SaleNumber.ToString(CultureInfo.InvariantCulture),
+                        ["reason"] = reason,
+                    });
+            },
             cancellationToken);
 
         var refund = await db.Sales.AsNoTracking().FirstAsync(s => s.Id == result.SaleId, cancellationToken);

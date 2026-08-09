@@ -206,6 +206,8 @@ app.MapStockEndpoints();
 app.MapShiftEndpoints();
 app.MapSaleEndpoints();
 app.MapReportEndpoints();
+app.MapAuditEndpoints();
+app.MapSettingsEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.

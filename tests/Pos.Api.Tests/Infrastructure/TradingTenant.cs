@@ -66,9 +66,10 @@ public static class TradingTenantExtensions
         {
             var db = services.GetRequiredService<AppDbContext>();
 
-            // Set here rather than through an endpoint because /settings is not built: TaxMode
-            // and the cash-rounding rule are onboarding values with no route yet, and Phase 3
-            // deliberately did not add one.
+            // Set here rather than through PUT /settings, which exists from Phase 7.4 — the
+            // fixture must not depend on an endpoint that other tests in this suite are
+            // changing. Note that TaxMode is Exclusive here, so a settings test needs to send
+            // Inclusive to make a real change.
             var row = await db.Tenants.FindAsync(tenant.Id);
             row!.TaxMode = TaxMode.Exclusive;
             row.CashRoundingIncrement = cashRoundingIncrement;

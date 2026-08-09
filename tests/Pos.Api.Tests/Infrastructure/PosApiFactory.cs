@@ -57,6 +57,9 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
     private readonly SemaphoreSlim _sandboxGate = new(1, 1);
     private CatalogSandbox? _sandbox;
 
+    private readonly SemaphoreSlim _matrixGate = new(1, 1);
+    private Authorization.AuthorizationMatrixWorld? _matrix;
+
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
@@ -315,6 +318,35 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
         finally
         {
             _sandboxGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// One tenant holding one of every role, for the authorization matrix.
+    /// </summary>
+    /// <remarks>
+    /// Shared and lazily seeded like the two above, and for the same reason: creating four
+    /// users means four deliberately slow password hashes, and the matrix runs one theory per
+    /// (role × endpoint). Safe to share because <b>the matrix never writes</b> — every probe
+    /// carries <c>Guid.Empty</c> and an empty body, so a permitted caller is answered 404 or
+    /// 400 rather than creating anything.
+    /// </remarks>
+    public async Task<Authorization.AuthorizationMatrixWorld> MatrixWorldAsync()
+    {
+        if (_matrix is not null)
+        {
+            return _matrix;
+        }
+
+        await _matrixGate.WaitAsync();
+
+        try
+        {
+            return _matrix ??= await Authorization.AuthorizationMatrixWorld.SeedAsync(this);
+        }
+        finally
+        {
+            _matrixGate.Release();
         }
     }
 
