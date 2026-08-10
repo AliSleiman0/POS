@@ -14,11 +14,11 @@ internal sealed class ApplicationUserConfiguration : IEntityTypeConfiguration<Ap
         builder.ToTable("application_user");
 
         builder
-            .HasBoundedText(u => u.DisplayName, "display_name", 100)
-            .HasBoundedText(u => u.Email, "email", 256)
-            .HasBoundedText(u => u.NormalizedEmail, "normalized_email", 256)
-            .HasBoundedText(u => u.UserName, "user_name", 256)
-            .HasBoundedText(u => u.NormalizedUserName, "normalized_user_name", 256);
+            .HasBoundedText(u => u.DisplayName, "display_name", ApplicationUser.DisplayNameMaxLength)
+            .HasBoundedText(u => u.Email, "email", ApplicationUser.EmailMaxLength)
+            .HasBoundedText(u => u.NormalizedEmail, "normalized_email", ApplicationUser.EmailMaxLength)
+            .HasBoundedText(u => u.UserName, "user_name", ApplicationUser.EmailMaxLength)
+            .HasBoundedText(u => u.NormalizedUserName, "normalized_user_name", ApplicationUser.EmailMaxLength);
 
         // Identity declares these as platform-wide. Left alone, one person could not hold
         // accounts at two tenants — a franchise owner, a consultant, or us doing support —

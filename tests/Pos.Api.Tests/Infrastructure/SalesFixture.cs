@@ -18,7 +18,9 @@ public sealed record SeededSales(
     /// The client transaction id <see cref="FirstSaleId"/> was written with, for
     /// <c>GET /sales/by-client-transaction/{id}</c>.
     /// </summary>
-    Guid FirstClientTransactionId)
+    Guid FirstClientTransactionId,
+    Guid VoidAuditEntryId,
+    Guid StockAuditEntryId)
 {
     /// <summary>
     /// Everything <c>GET /sales</c> must return for this tenant.
@@ -34,6 +36,15 @@ public sealed record SeededSales(
     public IReadOnlyList<Guid> ShiftIds => [ClosedShiftId, OpenShiftId];
 
     public IReadOnlyList<Guid> DiscrepancyIds => [DiscrepancyId];
+
+    /// <summary>
+    /// Everything <c>GET /audit</c> must return for this tenant.
+    /// </summary>
+    /// <remarks>
+    /// Two entries with different actions, so a handler that ignored <c>?action=</c> would
+    /// still be caught by a filtered read returning both.
+    /// </remarks>
+    public IReadOnlyList<Guid> AuditEntryIds => [VoidAuditEntryId, StockAuditEntryId];
 }
 
 /// <summary>
@@ -168,6 +179,32 @@ internal static class SalesFixture
             // that would look like a bug in the endpoint rather than in the fixture.
             db.SaleSequences.Add(new SaleSequence { LastNumber = 4 });
 
+            // Two audit entries, so GET /audit has something to be isolated *about*. Written
+            // directly rather than by exercising the endpoints that would produce them, for the
+            // reason this whole fixture is: a bug in those endpoints would otherwise build a
+            // world that agreed with itself.
+            var voidedEntry = new AuditEntry
+            {
+                Action = AuditAction.SaleVoided,
+                EntityType = nameof(Sale),
+                EntityId = voided.Id,
+                ActorId = cashierId,
+                OccurredAt = opened.AddHours(3),
+                After = """{"reason":"Wrong item"}""",
+            };
+
+            var adjustedEntry = new AuditEntry
+            {
+                Action = AuditAction.StockAdjusted,
+                EntityType = nameof(Product),
+                EntityId = catalog.WaterProductId,
+                ActorId = cashierId,
+                OccurredAt = opened.AddHours(4),
+                After = """{"quantity":"-1"}""",
+            };
+
+            db.AuditEntries.AddRange(voidedEntry, adjustedEntry);
+
             await db.SaveChangesAsync();
 
             seeded = new SeededSales(
@@ -178,7 +215,9 @@ internal static class SalesFixture
                 voided.Id,
                 refund.Id,
                 discrepancy.Id,
-                first.ClientTransactionId);
+                first.ClientTransactionId,
+                voidedEntry.Id,
+                adjustedEntry.Id);
         });
 
         return seeded!;

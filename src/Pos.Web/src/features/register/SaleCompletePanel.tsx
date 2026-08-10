@@ -127,12 +127,11 @@ export function SaleCompletePanel({
       <p className="text-xs text-muted-foreground">Scan the next item to start a new sale.</p>
 
       {/* An original, not a reprint: this is the sale that was just rung, and
-          the copy the customer is handed at the counter. Anything printed from
-          history afterwards is marked. */}
+          the copy the customer is handed at the counter. Whether it is marked as a
+          reprint is the server's call, not this screen's — see ReceiptDialog. */}
       {printing && sale.id !== null ? (
         <ReceiptDialog
           saleId={sale.id}
-          isReprint={false}
           onClose={() => {
             setPrinting(false)
           }}

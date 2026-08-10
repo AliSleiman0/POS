@@ -13,6 +13,13 @@ internal sealed class RegisterConfiguration : IEntityTypeConfiguration<Register>
         builder.ToTable("register");
         builder.HasKey(r => r.Id);
 
+        // Declared rather than left implicit, which is what it was until Phase 7. Shift's
+        // HasPrincipalKey had been creating this key as a side effect, and EF derived its
+        // name from whichever entity happened to ask first — so adding a second dependent
+        // (audit_entry) generated a migration that renamed it for no reason. Naming it here
+        // pins it, and matches every other tenant-referenced entity.
+        builder.HasAlternateKey(r => new { r.TenantId, r.Id }).HasName("ak_register_tenant_id_id");
+
         builder
             .HasBoundedText(r => r.Name, "name", Register.NameMaxLength)
             .HasBoundedText(r => r.DeviceTokenHash, "device_token_hash", Register.DeviceTokenHashLength);

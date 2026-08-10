@@ -5,6 +5,7 @@ using Pos.Core.Auditing;
 using Pos.Core.Inventory;
 using Pos.Core.Sales;
 using Pos.Core.Tenancy;
+using Pos.Data.Auditing;
 using Pos.Data.Interceptors;
 using Pos.Data.Inventory;
 using Pos.Data.Reporting;
@@ -81,7 +82,13 @@ public static class ServiceCollectionExtensions
         // row lock, a counter and a concurrency token in it, not a save.
         services.AddScoped<ISaleWriter, SaleWriter>();
 
-        // Not behind a Core port, unlike the two above: there is no rule here Core needs to
+        // The third port, and the reason it is one: an audit entry has to land in the same
+        // transaction as the thing it describes, so the writers above need to reach it — and
+        // Pos.Data cannot see a type declared in Pos.Api, which is why the idempotency
+        // context's shape (pass the DbContext in) does not work here.
+        services.AddScoped<IAuditLog, AuditLog>();
+
+        // Not behind a Core port, unlike the three above: there is no rule here Core needs to
         // own. The arithmetic is already pure in ShiftArithmetic, and what is left is three
         // queries and a lock.
         services.AddScoped<ShiftWriter>();

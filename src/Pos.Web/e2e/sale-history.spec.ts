@@ -112,7 +112,7 @@ test.describe('sale history', () => {
     await expect(page.getByTestId('sale-original')).toContainText('Bottle was cracked')
   })
 
-  test('a reprint from history is marked as one', async ({ page }) => {
+  test('the second copy of a receipt is marked as one, and the first is not', async ({ page }) => {
     const number = await sell(page)
 
     await page.goto('/sales')
@@ -122,11 +122,19 @@ test.describe('sale history', () => {
       .getByRole('link', { name: `#${number}` })
       .click()
 
+    // From Phase 7.2 the mark is the *server's* count of issues, not a claim about
+    // which screen you are on. This sale was rung and never printed, so the first
+    // copy — taken from history — is honestly the original.
     await page.getByRole('button', { name: 'Reprint receipt' }).click()
+    await expect(page.getByTestId('receipt')).toBeVisible()
+    await expect(page.getByTestId('receipt-reprint')).toHaveCount(0)
 
-    // The original was handed over at the counter when the sale was rung.
-    // Anything printed from here afterwards is a copy and says so — an unmarked
-    // duplicate is a refund-fraud vector.
+    await page.keyboard.press('Escape')
+
+    // The second copy says so, and the till sent nothing to make it. A client that
+    // chose to stay quiet used to print an unmarked duplicate, which is the
+    // refund-fraud vector §6.2 recorded.
+    await page.getByRole('button', { name: 'Reprint receipt' }).click()
     await expect(page.getByTestId('receipt-reprint')).toBeVisible()
     await expect(page.getByTestId('receipt-reprint')).toContainText('REPRINT')
   })

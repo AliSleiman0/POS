@@ -440,6 +440,178 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/employees': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Every member of staff at this shop */
+    get: {
+      parameters: {
+        query?: {
+          activeOnly?: boolean
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['EmployeeSummary'][]
+          }
+        }
+      }
+    }
+    put?: never
+    /** Add a member of staff */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['CreateEmployeeRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['EmployeeSummary']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/employees/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** Change a member of staff's name, role or active status */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['UpdateEmployeeRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['EmployeeSummary']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/employees/{id}/deactivate': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Withdraw a member of staff's access */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description No Content */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/employees/{id}/set-pin': {
     parameters: {
       query?: never
@@ -2271,6 +2443,127 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/audit': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** What has been done that moves money, newest first */
+    get: {
+      parameters: {
+        query?: {
+          cursor?: string
+          limit?: number | string
+          action?: string
+          actorId?: string
+          from?: string
+          to?: string
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['CursorPageOfAuditEntryResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/settings': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** How this shop is configured */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['SettingsResponse']
+          }
+        }
+      }
+    }
+    /** Change what a shop may change about itself */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['UpdateSettingsRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['SettingsResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
@@ -2278,6 +2571,45 @@ export interface components {
     AddBarcodeRequest: {
       code: null | string
       isPrimary: null | boolean
+    }
+    /** @enum {unknown} */
+    AuditAction:
+      | 'PriceOverridden'
+      | 'DiscountApplied'
+      | 'SaleVoided'
+      | 'RefundIssued'
+      | 'ReceiptIssued'
+      | 'StockAdjusted'
+      | 'EmployeeCreated'
+      | 'EmployeeDeactivated'
+      | 'RoleChanged'
+      | 'PinReset'
+      | 'DeviceEnrolled'
+      | 'DeviceRevoked'
+      | 'SettingsChanged'
+      | 'ShiftClosed'
+      | 'AuthorizationRefused'
+    AuditEntryResponse: {
+      /** Format: uuid */
+      id: string
+      action: components['schemas']['AuditAction']
+      entityType: string
+      /** Format: uuid */
+      entityId: string
+      /** Format: uuid */
+      actorId: null | string
+      actorName: string
+      /** Format: uuid */
+      registerId: null | string
+      registerName: null | string
+      /** Format: date-time */
+      occurredAt: string
+      before: null | {
+        [key: string]: string
+      }
+      after: null | {
+        [key: string]: string
+      }
     }
     AuthResponse: {
       accessToken: string
@@ -2375,6 +2707,13 @@ export interface components {
       /** Format: int32 */
       sortOrder: null | number | string
     }
+    CreateEmployeeRequest: {
+      displayName: string
+      email: string
+      role: string
+      password: string
+      pin: null | string
+    }
     CreateProductRequest: {
       sku: null | string
       name: null | string
@@ -2419,6 +2758,11 @@ export interface components {
       rate: null | number | string
       isDefault: null | boolean
     }
+    CursorPageOfAuditEntryResponse: {
+      items: components['schemas']['AuditEntryResponse'][]
+      nextCursor: null | string
+      hasMore: boolean
+    }
     CursorPageOfCategoryResponse: {
       items: components['schemas']['CategoryResponse'][]
       nextCursor: null | string
@@ -2453,6 +2797,17 @@ export interface components {
       items: components['schemas']['TaxClassResponse'][]
       nextCursor: null | string
       hasMore: boolean
+    }
+    EmployeeSummary: {
+      /** Format: uuid */
+      id: string
+      displayName: string
+      email: string
+      role: null | string
+      isActive: boolean
+      hasPin: boolean
+      /** Format: date-time */
+      lastLoginAt: null | string
     }
     EnrollmentResponse: {
       /** Format: uuid */
@@ -2623,6 +2978,9 @@ export interface components {
       total: number | string
       /** Format: double */
       changeGiven: number | string
+      isReprint: boolean
+      /** Format: int32 */
+      issueNumber: number | string
     }
     ReceiptShopResponse: {
       name: string
@@ -2921,6 +3279,21 @@ export interface components {
     SetPinRequest: {
       pin: string
     }
+    SettingsResponse: {
+      name: string
+      slug: string
+      currencyCode: string
+      timeZoneId: string
+      taxMode: components['schemas']['TaxMode']
+      taxModeLocked: boolean
+      /** Format: double */
+      cashRoundingIncrement: number | string
+      businessDayStartOffset: string
+      addressLine: null | string
+      taxNumber: null | string
+      receiptHeader: null | string
+      receiptFooter: null | string
+    }
     ShiftResponse: {
       /** Format: uuid */
       id: string
@@ -3030,6 +3403,11 @@ export interface components {
       /** Format: int32 */
       sortOrder: null | number | string
     }
+    UpdateEmployeeRequest: {
+      displayName: string
+      role: string
+      isActive: boolean
+    }
     UpdateProductRequest: {
       sku: null | string
       name: null | string
@@ -3044,6 +3422,16 @@ export interface components {
       costPrice: null | number | string
       unit: null | string
       trackStock: null | boolean
+    }
+    UpdateSettingsRequest: {
+      name: string
+      taxMode: components['schemas']['TaxMode']
+      /** Format: double */
+      cashRoundingIncrement: number | string
+      addressLine: null | string
+      taxNumber: null | string
+      receiptHeader: null | string
+      receiptFooter: null | string
     }
     UpdateTaxClassRequest: {
       name: null | string

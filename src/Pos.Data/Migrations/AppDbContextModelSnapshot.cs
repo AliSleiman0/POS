@@ -24,6 +24,84 @@ namespace Pos.Data.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pg_trgm");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Pos.Core.Entities.AuditEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("action");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_id");
+
+                    b.Property<string>("After")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("after");
+
+                    b.Property<string>("Before")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("before");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("EntityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("entity_id");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("entity_type");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<Guid?>("RegisterId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("register_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_audit_entry");
+
+                    b.HasIndex("TenantId", "OccurredAt")
+                        .HasDatabaseName("ix_audit_entry_tenant_occurred_at");
+
+                    b.HasIndex("TenantId", "RegisterId")
+                        .HasDatabaseName("ix_audit_entry_tenant_id_register_id");
+
+                    b.ToTable("audit_entry", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_audit_entry_action_allowed", "\"action\" IN ('PriceOverridden', 'DiscountApplied', 'SaleVoided', 'RefundIssued', 'ReceiptIssued', 'StockAdjusted', 'EmployeeCreated', 'EmployeeDeactivated', 'RoleChanged', 'PinReset', 'DeviceEnrolled', 'DeviceRevoked', 'SettingsChanged', 'ShiftClosed', 'AuthorizationRefused')");
+
+                            t.HasCheckConstraint("ck_audit_entry_entity_type_length", "length(\"entity_type\") <= 64");
+                        });
+                });
+
             modelBuilder.Entity("Pos.Core.Entities.Barcode", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1737,6 +1815,16 @@ namespace Pos.Data.Migrations
                         .HasName("pk_user_token");
 
                     b.ToTable("user_token", (string)null);
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.AuditEntry", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Register", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "RegisterId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audit_entry_register");
                 });
 
             modelBuilder.Entity("Pos.Core.Entities.Barcode", b =>

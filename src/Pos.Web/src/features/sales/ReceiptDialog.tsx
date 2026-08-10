@@ -20,16 +20,7 @@ import { useReceipt } from './queries'
  * `window.print()` on mount, because a till that opened a modal print dialog by
  * itself would stall a queue with a scanner still typing behind it.
  */
-export function ReceiptDialog({
-  saleId,
-  isReprint,
-  onClose,
-}: {
-  saleId: string
-  /** See `Receipt`. History reprints; the completion panel does not. */
-  isReprint: boolean
-  onClose: () => void
-}) {
+export function ReceiptDialog({ saleId, onClose }: { saleId: string; onClose: () => void }) {
   const receipt = useReceipt(saleId)
   const [paper, setPaper] = useState<Paper>('80mm')
 
@@ -91,7 +82,11 @@ export function ReceiptDialog({
           />
         </div>
       ) : (
-        <Receipt receipt={receipt.data} isReprint={isReprint} paper={paper} />
+        // The server's answer, not the caller's. Until Phase 7.2 each call site
+        // declared whether its copy was a reprint, so a client that simply omitted
+        // the flag printed an unmarked duplicate — the refund-fraud vector §6.2
+        // recorded. It is now derived from append-only entries nobody can suppress.
+        <Receipt receipt={receipt.data} isReprint={receipt.data.isReprint} paper={paper} />
       )}
     </div>,
     document.body,

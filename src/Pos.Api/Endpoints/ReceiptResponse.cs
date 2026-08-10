@@ -46,10 +46,28 @@ public sealed record ReceiptTenderResponse(TenderMethod Method, decimal Amount, 
 /// something was bought on.
 /// </para>
 /// </remarks>
-/// <param name="IssuedAtLocal">
-/// When this copy was rendered. A reprint is stamped with it — see docs/DECISIONS.md on why the
-/// mark is applied by the client rather than counted by the server.
+/// <param name="IssuedAtLocal">When this copy was rendered. A reprint is stamped with it.</param>
+/// <param name="IsReprint">
+/// Whether this sale's receipt has been issued before.
 /// </param>
+/// <param name="IssueNumber">
+/// Which issue this is, counting from 1.
+/// </param>
+/// <remarks>
+/// <para>
+/// <b><see cref="IsReprint"/> and <see cref="IssueNumber"/> are the server's answer, not the
+/// client's.</b> Until Phase 7 the mark was decided by whoever was rendering, and §6.2 was
+/// right that this is a refund-fraud vector: a client that chose not to send the flag printed
+/// an unmarked duplicate, and nothing anywhere could contradict it. They are now derived from
+/// the append-only <c>ReceiptIssued</c> entries, which the caller cannot suppress.
+/// </para>
+/// <para>
+/// The cost is that <c>GET /sales/{id}/receipt</c> writes. That is deliberate — what is being
+/// recorded is that a receipt was <i>disclosed</i>, and opening the preview discloses it. A
+/// cashier who looks without printing marks the next copy as a reprint, which is the safe
+/// direction for a control of this kind.
+/// </para>
+/// </remarks>
 public sealed record ReceiptResponse(
     ReceiptKind Kind,
     ReceiptShopResponse Shop,
@@ -73,7 +91,9 @@ public sealed record ReceiptResponse(
     decimal TaxTotal,
     decimal RoundingAdjustment,
     decimal Total,
-    decimal ChangeGiven)
+    decimal ChangeGiven,
+    bool IsReprint,
+    int IssueNumber)
 {
     /// <summary>Projects the Core payload onto the wire.</summary>
     /// <remarks>
@@ -81,7 +101,11 @@ public sealed record ReceiptResponse(
     /// and must not start doing any: <see cref="ReceiptBuilder"/> is where a receipt's numbers
     /// are decided, and a second place that adjusted them would be a second answer.
     /// </remarks>
-    public static ReceiptResponse From(Receipt receipt, Guid saleId, Guid? originalSaleId)
+    public static ReceiptResponse From(
+        Receipt receipt,
+        Guid saleId,
+        Guid? originalSaleId,
+        int issueNumber)
     {
         ArgumentNullException.ThrowIfNull(receipt);
 
@@ -129,6 +153,8 @@ public sealed record ReceiptResponse(
             (decimal)receipt.TaxTotal,
             (decimal)receipt.RoundingAdjustment,
             (decimal)receipt.Total,
-            (decimal)receipt.ChangeGiven);
+            (decimal)receipt.ChangeGiven,
+            IsReprint: issueNumber > 1,
+            issueNumber);
     }
 }

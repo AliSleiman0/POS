@@ -142,11 +142,10 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
 
         if (existing is not null)
         {
-            // The two fields a re-run may change, and only when they were asked for. There is
-            // no PUT /settings, so this is the only way to give an existing dev shop a rounding
-            // increment — and without one the register's rounding line cannot be reached from
-            // a browser at all. The footer is here for the same reason: it is the receipt field
-            // most worth seeing change.
+            // The two fields a re-run may change, and only when they were asked for. Both are
+            // reachable through PUT /settings from Phase 7.4, so this is no longer the only
+            // way in — it is kept because putting a dev shop into a known state from one
+            // command is faster than clicking, and because the e2e fixture depends on it.
             var changed = false;
 
             if (options.CashRoundingIncrement is { } increment

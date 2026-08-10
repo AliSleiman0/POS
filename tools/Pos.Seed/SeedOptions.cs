@@ -75,10 +75,10 @@ public sealed record SeedOptions
     /// The smallest coin the shop rounds cash payments to, or null to leave it alone.
     /// </summary>
     /// <remarks>
-    /// Seeded because there is no <c>PUT /settings</c> yet, and without a way to set it the
-    /// register's cash-rounding line is unreachable from a browser — the pricing engine's
-    /// rounding could only ever be asserted in C#. <c>0.05</c> is the usual Swedish-rounding
-    /// value for a euro shop that has stopped handling 1c and 2c coins.
+    /// Seeded so a dev shop reaches a known state from one command. <c>PUT /settings</c> can
+    /// set it too from Phase 7.4, but the e2e fixture needs it before a browser exists.
+    /// <c>0.05</c> is the usual Swedish-rounding value for a euro shop that has stopped
+    /// handling 1c and 2c coins.
     /// <para>
     /// Nullable so that <b>supplying it changes an existing tenant</b> while omitting it does
     /// not. Everything else here is create-only ("safe to re-run: existing rows are left
@@ -94,9 +94,9 @@ public sealed record SeedOptions
     /// </summary>
     /// <remarks>
     /// Nullable for exactly the reason <see cref="CashRoundingIncrement"/> is: supplying it
-    /// <b>changes an existing tenant</b>, and there is still no <c>PUT /settings</c>, so this
-    /// is the only way to see a different footer come out of the renderer without dropping the
-    /// database. A new tenant gets <see cref="DefaultReceiptFooter"/>.
+    /// <b>changes an existing tenant</b> while omitting it leaves one alone. An owner can also
+    /// edit it at <c>/admin/settings</c> from Phase 7.4; this stays for scripted setup.
+    /// A new tenant gets <see cref="DefaultReceiptFooter"/>.
     /// </remarks>
     public required string? ReceiptFooter { get; init; }
 

@@ -59,7 +59,16 @@ export function useReceipt(saleId: string | null) {
     queryFn: () =>
       unwrap(api.GET('/api/v1/sales/{id}/receipt', { params: { path: { id: saleId ?? '' } } })),
     enabled: saleId !== null,
-    staleTime: Infinity,
+
+    // Always refetched, though the sale itself never changes.
+    //
+    // It was `staleTime: Infinity` until Phase 7.2, which was right while the payload
+    // was immutable — a sale's snapshotted amounts cannot move. It is wrong now that
+    // the server counts issues: `isReprint` and `issueNumber` are facts about *this
+    // copy*, so a cached payload would hand a cashier a second copy still calling
+    // itself the first, and the count would never advance. Reopening the dialog is a
+    // new issue, and has to reach the server to be one.
+    ...LIVE_QUERY_OPTIONS,
   })
 }
 

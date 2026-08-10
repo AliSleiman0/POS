@@ -136,7 +136,15 @@ Without shifts, "the drawer is £12 short" is unanswerable. `Variance = CountedC
 
 **`AuditEntry`** — append-only. `Action`, `EntityType`, `EntityId`, `Before?` (jsonb), `After?` (jsonb), `ActorId`, `OccurredAt`, `RegisterId?`.
 
-Records the actions that cost money or hide theft: price override, discount, void, refund, stock adjust, role change, PIN reset. Not a change-log of everything — a targeted record of sensitive actions, so it stays readable enough that someone will read it.
+Records the actions that cost money or hide theft: price override, discount, void, refund, receipt issue, stock adjust, employee create/deactivate, role change, PIN reset, device enrol/revoke, settings change, shift close, and a refused adjustment attempt. Not a change-log of everything — a targeted record of sensitive actions, so it stays readable enough that someone will read it.
+
+- **Append-only at the database, not by convention.** The app's role `pos_app` holds no `UPDATE` or `DELETE` grant on this table. That had to be revoked explicitly: the Phase 1.6 RLS migration grants both on every *future* table by default privileges, so the table was created with them.
+- **`Action` is text via `HasEnumAsText`**, so the member names are the values in `ck_audit_entry_action_allowed` and in every row already written. Renaming one rewrites the constraint and orphans history — treat them as a wire contract.
+- **`EntityType` is bounded text, not an enum.** It is polymorphic, and auditing a new kind of row should not mean rewriting a check constraint over history.
+- **`Before`/`After` are a flat `Dictionary<string, string?>` serialised to `jsonb`** — not free-form JSON. It needs no Npgsql dynamic-JSON opt-in, it describes cleanly in OpenAPI so the generated client gets a usable type, and the read screen is a two-column table. Numbers are formatted with `InvariantCulture`: `InvariantGlobalization` is off, so a machine under a comma-decimal culture would otherwise write `"1,20"` into a permanent record.
+- **`ActorId` has no foreign key**, matching `Sale.CashierId`, `SaleLine.OverriddenBy`, `StockMovement.PerformedBy` and `Shift.OpenedBy` — one would need an alternate key on Identity's user table that nothing else asks for. It is always the session's own user, even when a manager's grant permitted the action; the approver goes in `After`, so "who did this" means the same thing on every row.
+- **`RegisterId` carries the tenant in its foreign key**, like every other tenant-scoped relationship. It is null for anything done from a back-office browser, because only PIN sessions and device tokens carry a `register_id` claim.
+- **`OccurredAt` is separate from `CreatedAt`**, for the reason `StockMovement.OccurredAt` is: Phase 9 will record an action when it happened and write it when the till reconnects, and every question asked of this log means the first of those.
 
 ### Idempotency
 

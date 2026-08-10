@@ -225,7 +225,7 @@ The endpoint that must not get this wrong.
 - `completedAtLocal` and `issuedAtLocal` are in the **tenant's** zone and carry its offset. Everything else in this API is UTC; a receipt is the edge where a trading day is decided, and 23:15 printed as 22:15 is a dispute about which day something was bought on.
 - Every amount and description comes from the sale's own snapshotted rows. Nothing joins to the catalog, so a price raised on Tuesday cannot reprint Monday's receipt at the new one.
 - `kind` is `Sale`, `Refund` or `VoidedSale`, and it is not cosmetic. A refund names the sale it reverses; a voided sale says so, because an unmarked one could be presented as proof of purchase.
-- It is a pure read and **keeps no count of copies**. Marking a reprint is the client's job — see [`DECISIONS.md`](../DECISIONS.md#receipt-reprints-are-marked-by-the-client-phase-62).
+- **It is not a pure read.** Each issue appends a `ReceiptIssued` audit entry, and `isReprint`/`issueNumber` are derived from how many came before — so a client can no longer print an unmarked duplicate by declining to send a flag, which is the refund-fraud vector §6.2 recorded. A GET with a side effect, deliberately: what is being recorded is that the receipt was *disclosed*, and opening the preview discloses it. A cashier who looks without printing marks the next copy as a reprint, which is the safe direction for a control of this kind. Two simultaneous requests can both call themselves the first — a unique index would refuse to print a receipt a customer is waiting for, which is the worse failure — and both are still recorded.
 
 `GET /sales/by-client-transaction/{id}` answers **"did this key buy anything?"** It exists for a till that lost the answer to a `POST /sales` — a reload mid-payment, a dropped response — and holds nothing but the GUID it sent. The two possible truths need opposite actions from the cashier: read the change out, or take the payment again. The alternative is re-POSTing and letting idempotency reply, which works when the sale landed and *takes the money* when it did not, on a page load, with nobody having pressed anything. A key that reached the server but bought nothing — a refused under-tender, say, which still writes an idempotency record — is a `404` here, because the question is about the sale and not about the key.
 
@@ -339,6 +339,24 @@ A sale requires an open shift. Without one there is nothing to reconcile the dra
 
 `/employees/pin-eligible` is deliberately thin: the PIN screen needs names to show, and must not become a way to read the staff roster with roles and contact details from a counter device.
 
+`GET /employees` returns a **bare array**, not the paged envelope. `ApplicationUser` is an `IdentityUser` rather than a `TenantEntity`, so the cursor helper cannot serve it — and a shop has tens of staff, not thousands. **Deactivated staff are included by default** (`?activeOnly=true` excludes them), which is the opposite of the catalog's lists: there is no reactivate route, so you bring somebody back by `PUT`-ing them with `isActive: true`, and hiding them would make the only way back invisible.
+
+`POST /employees` takes `displayName`, `email`, `role`, `password` and an optional `pin`. There is no email invite — no mail infrastructure exists — so the owner sets an initial password and passes it on. Identity's own password-rule messages are surfaced under `errors.password` rather than replaced, because "a password is required" when the real problem is the length rule tells an owner to try the same thing again. Email is unique **per tenant**, so one person can hold accounts at two shops.
+
+**PIN uniqueness is deliberately not enforced.** An error saying "that PIN is taken" hands whoever asked a working PIN for somebody else's account. Identity is picking your own name *and* entering a PIN.
+
+Three refusals protect a shop from locking itself out, all `409`:
+
+| `type` | When |
+|---|---|
+| `self-demotion` | An owner removing their own owner role |
+| `self-deactivation` | Anyone deactivating themselves, by either route |
+| `last-owner` | A change that would leave no active owner |
+
+`409` rather than `400` because the body is well-formed and would be accepted if the shop had one more owner in it — the caller's next move is to promote somebody, not to correct a field. The last-owner count is taken under `SELECT … FOR UPDATE` inside the same transaction as the write, so two owners deactivating each other simultaneously cannot both read "there are two of us". There is no platform admin tool by decision, so a tenant with no active owner is only recoverable by direct database access.
+
+**Deactivation revokes the user's refresh tokens** but cannot revoke an access token already issued. `IsActive` is checked at login, at PIN entry, on `/auth/me` and on refresh — not while validating a JWT — so a deactivated user's session survives for up to the access token's ~15-minute lifetime. Closing that window needs a per-request liveness read or a token-version claim; neither is built.
+
 ## Registers — `/registers`
 
 | Method | Route | Auth |
@@ -358,16 +376,36 @@ A register in another tenant answers **404, not 403**, on every route above. A 4
 |---|---|---|
 | GET | `/audit` | `CanManageEmployees` |
 
-`?action=&actorId=&from=&to=`, paginated. Read-only — there is no endpoint that writes or edits audit entries from outside the server.
+`?action=&actorId=&from=&to=`, paginated, **newest first**. Read-only — there is no endpoint that writes or edits audit entries from outside the server, and the app's database role holds no `UPDATE` or `DELETE` grant on the table, so there is no path through raw SQL either.
+
+`from`/`to` are **trading days**, resolved through the tenant's zone and day-start offset exactly as `/sales` and `/reports/daily` resolve theirs — not UTC midnight. An audit log that disagreed with the daily report about which day a 02:00 void fell on would make both useless for the one job they share.
+
+An unknown `action` is a `400` naming the field, never a filter that silently does nothing: a log quietly showing everything when somebody asked for refunds is worse than an error, because they read it and conclude they have looked.
+
+`before` and `after` are **objects**, not JSON strings — flat maps of string values, so a client renders them directly instead of parsing a second time. `actorName` is resolved by left join, so a deactivated employee does not drop their own actions out of the log; a null actor reads as `"System"`.
+
+**Entries are written by the actions they describe, inside those actions' own transactions.** An entry cannot exist for work that rolled back, nor be missing for work that succeeded. The recorded actions are `PriceOverridden`, `DiscountApplied`, `SaleVoided`, `RefundIssued`, `ReceiptIssued`, `StockAdjusted`, `EmployeeCreated`, `EmployeeDeactivated`, `RoleChanged`, `PinReset`, `DeviceEnrolled`, `DeviceRevoked`, `SettingsChanged`, `ShiftClosed` and `AuthorizationRefused`.
+
+Deliberately **not** a change-log of everything. An ordinary sale writes nothing; a sale carrying a discount or an override writes one entry per adjustment. A rename writes nothing; a role change writes an entry. A log that records every field edit is too noisy to read, so nobody reads it, so it is not an audit log.
+
+`AuthorizationRefused` covers the sale-adjustment refusals only — a cashier attempting a discount or a price override they do not hold. Not every `403` in the application: a misconfigured client polling a forbidden route would bury the entries that matter.
 
 ## Settings — `/settings`
 
 | Method | Route | Auth | Notes |
 |---|---|---|---|
-| GET | `/settings` | `CanSell` | Currency, tax mode, receipt header, cash-rounding rule |
+| GET | `/settings` | `CanSell` | Currency, tax mode, receipt fields, cash-rounding rule |
 | PUT | `/settings` | `CanManageEmployees` | `taxMode` is **rejected** once sales exist |
 
-Changing `taxMode` after trading reinterprets every stored price and silently rewrites history. It is refused rather than warned about.
+Changing `taxMode` after trading reinterprets every stored price and silently rewrites history. It is refused rather than warned about — `409 tax-mode-locked`. The read side returns `taxModeLocked` so a screen can render the control read-only with a reason instead of offering one that conflicts. Re-sending the *current* mode is always fine; the lock is on changing it, and a form that posts every field back must still be able to edit the footer of a shop that has traded.
+
+**Writable:** `name`, `taxMode`, `cashRoundingIncrement`, `addressLine`, `taxNumber`, `receiptHeader`, `receiptFooter`. Until Phase 7 the receipt fields and the rounding increment were reachable only through `tools/Pos.Seed`, which is not shipped — so a customer could not change their own receipt footer at all.
+
+**Not writable, and not an oversight:** `currencyCode`, `timeZoneId`, `businessDayStartOffset`, `slug`. Changing a zone or a day-start offset moves every trading-day boundary that has already been reported on, so yesterday's Z-report stops matching yesterday; changing a currency code relabels every amount ever stored. Those are migrations with a decision behind them, not fields on a form.
+
+Each changed key writes its own `SettingsChanged` audit entry. Saving with nothing edited writes none.
+
+**`Tenant` is not tenant-owned** — it is the list of tenants, and login resolves a row in it before any tenant is known. So this route has no query filter, no RLS policy and no interceptor check behind it, which makes it the only write in the API where the `Where` on the caller's own id is the entire control. No id is accepted from the route or the body.
 
 ## Health — unversioned
 

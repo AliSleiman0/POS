@@ -56,9 +56,9 @@ dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
 # Dev data. There is no onboarding endpoint by decision, so a migrated database has no
 # tenant and nothing can be exercised by hand. Safe to re-run: existing rows are left alone.
 # Prints the credentials and the register's device token — the token is shown ONCE.
-# --help for slug/password/PIN options, and --cash-rounding, which is the one option that
-# changes an EXISTING tenant (there is no PUT /settings, so it is the only way to reach the
-# cash-rounding path from a browser).
+# --help for slug/password/PIN options. --cash-rounding is the one option that changes an
+# EXISTING tenant; since Phase 7.4 an owner can also reach it (and the receipt fields) through
+# PUT /settings at /admin/settings, so the seeder is no longer the only way in.
 dotnet run --project tools/Pos.Seed
 
 pnpm --dir src/Pos.Web dev

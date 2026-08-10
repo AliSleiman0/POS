@@ -13,6 +13,17 @@ public interface ICurrentActor
 {
     /// <summary>The acting user, or <see langword="null"/> when the system itself is acting.</summary>
     Guid? UserId { get; }
+
+    /// <summary>
+    /// The till the work is coming from, or <see langword="null"/> when it is not coming from
+    /// one.
+    /// </summary>
+    /// <remarks>
+    /// Only PIN sessions and device tokens carry a <c>register_id</c> claim, so this is null
+    /// for an owner working in a back-office browser — which is the honest answer rather than
+    /// a gap. Read by the audit log; the <c>CreatedBy</c> stamps do not use it.
+    /// </remarks>
+    Guid? RegisterId { get; }
 }
 
 /// <summary>
@@ -22,4 +33,6 @@ public interface ICurrentActor
 public sealed class SystemActor : ICurrentActor
 {
     public Guid? UserId => null;
+
+    public Guid? RegisterId => null;
 }

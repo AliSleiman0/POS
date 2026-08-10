@@ -55,6 +55,18 @@ export function uniqueSku(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase()
 }
 
+/**
+ * An email no other test or run will collide with.
+ *
+ * `pos_e2e` is seeded once and never dropped, so every run that creates a user
+ * leaves it behind — the staff list only grows. Nothing may assert a count or
+ * expect a row in a particular position; find people by the address that only
+ * this run used.
+ */
+export function uniqueEmail(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}@e2e.test`
+}
+
 /** A barcode digit string, unique for the same reason. */
 export function uniqueBarcode(): string {
   return `9${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)

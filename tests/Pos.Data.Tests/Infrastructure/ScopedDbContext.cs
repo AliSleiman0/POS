@@ -32,24 +32,32 @@ public sealed class ScopedDbContext : IAsyncDisposable
     public IServiceProvider Services => _scope.ServiceProvider;
 
     /// <summary>Opens a scope with <paramref name="tenantId"/> resolved as the ambient tenant.</summary>
-    public static ScopedDbContext ForTenant(string connectionString, Guid tenantId, Guid? actorId = null)
+    /// <param name="registerId">
+    /// The till the work is coming from. Omitted means a back-office session, which is what
+    /// most tests want; pass one to exercise <c>AuditEntry.RegisterId</c>.
+    /// </param>
+    public static ScopedDbContext ForTenant(
+        string connectionString,
+        Guid tenantId,
+        Guid? actorId = null,
+        Guid? registerId = null)
     {
-        var scoped = Create(connectionString, actorId);
+        var scoped = Create(connectionString, actorId, registerId);
         scoped._scope.ServiceProvider.GetRequiredService<AmbientTenantContext>().Resolve(tenantId);
         return scoped;
     }
 
     /// <summary>Opens a scope with no tenant resolved — every tenant-owned read must fail.</summary>
     public static ScopedDbContext WithoutTenant(string connectionString)
-        => Create(connectionString, actorId: null);
+        => Create(connectionString, actorId: null, registerId: null);
 
-    private static ScopedDbContext Create(string connectionString, Guid? actorId)
+    private static ScopedDbContext Create(string connectionString, Guid? actorId, Guid? registerId)
     {
         var services = new ServiceCollection();
 
         if (actorId is not null)
         {
-            services.AddScoped<ICurrentActor>(_ => new FixedActor(actorId.Value));
+            services.AddScoped<ICurrentActor>(_ => new FixedActor(actorId.Value, registerId));
         }
 
         services.AddLogging();
@@ -68,8 +76,14 @@ public sealed class ScopedDbContext : IAsyncDisposable
         await _provider.DisposeAsync();
     }
 
-    private sealed class FixedActor(Guid userId) : ICurrentActor
+    /// <remarks>
+    /// The register is optional and defaults to none, which is what a back-office session
+    /// looks like. A test that cares about <c>AuditEntry.RegisterId</c> passes one.
+    /// </remarks>
+    private sealed class FixedActor(Guid userId, Guid? registerId = null) : ICurrentActor
     {
         public Guid? UserId => userId;
+
+        public Guid? RegisterId => registerId;
     }
 }

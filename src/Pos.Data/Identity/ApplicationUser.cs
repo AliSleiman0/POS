@@ -19,6 +19,12 @@ namespace Pos.Data.Identity;
 /// </remarks>
 public sealed class ApplicationUser : IdentityUser<Guid>, ITenantOwned
 {
+    /// <summary>Longest display name accepted; also the check constraint in the database.</summary>
+    public const int DisplayNameMaxLength = 100;
+
+    /// <summary>Longest email accepted. 256 is Identity's own column width.</summary>
+    public const int EmailMaxLength = 256;
+
     /// <inheritdoc />
     public Guid TenantId { get; set; }
 

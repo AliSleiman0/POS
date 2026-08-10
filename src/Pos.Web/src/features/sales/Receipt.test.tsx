@@ -185,6 +185,12 @@ function payload(
     roundingAdjustment: 0,
     total: 3.12,
     changeGiven: 1.88,
+
+    // The server's, from Phase 7.2. `Receipt` still takes `isReprint` as a prop
+    // because it is a pure renderer and the tests below vary it directly — but the
+    // only caller now feeds it this field rather than deciding for itself.
+    isReprint: false,
+    issueNumber: 1,
     ...rest,
   }
 }

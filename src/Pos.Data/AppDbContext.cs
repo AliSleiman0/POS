@@ -124,6 +124,13 @@ public class AppDbContext : IdentityDbContext<
     /// </summary>
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
+    /// <summary>
+    /// The append-only record of actions that move money. Written through
+    /// <see cref="Pos.Core.Auditing.IAuditLog"/>, never directly, and read-only in practice —
+    /// the migration revokes <c>UPDATE</c> and <c>DELETE</c> on the table from <c>pos_app</c>.
+    /// </summary>
+    public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);

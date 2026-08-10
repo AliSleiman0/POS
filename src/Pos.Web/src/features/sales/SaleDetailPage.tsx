@@ -195,12 +195,12 @@ export function SaleDetailPage() {
         ) : null}
       </section>
 
-      {/* Always a reprint from here: the original was the copy handed over at
-          the counter when the sale was rung. */}
+      {/* Almost always a reprint from here, but this screen no longer says so —
+          the server counts the issues and decides, so a copy taken from history
+          before anybody printed one is honestly marked as the first. */}
       {printing && data.id !== null ? (
         <ReceiptDialog
           saleId={data.id}
-          isReprint
           onClose={() => {
             setPrinting(false)
           }}

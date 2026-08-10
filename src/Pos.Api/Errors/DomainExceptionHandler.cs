@@ -137,6 +137,21 @@ public sealed partial class DomainExceptionHandler(
         // the caller resolves by re-reading what remains.
         RefundExceedsOriginalException => (StatusCodes.Status409Conflict, "Refund exceeds what remains"),
 
+        // The three lock-out guards, all 409 on the same reasoning as the rows above: the
+        // body is well-formed and names real things, and would be accepted if the shop had
+        // one more owner in it. Nothing about the request is wrong, so there is no field to
+        // blame — what the caller needs is another person, not a corrected value.
+        SelfDemotionException => (StatusCodes.Status409Conflict, "An owner cannot demote themselves"),
+
+        SelfDeactivationException => (StatusCodes.Status409Conflict, "You cannot deactivate yourself"),
+
+        LastOwnerException => (StatusCodes.Status409Conflict, "The shop must keep one active owner"),
+
+        // Also 409, and the one on this list with no next move at all: once a shop has traded,
+        // its tax mode is fixed for ever. Stated plainly rather than dressed up as a temporary
+        // obstacle, because pretending otherwise sends somebody looking for the override.
+        TaxModeLockedException => (StatusCodes.Status409Conflict, "Tax mode is fixed once trading starts"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }
