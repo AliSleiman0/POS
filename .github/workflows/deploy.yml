@@ -1,0 +1,169 @@
+name: Deploy
+
+# build → test → publish image → MIGRATE → deploy API → deploy web
+#
+# Triggered by CI succeeding on main rather than by the push itself, so the gate is
+# real: nothing deploys from a commit whose tests have not passed. `workflow_run`
+# always executes the copy of this file on the default branch, which is what stops a
+# branch from editing its own deploy gate.
+#
+# Migrations are a SEPARATE, explicit step here and are applied by nothing else.
+# Not EnsureCreated, not migrate-on-startup: with more than one API machine, two
+# processes starting together apply the same migration and leave the schema in a
+# state neither expected. StartupMigrationTests fails the build if that ever gets
+# added back.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+  # For a redeploy that is not a new commit — rolling forward after fixing a secret,
+  # for instance. Still runs the same steps in the same order.
+  workflow_dispatch:
+
+# One deploy at a time, and never cancelled half-way. A cancelled run that has
+# applied migrations but not deployed the API leaves the old image against a new
+# schema, which is the one combination the rollback plan cannot undo cheaply.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  API_APP: pos-api
+  WEB_APP: pos-web
+  # Must match the API app's public origin, and the API's Cors:AllowedOrigins must in
+  # turn name the web app's. The two are a pair — change one and the browser blocks
+  # every call while the API reports perfectly healthy.
+  API_ORIGIN: https://pos-api.fly.dev
+
+jobs:
+  deploy:
+    name: deploy (production)
+    runs-on: ubuntu-latest
+
+    # workflow_dispatch has no triggering run, so `conclusion` is empty there.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      # The commit CI actually tested, not whatever main points at now. Without the
+      # explicit ref a workflow_run checkout takes the branch head, which may already
+      # be a newer, untested commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # ---------------------------------------------------------------- publish
+      #
+      # Built and pushed once, then deployed by digest below. Deploying by digest
+      # rather than rebuilding is what makes "the image that was migrated against"
+      # and "the image that is running" the same artifact — and it is what makes a
+      # rollback a one-line redeploy of a known digest.
+      - name: Build and push the API image
+        id: image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          ref="registry.fly.io/${API_APP}:${GITHUB_SHA}"
+          flyctl deploy --config fly.toml --build-only --push --image-label "${GITHUB_SHA}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      # --------------------------------------------------------------- migrate
+      #
+      # An idempotent script rather than `dotnet ef database update` against a remote
+      # host: the script is reviewable before it runs, it applies only what is
+      # missing, and it needs no EF tooling anywhere near the deployed machine. The
+      # runtime image has no SDK and no source, deliberately.
+      - name: Generate the migration script
+        run: |
+          dotnet tool restore
+          dotnet ef migrations script \
+            --idempotent \
+            --project src/Pos.Data \
+            --startup-project src/Pos.Api \
+            --output migrate.sql
+          echo "--- statements to be applied ---"
+          grep -c ';' migrate.sql || true
+
+      # Postgres is not reachable from the internet, which is the point of it. The
+      # proxy forwards a local port over the private network for the life of this step.
+      - name: Apply migrations
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          # The OWNER role, not pos_app. pos_app is NOBYPASSRLS and has no CREATE on
+          # the schema — that is exactly what makes it safe for the application to run
+          # as, and exactly why it cannot apply a migration.
+          PGPASSWORD: ${{ secrets.POSTGRES_OWNER_PASSWORD }}
+        run: |
+          flyctl proxy 15432:5432 --app "${{ secrets.POSTGRES_APP }}" &
+          proxy=$!
+          trap 'kill $proxy' EXIT
+
+          # Wait for the tunnel rather than sleeping a guessed number of seconds.
+          for _ in $(seq 1 30); do
+            pg_isready -h 127.0.0.1 -p 15432 -q && break
+            sleep 2
+          done
+          pg_isready -h 127.0.0.1 -p 15432
+
+          # ON_ERROR_STOP so a failed statement fails the deploy. Without it psql
+          # reports success having skipped everything after the first error, and the
+          # API deploys against a half-migrated schema.
+          psql -v ON_ERROR_STOP=1 \
+            -h 127.0.0.1 -p 15432 \
+            -U "${{ secrets.POSTGRES_OWNER_USER }}" \
+            -d "${{ secrets.POSTGRES_DATABASE }}" \
+            -f migrate.sql
+
+      # ------------------------------------------------------------- deploy API
+      #
+      # After the schema, never before. An additive migration is compatible with the
+      # previous image, so this ordering also means a failure here can be rolled back
+      # by redeploying the last digest without touching the database.
+      - name: Deploy the API
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy --config fly.toml \
+            --image "${{ steps.image.outputs.ref }}" \
+            --strategy rolling
+
+      # ------------------------------------------------------------- deploy web
+      #
+      # Last, and a separate Fly app: static assets and a stateful API scale and cache
+      # differently, and a frontend deploy must not restart the backend.
+      #
+      # VITE_API_BASE_URL is a BUILD argument because Vite inlines VITE_* at build
+      # time. There is no way to change it in a running container.
+      - name: Deploy the web app
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy src/Pos.Web \
+            --config src/Pos.Web/fly.toml \
+            --build-arg "VITE_API_BASE_URL=${API_ORIGIN}" \
+            --strategy rolling
+
+      # A deploy that reports success while the API is unreachable is worse than one
+      # that fails: nobody looks. Fly's own health checks gate the rolling deploy, so
+      # this is the belt to that pair of braces — and it is the check that would catch
+      # a CORS or role misconfiguration, which health checks alone would not.
+      - name: Verify the deployment answers
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors \
+            "${API_ORIGIN}/health/ready"
+          echo
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors \
+            -o /dev/null "https://${WEB_APP}.fly.dev/"
+          echo "API and web both answered."

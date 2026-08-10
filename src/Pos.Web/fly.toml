@@ -1,0 +1,42 @@
+# The web app. Deployed with `fly deploy --config src/Pos.Web/fly.toml src/Pos.Web`.
+#
+# A separate app from the API on purpose (see the note in the root fly.toml): static
+# assets and a stateful API scale and cache differently, and a frontend deploy must
+# not restart the backend.
+#
+# Because Vite inlines VITE_* at build time, the API origin is a build argument here
+# rather than an env var. Changing it is a rebuild, not a restart.
+
+app = "pos-web"
+primary_region = "dub"
+
+[build]
+  dockerfile = "Dockerfile"
+
+  [build.args]
+    # Must match the API app's public hostname, and the API's Cors:AllowedOrigins must
+    # in turn name THIS app's hostname. The two are a pair: change one and the browser
+    # blocks every call with the API still reporting perfectly healthy.
+    VITE_API_BASE_URL = "https://pos-api.fly.dev"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Static files with no state, so stopping idle machines is free here in a way it is
+  # not for the API — but a cold start still shows a cashier a blank screen, and this
+  # is the app they load first thing in the morning.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
