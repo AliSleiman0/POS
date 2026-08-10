@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current phase** | **Phase 7 complete** — 7.0 to 7.4 done. 1288 .NET + 207 Vitest + 60 Playwright green |
-| **Next up** | Phase 8.1, containerize. **Watch `InvariantGlobalization` when the Dockerfile lands** — it must stay `false`, or every IANA time zone stops resolving on Windows while still working on the runner. |
+| **Current phase** | **Phase 8 in progress** — 8.1, 8.3, 8.4 and 8.7 done; 8.2 and 8.6 are code-complete but unprovisioned; 8.5 and 8.8 are blocked. 1375 .NET + 225 Vitest + 60 Playwright green |
+| **Next up** | **`fly auth login`.** Everything that can be built and verified without a Fly account has been. What remains needs real infrastructure: provisioning (8.2), the restore drill (8.5), the production cross-tenant probe (8.6) and the end-to-end verification (8.8). |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
-| **Last updated** | 2026-08-09 |
+| **Last updated** | 2026-08-10 |
 
 ## Phase overview
 
@@ -128,13 +128,13 @@ Detail: [phases/PHASE-7-employees-audit.md](phases/PHASE-7-employees-audit.md)
 
 Detail: [phases/PHASE-8-deployment.md](phases/PHASE-8-deployment.md)
 
-- [ ] **8.1 Containerize** — multi-stage `Dockerfile` for the API; web built to static assets.
-- [ ] **8.2 Hosting** — API container + managed Postgres; web on static host/CDN; HTTPS; CORS locked to the web origin.
-- [ ] **8.3 Migrations in CI/CD** — explicit deploy step. Not `EnsureCreated()`, not migrate-on-startup (races with >1 instance).
-- [ ] **8.4 Observability** — structured logs with `TenantId` on every scope, health checks, error tracking.
-- [ ] **8.5 Backups + restore drill** — automated backups **and an actually-executed restore test**. An untested backup is not a backup.
-- [ ] **8.6 Security pass** — rate limiting, security headers, dependency audit, secrets from env/vault, cross-tenant probe against the deployed instance.
-- [ ] **8.7 Tenant onboarding** — repeatable script to create tenant + Owner. No platform admin UI yet (per `DECISIONS.md`); direct DB inspection is the accepted stopgap.
+- [x] **8.1 Containerize** — `aspnet:10.0-noble-chiseled-extra` (`-extra` is load-bearing: plain chiseled ships no ICU and no tzdata, so every IANA zone breaks *inside the container only*). 168 MB, non-root, no SDK/source/shell, secrets inspected rather than assumed. `Hosting:BehindTlsTerminatingProxy` prevents the redirect loop an edge proxy would otherwise cause. The web client stopped assuming same-origin — including two raw `fetch` calls that bypassed the typed client, one of which would have signed every cashier out at the first token rotation.
+- [ ] **8.2 Hosting** — 🔨 **code done, provisioning outstanding.** CORS locked to exact origins with an empty Production list refusing to boot; RLS role verified by the readiness probe; `fly.toml`, Caddyfile and both images built and served locally. **Needs `fly auth login`.**
+- [x] **8.3 Migrations in CI/CD** — `deploy.yml` gated on CI, idempotent SQL applied as the owner through a proxied `psql`, image deployed by digest so a rollback is a redeploy. `StartupMigrationTests` IL-scans the three shipped assemblies and was falsified. Dependency audits added to CI. Script verified building a schema from nothing. **The pipeline has not run for real.**
+- [x] **8.4 Observability** — JSON logs with `TenantId`/`UserId`/`RegisterId` on every request scope; Sentry behind a scrubber tested as a security boundary; Owner-only `POST /diagnostics/test-error`; four metrics. Two real bugs in the metrics filter were caught by its own tests.
+- [ ] **8.5 Backups + restore drill** — ⏸️ **blocked on hosting.** Runbook procedure written; the drill and its timing are deliberately blank until executed.
+- [ ] **8.6 Security pass** — 🔨 **code done.** Login rate limit (set for a shop behind NAT, not a person), security headers, CSP verified in a browser against the built app, dependency audit in CI. **The production cross-tenant probe is outstanding.**
+- [x] **8.7 Tenant onboarding** — `Pos.Seed onboard`: requires an explicit connection, requires `TaxMode` and the business-day offset, generates a password shown once, refuses an existing slug. Verified by onboarding a shop and logging into it. Runbook covers onboarding, a locked-out Owner, a lost device, a disputed total, and what to do when each kind of credential leaks.
 
 ## Phase 9 — Offline (PWA)
 

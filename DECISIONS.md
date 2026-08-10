@@ -86,9 +86,71 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 
 ### Deferred to the phase that decides them
 
-- **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
+- ~~**Hosting provider**~~ → **closed 2026-08-10: Fly.io.** See below.
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
-- **Refresh token in an `httpOnly` cookie** — deferred to [Phase 8.2](docs/phases/PHASE-8-deployment.md) along with hosting, because the right answer depends on the topology that phase picks. See the Phase 4.2 entry below for what ships until then.
+- ~~**Refresh token in an `httpOnly` cookie**~~ → **closed 2026-08-10: it stays in `sessionStorage`.** See below.
+
+### Resolved 2026-08-10 (during Phase 8)
+
+- **Hosting is Fly.io.** Two apps and one managed Postgres: the API container, and a second
+  app serving the built SPA through Caddy. Chosen over Azure App Service and a VPS on cost at
+  this size and on how little operational surface it carries — the deploy is a `fly.toml` and
+  a CLI call, `*.fly.dev` gives HTTPS with no domain to buy, and the managed Postgres has
+  snapshots and point-in-time recovery without anybody owning a backup cron.
+
+  **The web app is deliberately not served by the API.** They have different scaling and
+  caching characteristics, and serving the SPA from Kestrel means a CSS change restarts the
+  backend — a cashier mid-sale pays for a frontend deploy. The cost of splitting them is that
+  every call is cross-origin, which is what forced the two decisions below.
+
+- **The refresh token stays in `sessionStorage`; the access token stays in memory.** Deferred
+  from Phase 4.2 to here because the answer depended on the topology, and the topology is now
+  known: the web app is on its own origin, so the `httpOnly` cookie version would need
+  `SameSite=None; Secure`, credentialed CORS with an exact origin, and a CSRF story that
+  same-origin would not have needed.
+
+  That is real work with a real surface, and the thing it protects against — an injected
+  script reading the token — is better addressed at this stage by the CSP the web app now
+  ships: `connect-src` names the API and nothing else, so a script that can read the token
+  cannot send it anywhere. Combined with what was already true (rotation on every use, and
+  reuse of a rotated token revoking the whole family), a stolen refresh token is usable until
+  its owner next refreshes and the theft then logs both parties out loudly.
+
+  Not closed forever — it is the obvious next hardening step if this ever handles more than
+  cash — but it is closed as a Phase 8 question rather than deferred a third time.
+
+- **CORS is an exact allow-list, and an empty one in Production refuses to boot.** A CORS
+  mistake is invisible from the server: the API answers every probe healthily while the
+  browser blocks every call, and the only evidence is a console message on a device in a
+  shop. Same reasoning as `JwtOptions.ValidateOnStart` — fail at boot, where somebody is
+  watching.
+
+- **Error tracking is Sentry, and the request body never leaves the process.** The scrubber
+  drops bodies wholesale rather than filtering fields, because a `POST /sales` body is a
+  customer's basket and what they paid, and no field-level rule survives a schema that changes
+  every phase — the failure mode of the one that does not is silent.
+
+- **Structured logging is the built-in JSON console formatter, not Serilog.**
+  `Microsoft.Extensions.Logging` already does structured logging and `NuGetAudit` runs at
+  level `low`, which makes every package a standing liability. Serilog's main advantage
+  (request timing) is better served by the metrics. Sentry is the only dependency the
+  observability work added.
+
+- **The application-level rate limiter caps credential guessing and nothing else.** There is
+  deliberately no global request limiter. Its number would have to sit above whatever the
+  busiest real shop does at its busiest minute — a figure nobody has measured, because no shop
+  has used this yet — and every estimate that turns out low takes a till down mid-queue.
+  Volumetric protection is the edge's job, where it can be tuned from observed traffic.
+
+  The login limit is partitioned per source address and set for **a shop, not a person**:
+  behind NAT an entire staff shares one address.
+
+- **Row-level security is verified continuously, by the readiness probe.** Managed Postgres
+  hands out a superuser by default, and an application connected as one has every RLS policy
+  inert while `pg_policies` still lists them as enabled. A machine whose connection can bypass
+  RLS reports unhealthy, receives no traffic, and fails the deploy. Chosen over a boot-time
+  assertion because that answers "was the role right when this machine last started", which
+  after six weeks of uptime is a claim about history.
 
 ### Resolved 2026-08-09 (during Phase 7)
 

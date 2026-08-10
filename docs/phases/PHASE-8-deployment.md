@@ -104,10 +104,21 @@ Run via `dotnet ef database update` from a one-off job, or a generated idempoten
 - Rollback plan documented per release: for additive migrations, redeploy the previous image; for destructive ones, restore from backup — which is why 8.5 must be real
 
 **Exit criteria**
-- [ ] Migrations are a separate pipeline step
-- [ ] No `EnsureCreated` or startup migration anywhere (grep and confirm)
-- [ ] A full deploy from a clean database succeeds
-- [ ] Rollback documented
+- [x] Migrations are a separate pipeline step — `.github/workflows/deploy.yml`, gated on CI
+      succeeding rather than on the push, applying an idempotent script as the **owner**
+      through a proxied `psql`. The image is built once and deployed **by digest**, so the
+      artifact that was migrated against and the one that runs are the same, and a rollback
+      is a redeploy of a known digest.
+- [x] No `EnsureCreated` or startup migration anywhere — and enforced rather than confirmed
+      once. `StartupMigrationTests` IL-scans `Pos.Api`, `Pos.Data` and `Pos.Seed`; a grep
+      would match the word in a comment and in the command `DevSeeder` deliberately prints.
+      Falsified: injecting `Migrate()` into `Program.cs` turns it red and names the caller.
+- [x] A full deploy from a clean database succeeds — verified locally: the generated script
+      applied to an empty database produces 15 migrations, 27 tables, 23 with row-level
+      security *forced*, and 23 policies. Checksummed to confirm the script tested was the
+      one generated. **The pipeline itself has not run for real.**
+- [x] Rollback documented — `docs/RUNBOOK.md`, and honest about the split: additive is a
+      redeploy, destructive is a restore.
 
 ## 8.4 Observability
 
@@ -119,11 +130,21 @@ Run via `dotnet ef database update` from a one-off job, or a generated idempoten
 **Never logged:** passwords, PINs, tokens, full card data. A PIN in a log file is a PIN in every log aggregator, backup and support screenshot forever.
 
 **Exit criteria**
-- [ ] `TenantId` on every request-scoped log line
-- [ ] Health checks respond and are wired to the platform's probes
-- [ ] Error tracking receives a deliberately triggered test error
-- [ ] A grep for logged secrets finds nothing
-- [ ] Alerts on sale-submission failures
+- [x] `TenantId` on every request-scoped log line — opened in `TenantResolutionMiddleware`,
+      which is the one component that knows the tenant. Ids only, never a name or an email:
+      a log line reaches an aggregator, a backup and eventually a support screenshot.
+- [x] Health checks respond and are wired to the platform's probes — `fly.toml`. `live`
+      deliberately does not touch the database; `ready` checks connectivity **and** that the
+      connection cannot bypass RLS.
+- [ ] Error tracking receives a deliberately triggered test error — `POST
+      /diagnostics/test-error` is built, Owner-only, and tested; **it has not been fired at a
+      real DSN.**
+- [x] A grep for logged secrets finds nothing — stronger than a grep: `SentryScrubber` drops
+      credential headers, the request body wholesale and the query string, with 23 tests and
+      a drift guard asserting every `HeaderName` constant in the assembly is covered.
+- [ ] Alerts on sale-submission failures — the instrument exists and is tested
+      (`pos.sales.submissions`, tagged by outcome so a 4xx refusal cannot page anybody); the
+      alert rule needs somewhere to live.
 
 ## 8.5 Backups + restore drill
 
@@ -170,11 +191,18 @@ Per `DECISIONS.md`, **no platform admin UI yet** — direct DB inspection is the
 Document, in a runbook: onboarding a tenant, resetting a locked-out Owner, revoking a lost device, investigating "my total is wrong" (which is: find the sale, read its snapshots, read the audit log).
 
 **Exit criteria**
-- [ ] Onboarding is one repeatable command
-- [ ] It cannot be invoked with a tenant token
-- [ ] `TaxMode` is set at onboarding and rejected on later change
-- [ ] Runbook written for the four scenarios above
-- [ ] A fresh tenant can log in and complete a sale end to end
+- [x] Onboarding is one repeatable command — `dotnet run --project tools/Pos.Seed -- onboard`
+- [x] It cannot be invoked with a tenant token — true by construction: a CLI holding a
+      database credential, and `No_route_creates_a_tenant` is what notices if somebody adds
+      the self-service signup endpoint that would make it false
+- [x] `TaxMode` is set at onboarding and rejected on later change — required by the command
+      (no default: a default is right for one country and silently wrong for the next), and
+      `PUT /settings` already refuses it once sales exist
+- [x] Runbook written — `docs/RUNBOOK.md` covers the four scenarios plus a credential-leak
+      table and a rollback procedure
+- [ ] A fresh tenant can log in and complete a sale end to end — **half done.** A fresh
+      tenant was onboarded into a scratch database and its Owner logged in through the API
+      with the right `TaxMode` and day offset. The sale is part of 8.8, against production.
 
 ---
 
