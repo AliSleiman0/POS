@@ -1,10 +1,10 @@
 # Session Handoff
 
-**Written:** 2026-08-09 · **Branch:** `phase-7/employee-management` · **Phase 7 is complete — start 8.1**
+**Written:** 2026-08-10 · **Branch:** `main` at `8d964d3` · **Phase 7 is merged — start 8.1**
 
 > An owner can now hire, fire and configure their own shop without contacting us, and every
 > action that moves money leaves a record they cannot edit. **1288 .NET · 207 Vitest · 60
-> Playwright**, green locally. **Not yet run on the runner — see "Before anything else".**
+> Playwright**, green locally.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable decisions
 > belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
@@ -13,17 +13,22 @@
 
 ## Before anything else
 
-**Two commits sit on `phase-7/employee-management`, unpushed and un-PR'd.** `main` is untouched
-at `2d0a1da`. Nothing has run in CI yet — that is the one gate Phase 7 has not cleared, and
+**Read the CI run for `8d964d3` before trusting Phase 7.**
+[PR #16](https://github.com/AliSleiman0/POS/pull/16) is merged and the remote branch is deleted;
+`phase-7/employee-management` still exists locally if you want the history.
+
+**It was merged at the owner's explicit instruction with two checks still pending.** At merge
+time *API contract (client drift)*, *frontend (web)* and *GitGuardian* had passed; **backend
+(.NET) and e2e (Playwright) had not reported.** Both were green locally on the same commit, so
+this is very likely fine — but it is not the same claim, and
 [`ROADMAP.md`](ROADMAP.md#test-the-phase-before-starting-the-next-one) says green means green on
-the runner. **Push, open the PR, and read the nine checks before starting 8.1.**
+the runner. **First thing: `gh run list --branch main --limit 1`.** If either job is red, fixing
+it comes before 8.1.
 
-Two things most likely to be red there and green here:
+The two most likely to differ from a local run:
 
-1. **`pnpm format:check` is its own CI step.** Clean as of the last commit, but it is what turned
-   PR #15 red. Run `pnpm --dir src/Pos.Web format` before pushing.
-2. **The API contract job.** `src/api/schema.d.ts` was regenerated twice this session and is
-   committed; if anything touched an endpoint since, it will drift.
+1. **`pnpm format:check` is its own CI step** — clean at merge, but it is what turned PR #15 red.
+2. **A loaded runner.** The e2e suite failed twice in earlier phases for memory rather than code.
 
 **Your database needs migrating.** Phase 7 added one migration, `20260808212506_AuditLog`.
 `pos_dev` and `pos_e2e` both have it.
@@ -149,10 +154,13 @@ Three real defects the tests caught before anything shipped:
 
 ## CI
 
-**Not yet run for this phase.** Last known green: `main` at `6396a69`, all nine checks.
+**In flight for `8d964d3` — read it before starting.** Three of the five checks had passed at
+merge time; backend and e2e had not reported. Last fully green: `main` at `6396a69`.
 
 A run whose jobs were *cancelled* reports `conclusion: failure` at the **run** level — inspect
-the jobs before believing a red run. Branch protection does **not** gate on these checks.
+the jobs before believing a red run. **Branch protection does not gate on these checks**, which
+is why the discipline has to come from reading them; this merge is the first time that gap has
+actually been used.
 
 ## Still genuinely open
 
