@@ -8,13 +8,15 @@
  * money context is a blank total on a receipt.
  *
  * The generated paths already carry the `/api/v1` prefix, so `baseUrl` is just
- * the origin. In development Vite proxies `/api` to `http://localhost:5013`, so
- * the browser sees one origin and there is no CORS and no cross-site cookie
- * question.
+ * the origin — see `baseUrl.ts` for where that origin comes from. In
+ * development Vite proxies `/api` to `http://localhost:5013`, so the browser
+ * sees one origin and there is no CORS and no cross-site cookie question; a
+ * deployed build points at the API's own host and CORS applies.
  */
 
 import createClient, { type Middleware } from 'openapi-fetch'
 import type { paths } from './schema'
+import { API_BASE_URL } from './baseUrl'
 import { ProblemError, toProblem } from './problem'
 import { getDeviceToken } from '@/auth/deviceToken'
 import { refreshSession } from '@/auth/refresh'
@@ -31,7 +33,10 @@ import { accessTokenNeedsRefresh, getAccessToken, getRefreshToken } from '@/auth
 const ANONYMOUS_PATHS = ['/api/v1/auth/login', '/api/v1/auth/refresh']
 
 function isAnonymous(url: string): boolean {
-  return ANONYMOUS_PATHS.some((path) => new URL(url, window.location.origin).pathname === path)
+  // Resolved against the API's base, not the page's. The two are the same
+  // origin in development and different in a deployed build, and reading a
+  // request's path off the *page's* origin only ever happened to work.
+  return ANONYMOUS_PATHS.some((path) => new URL(url, API_BASE_URL).pathname === path)
 }
 
 /**
@@ -100,7 +105,7 @@ const authMiddleware: Middleware = {
 /**
  * The authenticated client. Every call goes through `unwrap`.
  */
-export const api = createClient<paths>({ baseUrl: window.location.origin })
+export const api = createClient<paths>({ baseUrl: API_BASE_URL })
 
 api.use(authMiddleware)
 
@@ -115,7 +120,7 @@ api.use(authMiddleware)
  * disappear. Keeping them on a client that *cannot* attach a bearer token means
  * that mistake is not available.
  */
-export const deviceApi = createClient<paths>({ baseUrl: window.location.origin })
+export const deviceApi = createClient<paths>({ baseUrl: API_BASE_URL })
 
 deviceApi.use({
   onRequest({ request }) {

@@ -13,6 +13,7 @@
  */
 
 import type { components } from '@/api/schema'
+import { API_BASE_URL } from '@/api/baseUrl'
 import { clearTokens, getRefreshToken, setTokens } from './tokenStore'
 
 /**
@@ -71,7 +72,14 @@ async function runRefresh(): Promise<boolean> {
   try {
     // Plain `fetch`, deliberately. Going through the generated client would run
     // this request through the 401 middleware that called us.
-    response = await fetch('/api/v1/auth/refresh', {
+    //
+    // Absolute, via API_BASE_URL: a relative path resolves against the *page*,
+    // which is the API only while Vite is proxying. From a deployed static host
+    // it would ask that host for /api/v1/auth/refresh and get index.html back
+    // with a 200 — so `response.ok` holds, `response.json()` throws, and the
+    // catch below signs the cashier out. Every session would end at the first
+    // token rotation, roughly fifteen minutes in.
+    response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),

@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
+import { API_BASE_URL } from '@/api/baseUrl'
 import { Button } from '@/components/ui/button'
 import { ErrorBoundary } from './ErrorBoundary'
 import { useAuth } from '@/auth/authContext'
@@ -176,7 +177,10 @@ function ApiFooter() {
   const health = useQuery({
     queryKey: ['health'],
     queryFn: async () => {
-      const response = await fetch('/health/ready')
+      // Absolute: relative would probe the static host the SPA came from, which
+      // is always up by definition — the indicator would read green while the
+      // API was unreachable, which is the exact opposite of what it is for.
+      const response = await fetch(`${API_BASE_URL}/health/ready`)
       if (!response.ok) {
         throw new Error(`HTTP ${String(response.status)}`)
       }

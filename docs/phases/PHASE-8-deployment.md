@@ -18,10 +18,50 @@
 - Web built to static assets (`pnpm build` → `dist/`), served by a CDN/static host — **not** by the API. Different scaling and caching characteristics, and serving a SPA from your API means a frontend deploy restarts your backend.
 
 **Exit criteria**
-- [ ] Image builds and runs locally against the Compose Postgres
-- [ ] Runs as non-root
-- [ ] No secrets baked in (inspect the layers, don't assume)
-- [ ] Image size sane (<250 MB)
+- [x] Image builds and runs locally against the Compose Postgres — `/health/ready` answers
+      `Healthy` connecting as `pos_app`, and `GET /reports/daily` returns a business day bounded
+      at 23:00 UTC for `Europe/Dublin`, which is ICU and real tz data resolving inside the
+      container. That last check is the one that matters: it is what `-chiseled-extra` buys and
+      what plain `-chiseled` would have broken silently.
+- [x] Runs as non-root — UID 1654, inherited from the chiseled base and not overridden
+- [x] No secrets baked in — inspected, not assumed: image env carries only the base image's own
+      variables, `docker history` names no credential, and the exported filesystem contains only
+      the two committed `appsettings*.json` (logging configuration alone), zero `.cs`/`.csproj`,
+      no SDK, no shell and no package manager
+- [x] Image size sane (<250 MB) — 168 MB exported filesystem, 75.6 MB content size
+
+**Also landed here** (found while building the above, and load-bearing for 8.2):
+
+- **`Hosting:BehindTlsTerminatingProxy`.** Behind an edge that terminates TLS,
+  `UseHttpsRedirection` sees plain `http` and answers 307 to the URL the caller was already on —
+  every request loops and the API serves nothing while the process stays up and health checks
+  keep passing. The flag registers `UseForwardedHeaders` and skips the redirect. A flag rather
+  than an environment check because "is something in front of me" is a fact about the
+  deployment, not about Production; and rather than always-on because `RateLimitPolicies`
+  partitions unauthenticated PIN attempts on the remote address, which a trusted-by-default
+  `X-Forwarded-For` would make spoofable. Four tests in `TlsTerminationTests`.
+- **`.editorconfig` ships in the build context.** `EnforceCodeStyleInBuild` is on and warnings
+  are errors, so it is part of the build contract — it is where CA1861 is disabled for generated
+  migrations. Excluding it made the image build apply stricter rules than the host and fail on
+  twelve analyzer errors in committed, unmodified files.
+- **The web client no longer assumes same-origin.** `VITE_API_BASE_URL`, resolved and validated
+  once in `src/api/baseUrl.ts`, replacing `window.location.origin` in both clients *and* in the
+  two raw `fetch` calls that bypassed them — `auth/refresh.ts` and the `AppLayout` health
+  indicator. The refresh one was the dangerous one: cross-origin it would have fetched the static
+  host's `index.html`, got a 200, failed to parse, and signed the cashier out at the first token
+  rotation. Unset means same-origin, so development and all 60 Playwright specs are unchanged.
+
+**Two accepted, documented behaviours** (neither is a defect, both would otherwise be
+rediscovered from a log):
+
+- `Cannot load library libgssapi_krb5.so.2` appears twice at connection-pool start. Npgsql probes
+  for GSSAPI; the chiseled image has no Kerberos library and no package manager to add one.
+  Password authentication succeeds and every query runs. Cosmetic.
+- Data Protection keys are not persisted, so each machine generates its own. Nothing depends on
+  them: `AddDefaultTokenProviders()` is deliberately absent (`IdentityServiceCollectionExtensions`),
+  auth is JWT with our own signing key, and refresh and device tokens are opaque and hashed in the
+  database. **If a password-reset flow is ever added, this stops being harmless** — that is the
+  trigger to add a shared key ring.
 
 ## 8.2 Hosting
 
