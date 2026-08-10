@@ -157,7 +157,7 @@ builder.Services.AddSingleton<PosMetrics>();
 builder.Services.AddSingleton<SaleSubmissionMetricsFilter>();
 builder.Services.AddSingleton<BarcodeLookupMetricsFilter>();
 
-builder.Services.AddPosRateLimiting();
+builder.Services.AddPosRateLimiting(builder.Configuration);
 
 // Nothing needed this until the web app moved to its own host. Locked to exact origins
 // from configuration; a wildcard is refused rather than honoured.

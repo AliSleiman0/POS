@@ -39,6 +39,23 @@ public static class RateLimitingServiceCollectionExtensions
     /// </remarks>
     public const int LoginAttemptsPerWindow = 30;
 
+    /// <summary>
+    /// Configuration key overriding <see cref="LoginAttemptsPerWindow"/>.
+    /// </summary>
+    /// <remarks>
+    /// Exists because a test suite is not a shop. Sixty end-to-end specs signing in over
+    /// two minutes is a rate no real shop produces — staff sign in a handful of times a
+    /// day, tills use <c>/auth/pin</c>, and a session staying alive uses
+    /// <c>/auth/refresh</c>; none of those is this endpoint. Rather than loosen a real
+    /// control to accommodate an unrepresentative fixture, the fixture states its own
+    /// number.
+    /// <para>
+    /// It is also the knob to reach for if a real shop is ever throttled, which is the
+    /// failure worth being able to fix in a restart rather than a release.
+    /// </para>
+    /// </remarks>
+    public const string LoginAttemptsConfigurationKey = "RateLimits:LoginAttemptsPerWindow";
+
     public static readonly TimeSpan LoginAttemptWindow = TimeSpan.FromMinutes(1);
 
     // There is deliberately NO application-wide request limiter. See AddPosRateLimiting.
@@ -58,16 +75,23 @@ public static class RateLimitingServiceCollectionExtensions
     /// person's PIN from a distributed attempt, this protects every PIN from one device.
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddPosRateLimiting(this IServiceCollection services)
+    public static IServiceCollection AddPosRateLimiting(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var loginAttempts = configuration.GetValue(LoginAttemptsConfigurationKey, LoginAttemptsPerWindow);
 
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
             options.AddPolicy(RateLimitPolicies.PinAttempts, PartitionForPinAttempt);
-            options.AddPolicy(RateLimitPolicies.LoginAttempts, PartitionForLoginAttempt);
+            options.AddPolicy(
+                RateLimitPolicies.LoginAttempts,
+                context => PartitionForLoginAttempt(context, loginAttempts));
 
             // NO GlobalLimiter, deliberately.
             //
@@ -131,7 +155,7 @@ public static class RateLimitingServiceCollectionExtensions
     /// opposite mistake: a spoofable address hands an attacker a fresh budget per request.
     /// </para>
     /// </remarks>
-    private static RateLimitPartition<string> PartitionForLoginAttempt(HttpContext httpContext)
+    private static RateLimitPartition<string> PartitionForLoginAttempt(HttpContext httpContext, int permitLimit)
     {
         var address = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
@@ -139,7 +163,7 @@ public static class RateLimitingServiceCollectionExtensions
             "login:" + address,
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = LoginAttemptsPerWindow,
+                PermitLimit = permitLimit,
                 Window = LoginAttemptWindow,
 
                 // No queue, same as the PIN limiter: a queued login is somebody watching a
