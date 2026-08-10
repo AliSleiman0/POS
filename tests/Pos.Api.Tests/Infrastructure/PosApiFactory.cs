@@ -113,6 +113,18 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
         builder.UseSetting(JwtOptions.Keys.Issuer, Issuer);
         builder.UseSetting(JwtOptions.Keys.Audience, Audience);
         builder.UseSetting(JwtOptions.Keys.SigningKey, SigningKey);
+
+        // A fresh client address per request. Without it every request in the assembly
+        // arrives with no address at all, which makes the whole suite one rate-limit
+        // partition — hundreds of tests call LoginAsync, the login limiter caps attempts
+        // per address, and the suite exhausts its own budget in seconds. The failures look
+        // like six hundred broken tests and are one shared fixture.
+        //
+        // Fresh per request is the honest model of "different people on different
+        // connections", which is what these tests are. A test that is genuinely about the
+        // limiter pins one address instead — see SecurityHardeningTests.
+        builder.ConfigureServices(services =>
+            ClientAddressStartupFilter.Register(services, ClientAddressStartupFilter.Unique));
     }
 
     /// <summary>Creates a tenant. Not tenant-owned, so no ambient tenant is needed.</summary>

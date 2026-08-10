@@ -78,6 +78,11 @@ public static class AuthEndpoints
 
         auth.MapPost("/login", LoginAsync)
             .AllowAnonymous()
+            // Anonymous and password-checking, which makes it the one endpoint an attacker
+            // can hammer for free. Identity's per-account lockout caps guessing against one
+            // account; this caps it across all of them from one source, which is the attack
+            // that actually works.
+            .RequireRateLimiting(RateLimitPolicies.LoginAttempts)
             .WithSummary("Exchange tenant slug, email and password for a token pair");
 
         auth.MapPost("/pin", PinLoginAsync)

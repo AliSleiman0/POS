@@ -258,6 +258,18 @@ if (behindTlsTerminatingProxy)
     app.UseForwardedHeaders(forwardedHeaders);
 }
 
+// Before the exception handler, so a 500 carries them too — an error response is exactly
+// the one most likely to contain something a browser should not be guessing about.
+app.UseMiddleware<SecurityHeadersMiddleware>();
+
+// Only where TLS actually exists. In Development the app is served over plain HTTP on
+// localhost, and a max-age pinned into a developer's browser is remarkably annoying to
+// undo. The edge sets its own; this is the app stating the same intent.
+if (app.Environment.IsProduction())
+{
+    app.UseHsts();
+}
+
 app.UseExceptionHandler();
 
 // Also in Testing, so a contract test can assert against the *real* document rather than

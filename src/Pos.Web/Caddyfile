@@ -41,6 +41,29 @@
 		# a microphone or a location, and a POS is a plausible target for a page that
 		# would like one.
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# The content security policy belongs HERE and not on the API: this is where
+		# the HTML is served, and a CSP is only enforced on a browsing context.
+		#
+		# The refresh token lives in sessionStorage (DECISIONS.md, Phase 4.2), which
+		# is readable by any injected script — so this is the control that limits what
+		# an injected script could do with it. `connect-src` naming the API and
+		# nothing else is the load-bearing line: a token that cannot be sent anywhere
+		# is much less useful than one that can.
+		#
+		# `style-src` allows 'unsafe-inline' and that is a real, deliberate weakening.
+		# Tailwind v4 emits its layer definitions as a stylesheet, but React sets
+		# inline styles for positioning on the base-ui primitives (dialogs, popovers),
+		# and those are attribute styles that no hash or nonce can cover without a
+		# build-time transform this project does not have. Recorded rather than
+		# quietly widened: the mitigation is that script-src stays strict, and an
+		# injected *style* cannot read sessionStorage.
+		#
+		# CHANGE connect-src WITH THE API ORIGIN. It must match VITE_API_BASE_URL, or
+		# every request is blocked by the browser with the API perfectly healthy.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://pos-api.fly.dev; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 	}
 
 	# SPA fallback. React Router owns /register, /admin/settings and the rest, so a
