@@ -137,14 +137,21 @@ test.describe('admin', () => {
     await expect(row).toContainText('receiptFooter')
   })
 
-  test('tax mode is read-only once the shop has traded', async ({ page }) => {
+  test('the settings screen loads with the shop already configured', async ({ page }) => {
     await signIn(page, 'owner')
     await page.goto('/admin/settings')
 
-    // `pos_e2e` has traded since its first ever run, so this is always the locked case
-    // here. Rendered read-only with a reason rather than as a control that 409s — the
-    // server refuses it either way, and the explanation belongs before the click.
-    await expect(page.getByLabel('Tax mode')).toBeDisabled()
-    await expect(page.getByText(/recorded a sale/i)).toBeVisible()
+    // Currency and time zone are shown and not editable: changing them rewrites what
+    // every past report meant, so they are migrations rather than form fields.
+    await expect(page.getByLabel('Currency')).toBeDisabled()
+    await expect(page.getByLabel('Time zone')).toBeDisabled()
+
+    // Deliberately *no* assertion here about whether Tax mode is locked. That depends
+    // on whether this database has ever recorded a sale, and this spec runs first on
+    // a fresh one — the original version asserted "locked" and passed only because a
+    // local `pos_e2e` has traded since its first ever run, then failed on the runner.
+    // The rendering of both states is pinned deterministically in SettingsPage.test.tsx,
+    // and the server-side refusal in SettingsTests.
+    await expect(page.getByLabel('Tax mode')).toBeVisible()
   })
 })

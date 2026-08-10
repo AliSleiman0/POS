@@ -81,7 +81,9 @@ async function ensureDrawerOpen(page: Page): Promise<void> {
   if (await float.isVisible()) {
     await float.fill('100.00')
     await page.getByRole('button', { name: 'Open the drawer' }).click()
-    await expect(page.getByText('Drawer open. Ready to sell.')).toBeVisible()
+    // The banner, not the toast — the toast dismisses itself after four seconds, and
+    // the assertion two lines below already reads the durable state.
+    await expect(page.getByRole('banner')).toContainText('Drawer open')
   }
 
   await expect(page.getByRole('banner')).toContainText('Drawer open')

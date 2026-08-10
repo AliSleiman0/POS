@@ -53,7 +53,9 @@ async function sell(page: Page): Promise<void> {
   if (await float.isVisible()) {
     await float.fill('100.00')
     await page.getByRole('button', { name: 'Open the drawer' }).click()
-    await expect(page.getByText('Drawer open. Ready to sell.')).toBeVisible()
+    // The banner, not the toast: a success toast dismisses itself after four seconds,
+    // which makes it a race to assert on. See the note in receipt.spec.ts.
+    await expect(page.getByRole('banner')).toContainText('Drawer open')
   }
 
   await scan(page, WATER)

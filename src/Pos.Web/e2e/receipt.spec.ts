@@ -35,7 +35,12 @@ async function ensureDrawerOpen(page: Page): Promise<void> {
   if (await float.isVisible()) {
     await float.fill('100.00')
     await page.getByRole('button', { name: 'Open the drawer' }).click()
-    await expect(page.getByText('Drawer open. Ready to sell.')).toBeVisible()
+    // The banner, not the toast that announces it. That toast is a success tone and
+    // dismisses itself after four seconds, so asserting on it makes this helper a
+    // race. It stayed invisible for months because an accumulated `pos_e2e` always
+    // had the drawer open already, so this branch never ran — it surfaced the first
+    // time the suite met a fresh database.
+    await expect(page.getByRole('banner')).toContainText('Drawer open')
   }
 }
 
