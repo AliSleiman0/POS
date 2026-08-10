@@ -407,6 +407,23 @@ Each changed key writes its own `SettingsChanged` audit entry. Saving with nothi
 
 **`Tenant` is not tenant-owned** — it is the list of tenants, and login resolves a row in it before any tenant is known. So this route has no query filter, no RLS policy and no interceptor check behind it, which makes it the only write in the API where the `Where` on the caller's own id is the entire control. No id is accepted from the route or the body.
 
+## Diagnostics — `/diagnostics`
+
+| Method | Route | Policy |
+|---|---|---|
+| POST | `/diagnostics/test-error` | `CanManageEmployees` |
+
+**Throws on purpose.** Answers `500` with the same bare `problem+json` any unhandled
+exception produces, and sends a report to error tracking carrying the caller's `tenant_id`.
+Its only job is to answer "is error tracking still receiving?" — a question whose other two
+answers are assuming yes (a DSN rotated six months ago fails silently) and finding out
+during a real incident.
+
+Owner-only rather than anonymous for two reasons: an open error trigger lets anyone exhaust
+a shop's error-tracking quota and bury the report that mattered, and every endpoint in this
+API states a policy because a test fails the build on one that does not. It reads and writes
+nothing, so it has no tenant boundary to cross — see its `IsolationManifest` exemption.
+
 ## Health — unversioned
 
 | Method | Route | Auth |
@@ -414,7 +431,18 @@ Each changed key writes its own `SettingsChanged` audit entry. Saving with nothi
 | GET | `/health/live` | anonymous |
 | GET | `/health/ready` | anonymous |
 
-`ready` checks database connectivity. Neither leaks version numbers or configuration.
+`live` is the process. It deliberately does **not** touch the database: if Postgres blips we
+want the proxy to stop sending traffic, not the orchestrator to kill and restart the process,
+which cannot fix a database and discards the connection pool trying.
+
+`ready` gates traffic and checks two things. The first is database connectivity. The second is
+that the connection's role is **`NOBYPASSRLS`** — because managed Postgres hands out a
+superuser by default, and an application connected as one has every row-level security policy
+silently inert while `pg_policies` still lists them as enabled. A machine that fails this
+receives no traffic and the deploy rolls back.
+
+Neither leaks version numbers or configuration: a failure is the word `Unhealthy` and nothing
+else. The reason goes to the logs, where somebody debugging a failed deploy is already looking.
 
 ---
 

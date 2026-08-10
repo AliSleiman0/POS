@@ -838,6 +838,17 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "POST api/v1/diagnostics/test-error",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "Reads nothing, writes nothing and takes no id — it throws. There is no "
+                      + "tenant boundary for it to cross because it never reaches data. What "
+                      + "does matter about it is who may call it, which is the Refused list "
+                      + "above and DiagnosticsTests: an anonymous caller could otherwise fill a "
+                      + "shop's error-tracking quota and bury a real report under noise.",
+        },
+        new()
+        {
             Key = "POST api/v1/employees",
             Kind = IsolationKind.Exempt,
 

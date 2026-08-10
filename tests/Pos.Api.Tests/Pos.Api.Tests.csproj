@@ -14,6 +14,7 @@
          either way. The instruction stream is the only place the evidence exists. Same
          technique and same reasoning as ArchitectureTests in Pos.Core.Tests. -->
     <PackageReference Include="Mono.Cecil" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
   </ItemGroup>
 
   <ItemGroup>

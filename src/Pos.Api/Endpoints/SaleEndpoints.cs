@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
 using Pos.Api.Common;
 using Pos.Api.Idempotency;
+using Pos.Api.Observability;
 using Pos.Core.Auditing;
 using Pos.Core.Entities;
 using Pos.Core.Monetary;
@@ -198,6 +199,15 @@ public static class SaleEndpoints
 
         sales.MapPost("/", CreateAsync)
             .RequireAuthorization(Policies.CanSell)
+            // The one metric worth an alert: a till that cannot take money. A filter rather
+            // than lines inside the handler because CreateAsync has a dozen exit paths and
+            // the one that matters most is the exception nobody anticipated.
+            //
+            // BEFORE RequireIdempotency, and the order is the point: filters run outermost
+            // first, so registering this second would put it inside the idempotency filter
+            // — which short-circuits a replay without ever calling in. Every retried sale
+            // would go uncounted, during exactly the network trouble that caused the retry.
+            .AddEndpointFilter<SaleSubmissionMetricsFilter>()
             .RequireIdempotency()
             .WithSummary("Complete a sale");
 
@@ -639,11 +649,13 @@ public static class SaleEndpoints
         IIdempotencyContext idempotency,
         IAuditLog audit,
         OverrideGrantService grants,
+        PosMetrics metrics,
         System.Security.Claims.ClaimsPrincipal caller,
         IAuthorizationService authorization,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(metrics);
 
         var (cart, errors, tracked, catalogPrices) =
             await BuildCartAsync(db, request, quoting: false, cancellationToken);
@@ -745,6 +757,15 @@ public static class SaleEndpoints
                 }
             },
             cancellationToken);
+
+        // After the commit, deliberately: a discrepancy recorded by a transaction that then
+        // rolled back never happened, and a counter cannot be decremented.
+        //
+        // Counted at all because a discrepancy is silent by design — the sale is never
+        // blocked by one, the cashier is never told, and nothing else surfaces it until
+        // somebody counts a shelf. A rise means the ledger and the shelves are drifting
+        // apart, which is either theft, a receiving mistake, or a bug in the stock path.
+        metrics.StockDiscrepanciesRecorded(result.Discrepancies.Count);
 
         return TypedResults.Created($"/api/v1/sales/{result.SaleId}", response!);
     }

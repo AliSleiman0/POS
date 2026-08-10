@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
 using Pos.Api.Common;
 using Pos.Api.Errors;
+using Pos.Api.Observability;
 using Pos.Core.Catalog;
 using Pos.Core.Entities;
 using Pos.Core.Exceptions;
@@ -161,6 +162,9 @@ public static class ProductEndpoints
         // guid constraint would refuse a barcode anyway.
         products.MapGet("/by-barcode/{code}", ByBarcodeAsync)
             .RequireAuthorization(Policies.CanSell)
+            // Scan-to-line latency, which is what a cashier experiences as "the system is
+            // slow" and the first thing to degrade as a catalog grows.
+            .AddEndpointFilter<BarcodeLookupMetricsFilter>()
             .WithSummary("Scan a barcode");
 
         products.MapGet("/{id:guid}/barcodes", ListBarcodesAsync)

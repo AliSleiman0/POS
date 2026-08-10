@@ -11,6 +11,7 @@ using Pos.Api.Common;
 using Pos.Api.Endpoints;
 using Pos.Api.Errors;
 using Pos.Api.Idempotency;
+using Pos.Api.Observability;
 using Pos.Api.Tenancy;
 using Pos.Core.Auditing;
 using Pos.Data;
@@ -19,6 +20,30 @@ using Pos.Data.Security;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Structured JSON to stdout in Production, which is what a log aggregator ingests. The
+// default console formatter writes a human-readable line whose fields cannot be queried,
+// so "show me every error for tenant X last Tuesday" becomes a grep over prose.
+//
+// The built-in formatter rather than Serilog, deliberately: Microsoft.Extensions.Logging
+// already does structured logging — the [LoggerMessage] source generator is used
+// throughout this codebase — and NuGetAudit runs at level `low`, so every dependency is a
+// standing liability to be justified rather than assumed. See PHASE-8-deployment.md §8.4.
+//
+// Development keeps the readable console: nobody greps their own terminal.
+if (builder.Environment.IsProduction())
+{
+    builder.Logging.ClearProviders();
+    builder.Logging.AddJsonConsole(options =>
+    {
+        // Without this the scope carrying TenantId is dropped and the whole point of
+        // opening it is lost — TenantResolutionMiddleware would be writing into a void.
+        options.IncludeScopes = true;
+
+        options.UseUtcTimestamp = true;
+        options.TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z' ";
+    });
+}
 
 builder.Services.AddOpenApi(options =>
     // The Idempotency-Key header is read by an endpoint filter, not bound as a parameter, so
@@ -124,6 +149,14 @@ builder.Services.AddScoped<OverrideGrantService>();
 builder.Services.AddScoped<IdempotencyContext>();
 builder.Services.AddScoped<IIdempotencyContext>(sp => sp.GetRequiredService<IdempotencyContext>());
 
+// AddMetrics gives the IMeterFactory; PosMetrics is a singleton because a Meter and its
+// instruments are meant to outlive a request — creating them per request would produce a
+// new time series each time and nothing would aggregate.
+builder.Services.AddMetrics();
+builder.Services.AddSingleton<PosMetrics>();
+builder.Services.AddSingleton<SaleSubmissionMetricsFilter>();
+builder.Services.AddSingleton<BarcodeLookupMetricsFilter>();
+
 builder.Services.AddPosRateLimiting();
 
 // Nothing needed this until the web app moved to its own host. Locked to exact origins
@@ -132,6 +165,29 @@ builder.Services.AddPosCors(builder.Configuration);
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
+
+// Error tracking. Inert without a DSN, which is how Development and the test host stay
+// silent without a second switch to forget — an unconfigured SDK sends nothing.
+if (builder.Configuration["Sentry:Dsn"] is { Length: > 0 })
+{
+    builder.WebHost.UseSentry(options =>
+    {
+        options.Dsn = builder.Configuration["Sentry:Dsn"]!;
+        options.Environment = builder.Environment.EnvironmentName;
+
+        // Off, and the scrubber does not rely on it staying off. This alone would still
+        // send request bodies and the caller's address.
+        options.SendDefaultPii = false;
+
+        // Nothing below Error. A 409 idempotency-key-reused is the system working as
+        // designed and DomainExceptionHandler already logs it at Warning; forwarding those
+        // buries the one report that matters under the ones that do not.
+        options.MinimumEventLevel = LogLevel.Error;
+
+        // The last thing that runs before anything leaves this process.
+        options.SetBeforeSend(static (sentryEvent, _) => SentryScrubber.Scrub(sentryEvent));
+    });
+}
 
 builder.Services.AddHealthChecks()
     // "ready" means the process can actually serve traffic, which requires the
@@ -275,6 +331,9 @@ app.UseAuthentication();
 // authorization, so anything that inspects tenant-scoped data already has a tenant.
 app.UseMiddleware<TenantResolutionMiddleware>();
 
+// After the tenant is known, before anything can throw with work to report.
+app.UseMiddleware<SentryTenantMiddleware>();
+
 app.UseAuthorization();
 
 app.MapAuthEndpoints();
@@ -289,6 +348,7 @@ app.MapSaleEndpoints();
 app.MapReportEndpoints();
 app.MapAuditEndpoints();
 app.MapSettingsEndpoints();
+app.MapDiagnosticsEndpoints();
 
 // See docs/API.md#health--unversioned. Anonymous, and neither leaks version or
 // configuration detail.
