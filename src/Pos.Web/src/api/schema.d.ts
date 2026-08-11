@@ -1466,6 +1466,56 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/catalog/sync': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Catalog changes since a watermark, for the offline mirror */
+    get: {
+      parameters: {
+        query?: {
+          since?: string
+          productCursor?: string
+          barcodeCursor?: string
+          limit?: number | string
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['CatalogSyncResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/stock': {
     parameters: {
       query?: never
@@ -2710,6 +2760,18 @@ export interface components {
     }
     /** @enum {unknown} */
     CashMovementType: 'Drop' | 'Payout' | 'PettyCash' | 'Correction'
+    CatalogSyncResponse: {
+      products: components['schemas']['SyncProductResponse'][]
+      barcodes: components['schemas']['SyncBarcodeResponse'][]
+      removedBarcodeIds: string[]
+      taxClasses: components['schemas']['SyncTaxClassResponse'][]
+      categories: components['schemas']['SyncCategoryResponse'][]
+      settings: null | components['schemas']['SyncSettingsResponse']
+      /** Format: date-time */
+      watermark: string
+      nextProductCursor: null | string
+      nextBarcodeCursor: null | string
+    }
     CategoryResponse: {
       /** Format: uuid */
       id: string
@@ -3409,6 +3471,68 @@ export interface components {
     }
     /** @enum {unknown} */
     StockMovementType: 'Receive' | 'Adjust' | 'Sale' | 'Refund' | 'Waste' | 'Recount'
+    SyncBarcodeResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: uuid */
+      productId: string
+      code: string
+      isPrimary: boolean
+      /** Format: date-time */
+      changedAt: string
+    }
+    SyncCategoryResponse: {
+      /** Format: uuid */
+      id: string
+      name: string
+      /** Format: uuid */
+      parentCategoryId: null | string
+      /** Format: int32 */
+      sortOrder: number | string
+      isActive: boolean
+      /** Format: date-time */
+      changedAt: string
+    }
+    SyncProductResponse: {
+      /** Format: uuid */
+      id: string
+      sku: string
+      name: string
+      description: null | string
+      /** Format: uuid */
+      categoryId: null | string
+      /** Format: uuid */
+      taxClassId: string
+      /** Format: double */
+      unitPrice: number | string
+      unit: components['schemas']['Unit']
+      isActive: boolean
+      trackStock: boolean
+      /** Format: date-time */
+      changedAt: string
+    }
+    SyncSettingsResponse: {
+      currencyCode: string
+      timeZoneId: string
+      taxMode: components['schemas']['TaxMode']
+      /** Format: double */
+      cashRoundingIncrement: number | string
+      businessDayStartOffset: string
+      addressLine: null | string
+      taxNumber: null | string
+      receiptHeader: null | string
+      receiptFooter: null | string
+    }
+    SyncTaxClassResponse: {
+      /** Format: uuid */
+      id: string
+      name: string
+      /** Format: double */
+      rate: number | string
+      isDefault: boolean
+      /** Format: date-time */
+      changedAt: string
+    }
     TaxClassResponse: {
       /** Format: uuid */
       id: string
@@ -3422,7 +3546,7 @@ export interface components {
       updatedAt: null | string
     }
     /** @enum {unknown} */
-    TaxMode: 'Inclusive' | 'Exclusive' | null
+    TaxMode: 'Inclusive' | 'Exclusive'
     TenantSettings: {
       slug: string
       name: string

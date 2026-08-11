@@ -116,6 +116,8 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 - `SaleNumber` is generated inside the sale's transaction from a per-tenant counter. Staff and auditors need a human-quotable reference; a GUID is not one. Gaps are suspicious in an audit, so the counter is not a naive `MAX()+1` read outside the transaction.
 - **`CompletedAt` and `RecordedAt` are two different questions, and Phase 9 is why both are stored.** `CompletedAt` is when the customer stood at the counter — the client may supply it as `occurredAt` for a sale rung offline — and it is what every report, trading-day bound and Z-report groups by. `RecordedAt` is when the server wrote the row, always server-set, never client-supplied. They are equal for anything rung online, so the gap between them *is* the offline marker; nothing carries a flag a client would have to be trusted to set. Without the second column, a drawer counted at 18:00 that does not include a sale taken at 17:40 has nothing on the row to explain itself.
 
+**`Barcode` carries a `DeletedAt`, and the removal is a soft delete.** Not for an audit trail — nothing financial points at a barcode — but for the offline mirror. A till syncs by asking what changed since it last looked, and a row deleted outright answers nothing, so the withdrawal would never reach it. Three things hold together or none of them works: the unique index on `(TenantId, Code)` is filtered on `DeletedAt IS NULL` so a code can be re-added, the scan and listing paths exclude tombstones, and `GET /catalog/sync` reports them as `removedBarcodeIds`.
+
 **`SaleLine`** — `SaleId`, `ProductId`, `LineNumber`, `Description` *(snapshot)*, `Quantity`, `UnitPrice` *(snapshot)*, `TaxRate` *(snapshot)*, `DiscountAmount`, `LineSubtotal`, `LineTax`, `LineTotal`, `IsPriceOverridden`, `OverriddenBy?`.
 
 **Snapshotting is the rule that matters here.** Description, unit price and tax rate are copied at sale time. Reports must never join to the current `Product.Price`. Otherwise raising a price on Tuesday retroactively rewrites Monday's revenue — the reports stop reconciling with the cash in the drawer, and there is no way to notice.
@@ -211,6 +213,9 @@ accept it, RLS notwithstanding. The tenant has to be *inside* the key. Deletes a
 | `stock_movement` | `(tenant_id, product_id, occurred_at)` | Ledger replay / rebuild `OnHand` |
 | `stock_item` | unique `(tenant_id, product_id)` | One stock row per product |
 | `audit_entry` | `(tenant_id, occurred_at)` | Audit review |
+| `barcode` | unique `(tenant_id, code)` **filtered** `WHERE deleted_at IS NULL` | The hottest read in the system, and the filter is what lets a withdrawn code be entered again — a mis-typed label being corrected is the ordinary case, and an unfiltered index answers it with a `23505` for a code the shop cannot see anywhere |
+| `barcode` | `(tenant_id, deleted_at)` filtered `WHERE deleted_at IS NOT NULL` | "Which codes were withdrawn since?" — a small list on every sync, and a scan of every barcode the shop has without it |
+| `product`, `barcode`, `tax_class`, `category` | **expression** `(tenant_id, COALESCE(updated_at, created_at), id)` — `ix_*_tenant_changed` | The `GET /catalog/sync` keyset. `COALESCE` because `updated_at` is null until a row is first edited, so ordering on it alone sorts every never-edited row into one null bucket a keyset cannot page through. An expression index is the only kind that serves an `ORDER BY` over it — hand-written in the migration, since EF has no API for one |
 
 ## Invariants
 

@@ -827,6 +827,24 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "GET api/v1/catalog/sync",
+            Kind = IsolationKind.Exempt,
+
+            // CanSell: the caller is a till building the mirror it sells from.
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "Answers FIVE collections in one object, so the Collection shape — "
+                      + "which unwraps one `items` array — cannot express it. Exempt here "
+                      + "rather than weakened there: teaching the manifest to check an "
+                      + "arbitrary path would make every other row's assertion vaguer to "
+                      + "accommodate one endpoint. Covered by "
+                      + "CatalogSyncTests.Every_collection_is_scoped_to_the_calling_tenant, "
+                      + "which asserts all five at once — products, barcodes, tax classes, "
+                      + "categories and the withdrawn-barcode tombstones — plus "
+                      + "The_settings_block_is_the_calling_tenants_own, since Tenant is not "
+                      + "tenant-owned and carries no query filter of its own.",
+        },
+        new()
+        {
             Key = "PUT api/v1/settings",
             Kind = IsolationKind.Exempt,
             Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],

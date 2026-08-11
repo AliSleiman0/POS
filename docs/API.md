@@ -112,7 +112,7 @@ A device token is returned once by `POST /registers/{id}/enroll` and is stored o
 | POST | `/products/{id}/activate` | `CanManageCatalog` | The way back. A mis-clicked deactivate is otherwise permanent |
 | GET | `/products/{id}/barcodes` | `CanSell` | A bare array, not paginated |
 | POST | `/products/{id}/barcodes` | `CanManageCatalog` | Many barcodes per product |
-| DELETE | `/products/{id}/barcodes/{barcodeId}` | `CanManageCatalog` | Barcodes *may* be deleted; products may not |
+| DELETE | `/products/{id}/barcodes/{barcodeId}` | `CanManageCatalog` | Barcodes *may* be withdrawn; products may not. A soft delete since Phase 9 — see below |
 
 `GET /products/by-barcode/{code}` returns `404` for an unknown barcode — the register turns that into "unknown item, add it?" rather than an error dialog. A blank or whitespace-only code is also `404`, not `400`: every answer this endpoint gives has to be one of the two a register knows how to render.
 
@@ -123,6 +123,10 @@ A device token is returned once by `POST /registers/{id}/enroll` and is stored o
 `GET /products/{id}/barcodes` is **not paginated**, unlike every other list. It is a bounded sub-resource — a handful of codes on one product — rather than a tenant-wide collection, so the envelope would be ceremony. It exists because `DELETE .../{barcodeId}` is otherwise unaddressable: a client has no other way to learn a barcode's id.
 
 A code already used in that tenant returns `409` with `type: .../duplicate-barcode`, whichever product holds the other one. The same code in a different tenant is accepted — two shops stocking the same manufacturer's item hold the same barcode. A barcode addressed under the wrong product is `404`, not a delete.
+
+**`DELETE .../{barcodeId}` is a soft delete, and the reason is the offline mirror rather than an audit trail.** A till syncs its catalog by asking what changed since it last looked, and a row deleted outright answers nothing at all — so the withdrawal would never reach the till, which would go on scanning a code the shop retired, at a price nobody authorised, until somebody rebuilt the mirror by hand. The row survives as a tombstone and `GET /catalog/sync` reports it under `removedBarcodeIds`.
+
+Three things follow, and they only work together: the code **stops scanning** immediately (`by-barcode` is `404`) and disappears from `GET /products/{id}/barcodes`; the unique index is filtered on `deleted_at IS NULL`, so a withdrawn code **can be added again** — which is the ordinary case, a mis-typed label being corrected; and a second `DELETE` of the same id is `404`, not another `204`, because a tombstone is not a second thing to remove.
 
 **`isPrimary` is advisory and nothing enforces one per product** (decided in 2.3). It is a label/display hint; the register scans whichever code is on the item in the customer's hand. A filtered unique index would make EF treat the foreign-key index as covered and would turn "make this the label code" into a clear-then-set across two saves, in exchange for a rule nothing reads yet. Revisit when a screen needs one.
 
@@ -160,6 +164,35 @@ Editing a `TaxClass.Rate` affects **future** sales only. Historical sale lines h
 **`TaxClass` has no deactivate route and no `IsActive`.** A rate that is legislated out of existence stays in the picker; the intended fix is to edit it or stop referencing it. Revisit if a tenant accumulates enough dead rates to matter.
 
 **At most one tax class per tenant is the default**, enforced by a filtered unique index. `isDefault: true` demotes whichever row held it rather than being refused — "make this the default" is what the caller meant. Two callers racing to do so leaves one with `409` and `type: .../default-tax-class-conflict`. Zero defaults is a legal state, and nothing in Phase 2 reads the flag.
+
+## Catalog sync — `/catalog/sync`
+
+| Method | Route | Auth | Notes |
+|---|---|---|---|
+| GET | `/catalog/sync` | `CanSell` | `?since=`, `?productCursor=`, `?barcodeCursor=`, `?limit=`. The offline mirror's feed |
+
+```json
+→ 200 {
+  "products":   [ { "id": "…", "sku": "…", "unitPrice": 1.20, "isActive": true, "changedAt": "…" } ],
+  "barcodes":   [ { "id": "…", "productId": "…", "code": "…", "changedAt": "…" } ],
+  "removedBarcodeIds": [ "…" ],
+  "taxClasses": [ … ], "categories": [ … ],
+  "settings":   { "currencyCode": "EUR", "taxMode": "Inclusive", … },
+  "watermark": "2026-08-11T09:14:22Z",
+  "nextProductCursor": null, "nextBarcodeCursor": null
+}
+```
+
+**Why this exists rather than a `?updatedSince=` on the CRUD endpoints.** `GET /products` has no such filter; barcodes are readable only one product at a time, so a ten-thousand-product catalog would be ten thousand requests; and a hard-deleted barcode is invisible to *any* incremental feed, which is why Phase 9 made that removal a soft delete. One call also means **one watermark** — a client stitching three feeds together has to reconcile three, and the window between them is where a product arrives whose tax class has not, which prices a cart at zero rather than failing.
+
+- **`?since=` omitted is a full download.** `removedBarcodeIds` is then empty by construction: a mirror being built from nothing has nothing to remove.
+- **The `watermark` is the server's clock, read before the queries.** Never the client's: a till whose clock is fast would skip everything changed in the gap. Read first so it can only ever be conservative.
+- **Re-ask from `watermark` minus ~30 seconds.** A row's `changedAt` is stamped when the write executes but becomes visible when its transaction commits, so a write that started before the watermark can appear after it carrying an earlier timestamp. The overlap costs nothing because the mirror's writes are upserts.
+- **Two cursors, walked independently.** Products and barcodes are different tables with different row counts; one position cannot mean "after here" in both. Commit the watermark only when **both** are null — committing early skips everything on the pages not yet fetched, permanently.
+- **The feed may repeat a row; it cannot skip one.** The sort key is `COALESCE(updated_at, created_at)`, which moves when a row is edited — so a product edited mid-walk is served twice. It can only move *ahead* of the cursor, because `updatedAt` increases monotonically, so a duplicate is the only way this fails and it costs one redundant put.
+- **Inactive products are included**, unlike `GET /products`. The deactivation is precisely the change the mirror needs; filtering it out leaves the till selling a withdrawn product for ever.
+- **No `costPrice`, in any shape of this response.** The feed is `CanSell` and reaches a Cashier's till, and margin is a reporting question — reports are online-only. Not omitted per caller: simply not part of the contract.
+- `settings` is sent on the **first page only** and is `null` on continuations. It is not incremental, and repeating it on every page of a large catalog is noise.
 
 ## Stock — `/stock`
 

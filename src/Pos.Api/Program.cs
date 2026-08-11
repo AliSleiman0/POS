@@ -354,6 +354,7 @@ app.MapEmployeeEndpoints();
 app.MapTaxClassEndpoints();
 app.MapCategoryEndpoints();
 app.MapProductEndpoints();
+app.MapCatalogSyncEndpoints();
 app.MapStockEndpoints();
 app.MapShiftEndpoints();
 app.MapSaleEndpoints();
