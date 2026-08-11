@@ -11,6 +11,7 @@ import { isStorableAmount } from '@/features/catalog/validation'
 import { useOffline } from '@/features/offline/offlineContext'
 import { buildOfflineSale, resolveOfflineLines } from '@/features/offline/offlineSale'
 import { QueuedSalePanel } from '@/features/offline/QueuedSalePanel'
+import { useOfflineQuote } from '@/features/offline/useOfflineQuote'
 import { lookupBarcode, readSettings } from '@/lib/offline/catalog'
 import { enqueue } from '@/lib/offline/outbox'
 import type { OutboxDisplay } from '@/lib/offline/db'
@@ -89,6 +90,18 @@ export function RegisterPage() {
   const override = useOverride()
   const shift = useCurrentShift()
   const quote = useQuote(cart, override.authorization?.grant ?? null)
+
+  /*
+   * The same total, from the mirror, when the server cannot be reached.
+   *
+   * Without it the tender step stays disabled offline — it is gated on a quote
+   * having returned — and the till can fill a basket it cannot sell, which is
+   * precisely the failure this phase exists to remove.
+   */
+  const offlineQuote = useOfflineQuote(offline.db, cart, offline.connectivity === 'offline')
+
+  /** Whichever number is authoritative right now. The panels cannot tell. */
+  const priced = offline.connectivity === 'offline' ? offlineQuote.quote : quote.data
 
   const [pending, setPending] = useState('')
   const [unknownCode, setUnknownCode] = useState<string | null>(null)
@@ -727,7 +740,7 @@ export function RegisterPage() {
         case 'F7':
           // A function key, like F2/F3/F4 — a barcode cannot contain one, so
           // reserving it cannot delete a character from the middle of a scan.
-          if (!tendering && !isEmpty(cart) && quote.data !== undefined) {
+          if (!tendering && !isEmpty(cart) && priced !== undefined) {
             event.preventDefault()
             beginTender()
           }
@@ -755,16 +768,7 @@ export function RegisterPage() {
           break
       }
     },
-    [
-      beginAdjustment,
-      beginTender,
-      cancelTender,
-      cart,
-      dispatch,
-      quote.data,
-      selectedLine,
-      tendering,
-    ],
+    [beginAdjustment, beginTender, cancelTender, cart, dispatch, priced, selectedLine, tendering],
   )
 
   useScanner(status === 'authenticated', {
@@ -866,9 +870,9 @@ export function RegisterPage() {
           {shift.isPending ? null : !shift.isSuccess ? (
             // A 404 from `/shifts/current` is the answer "no drawer is open".
             <OpenShiftPanel registerId={shift.registerId} currency={currency} />
-          ) : tendering && quote.data !== undefined ? (
+          ) : tendering && priced !== undefined ? (
             <TenderPanel
-              quote={quote.data}
+              quote={priced}
               currency={currency}
               tenders={tenders}
               pending={pending}
@@ -908,19 +912,21 @@ export function RegisterPage() {
                  * A stale total that looks authoritative is the worst failure
                  * this screen has.
                  */
-                quote={isEmpty(cart) ? undefined : quote.data}
+                quote={isEmpty(cart) ? undefined : priced}
                 currency={currency}
                 provisionalMinor={provisionalMinor}
-                isQuoting={quote.isFetching}
-                quoteFailed={quote.isError}
+                isQuoting={offline.connectivity === 'offline' ? false : quote.isFetching}
+                quoteFailed={
+                  offline.connectivity === 'offline' ? offlineQuote.unpriceable : quote.isError
+                }
                 pending={pending}
-                canTender={!isEmpty(cart) && quote.data !== undefined && !quote.isError}
+                canTender={!isEmpty(cart) && priced !== undefined}
                 onTender={beginTender}
               />
             </>
           )}
 
-          {quote.isError ? (
+          {quote.isError && offline.connectivity !== 'offline' ? (
             <ErrorState
               error={quote.error}
               title="The server could not price this cart."

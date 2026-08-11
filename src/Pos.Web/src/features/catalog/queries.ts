@@ -33,8 +33,14 @@ export interface ProductFilters {
  * written underneath them, which is normal during trading hours. The cursor is
  * opaque and is never parsed — its format carries a version so it can change.
  */
-export function useProducts(filters: ProductFilters) {
+/**
+ * @param enabled `false` stands the query down entirely — used by the register's
+ * grid while the till is offline, so TanStack Query does not spend its retries
+ * on a server nobody can reach and the grid can render the local mirror instead.
+ */
+export function useProducts(filters: ProductFilters, enabled = true) {
   return useInfiniteQuery({
+    enabled,
     queryKey: catalogKeys.products(filters),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
