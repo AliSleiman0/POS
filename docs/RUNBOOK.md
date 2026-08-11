@@ -18,6 +18,7 @@ build it, at an hour they did not choose.
 | A password or token has leaked | [When a credential leaks](#when-a-credential-leaks) |
 | Restore from backup | [Restoring from backup](#restoring-from-backup) |
 | Give a shop its data | [Exporting one tenant's data](#exporting-one-tenants-data) |
+| Check production for tenant leaks | [Probing production](#probing-production-for-cross-tenant-leaks) |
 | A deploy went wrong | [Rolling back a deploy](#rolling-back-a-deploy) |
 
 ---
@@ -388,6 +389,52 @@ psql "$DATABASE_URL" -c "\copy (SELECT * FROM tenant WHERE id = '$TENANT') TO 't
 
 **Do not include `AspNetUsers`** without deciding deliberately: it carries password and PIN
 hashes. A staff list belongs in the export; the hashes do not.
+
+## Probing production for cross-tenant leaks
+
+**Local row-level security passing proves nothing about production.** The query filters and
+the write interceptor are identical everywhere, but the layer that catches them when they are
+wrong is a database *role attribute*, and a role granted `BYPASSRLS` is invisible to every
+test that runs locally. The only way to know is to ask the deployed instance.
+
+`tools/Pos.Probe` does that. It is **read-only** — every request is a GET — so it is safe to
+point at a live system.
+
+```bash
+# 1. Export the manifest. The probe replays the same claims the suite asserts, so a new
+#    endpoint is covered on the day it is added: EndpointCoverageTests already fails the
+#    build when one has no row.
+dotnet test tests/Pos.Api.Tests --filter IsolationManifestExportTests
+
+# 2. Two throwaway tenants sharing one password. The VICTIM must have rows worth stealing —
+#    a probe against an empty tenant reports a pass and means nothing.
+dotnet run --project tools/Pos.Seed -- onboard --connection "$OWNER" --slug probe-a   --name "Probe A" --tax-mode Inclusive --owner-email owner@probe-a.example
+# …repeat for probe-b, then give probe-a a category, a product and some stock.
+
+# 3. Probe. Exits 0 when nothing leaked, 1 on any violation, so it can gate a deploy.
+export POS_PROBE_PASSWORD='…'
+dotnet run --project tools/Pos.Probe -- --api https://<api-host>   --manifest tests/Pos.Api.Tests/bin/Release/net10.0/isolation-manifest.json   --victim probe-a --attacker probe-b
+
+# 4. Deactivate the probe tenants. Not deleted — the ledger is append-only and there is no
+#    supported delete path; an inactive tenant cannot be logged into.
+psql "$OWNER" -c "UPDATE tenant SET is_active = false WHERE slug IN ('probe-a','probe-b');"
+```
+
+**Falsify it before believing it.** A probe that checks nothing reports the same "no
+violations" as a system that is airtight. Point it at itself — `--victim probe-a --attacker
+probe-a` — and it must go red, because a tenant can of course see its own rows:
+
+```
+*** 11 VIOLATION(S) ***
+  FAIL  GET api/v1/products LEAKED 3 of tenant 'probe-a's ids to 'probe-a'
+```
+
+**Run 2026-08-11** against the deployed instance: 33 claims checked (18 cross-tenant, 15
+anonymous), **no violations**. By-id routes answered **404** rather than 403 — a 403 would
+confirm the row exists and turn the endpoint into an existence oracle.
+
+Writes are reported as skipped rather than attempted: a probe that POSTed to prove isolation
+would be writing into a live shop's append-only ledger to make a point.
 
 ## Rolling back a deploy
 

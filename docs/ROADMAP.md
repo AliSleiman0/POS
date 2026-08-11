@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | **Phase 8 in progress** — 8.1–8.5, 8.7 done and deployed; 8.6 all but the production probe; 8.8 all but the Sentry test error. 1392 .NET + 225 Vitest + 60 Playwright green, in CI too |
-| **Next up** | **Two things close Phase 8:** the production cross-tenant probe (`tools/Pos.Probe`, not yet built) and firing the test error at a real Sentry DSN. A cash sale has been completed end to end on the deployed stack. |
+| **Current phase** | **Phase 8 in progress** — 8.1–8.7 done and deployed; only the Sentry test error is outstanding (needs a DSN). 1393 .NET + 225 Vitest + 60 Playwright green, in CI too |
+| **Next up** | **One thing closes Phase 8:** a Sentry DSN, so the deliberate test error can be fired at real error tracking. Everything else is deployed and verified — a cash sale rung end to end, a restore drill executed, and a cross-tenant probe run against production. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
 | **Last updated** | 2026-08-11 |
 
@@ -133,7 +133,7 @@ Detail: [phases/PHASE-8-deployment.md](phases/PHASE-8-deployment.md)
 - [x] **8.3 Migrations in CI/CD** — `deploy.yml` gated on CI, idempotent SQL applied as the owner through a proxied `psql`, image deployed by digest so a rollback is a redeploy. `StartupMigrationTests` IL-scans the three shipped assemblies and was falsified. Dependency audits added to CI. Script verified building a schema from nothing. **The pipeline has not run for real.**
 - [x] **8.4 Observability** — JSON logs with `TenantId`/`UserId`/`RegisterId` on every request scope; Sentry behind a scrubber tested as a security boundary; Owner-only `POST /diagnostics/test-error`; four metrics. Two real bugs in the metrics filter were caught by its own tests.
 - [x] **8.5 Backups + restore drill** — **executed 2026-08-11**, and it found a real defect: `FORCE ROW LEVEL SECURITY` makes `pg_dump` exit 1 while still leaving a plausible 89 KB file with the users table missing. Corrected procedure, timings and verification queries in `RUNBOOK.md`. **Free Postgres has no automatic backups and self-deletes after 30 days** — the dump is the backup.
-- [ ] **8.6 Security pass** — 🔨 **code done.** Login rate limit (set for a shop behind NAT, not a person), security headers, CSP verified in a browser against the built app, dependency audit in CI. **The production cross-tenant probe is outstanding.**
+- [x] **8.6 Security pass** — **done, including the production probe.** Login rate limit (set for a shop behind NAT, not a person), security headers, CSP verified in a browser against the built app, dependency audit in CI. `tools/Pos.Probe` replays the exported isolation manifest over HTTPS against the deployed instance: 33 claims, no violations, by-id routes answering 404 rather than 403. Falsified by pointing it at itself (11 violations, exit 1).
 - [x] **8.7 Tenant onboarding** — `Pos.Seed onboard`: requires an explicit connection, requires `TaxMode` and the business-day offset, generates a password shown once, refuses an existing slug. Verified by onboarding a shop and logging into it. Runbook covers onboarding, a locked-out Owner, a lost device, a disputed total, and what to do when each kind of credential leaks.
 
 ## Phase 9 — Offline (PWA)
