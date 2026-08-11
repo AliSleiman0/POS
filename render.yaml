@@ -68,16 +68,19 @@ services:
       - key: Jwt__SigningKey
         generateValue: true
 
+      # Render appends a random suffix when a service name is already taken
+      # globally, so the real hostnames are NOT `pos-api`/`pos-web`. These four
+      # values and the CSP below are a matched set with the actual URLs.
       - key: Jwt__Issuer
-        value: https://pos-api.onrender.com
+        value: https://pos-api-jc43.onrender.com
       - key: Jwt__Audience
-        value: https://pos-api.onrender.com
+        value: https://pos-api-jc43.onrender.com
 
       # MUST name the static site's origin exactly. An empty list in Production
       # refuses to boot, deliberately: a CORS mistake is invisible from the server,
       # which keeps answering healthily while the browser blocks every call.
       - key: Cors__AllowedOrigins__0
-        value: https://pos-web.onrender.com
+        value: https://pos-web-lcc5.onrender.com
 
       # Error tracking. Absent means the SDK is inert, which is why Development and
       # the tests need no second switch.
@@ -119,7 +122,7 @@ services:
       # this site's. They are a matched set — get one wrong and the browser blocks
       # every call with the API reporting perfectly healthy.
       - key: VITE_API_BASE_URL
-        value: https://pos-api.onrender.com
+        value: https://pos-api-jc43.onrender.com
 
     routes:
       # SPA fallback. React Router owns /register, /admin/settings and the rest, so a
@@ -173,7 +176,7 @@ services:
       # CHANGE connect-src WITH THE API ORIGIN, or the browser blocks every call.
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://pos-api.onrender.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://pos-api-jc43.onrender.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 
 databases:
   - name: pos-db
