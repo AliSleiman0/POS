@@ -6,6 +6,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { useAuth } from '@/auth/authContext'
 import { IfPolicy } from '@/auth/guards'
 import { CartProvider } from '@/features/register/CartProvider'
+import { UpdatePrompt } from '@/features/offline/UpdatePrompt'
 import { OverrideProvider } from '@/features/register/OverrideProvider'
 import { useCurrentShift } from '@/features/register/queries'
 import { clearCart } from '@/features/register/storage'
@@ -34,6 +35,11 @@ export function AppLayout() {
     <CartProvider>
       <OverrideProvider>
         <div className="flex h-full flex-col">
+          {/* Above the header, so it is the first thing on screen and cannot be
+              mistaken for part of the till's own chrome. Inside CartProvider
+              because whether it may apply depends on the cart being empty. */}
+          <UpdatePrompt />
+
           <header className="flex items-center gap-6 border-b border-border px-4 py-2">
             <div className="flex min-w-0 flex-col">
               <span className="truncate text-sm font-semibold text-foreground">

@@ -4,7 +4,11 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client", "vitest/globals"],
+    /* `vite-plugin-pwa/client` declares the `virtual:pwa-register` module the
+       service-worker registration imports. It is a virtual module — generated
+       by the plugin at build time — so without this it has no declaration and
+       `UpdatePrompt` cannot name it even behind a dynamic import. */
+    "types": ["vite/client", "vitest/globals", "vite-plugin-pwa/client"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

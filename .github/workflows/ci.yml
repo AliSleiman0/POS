@@ -285,6 +285,17 @@ jobs:
 
           echo "POSTGRES_APP_PASSWORD=$APP_PASSWORD" >> "$GITHUB_ENV"
 
+      # Built before the suite because `pwa.spec.ts` asserts against the emitted
+      # service worker rather than against vite.config.ts — the two decisions it
+      # protects (never taking over mid-sale, never caching an API response) are
+      # properties of Workbox's output, not of the options handed to it. Without
+      # this step those checks skip, and a skip reads exactly like a pass.
+      #
+      # The dev server the specs actually drive is unaffected: `devOptions` is
+      # off, so nothing here changes what the browser loads.
+      - name: Build the web app
+        run: pnpm build
+
       - name: Run the E2E suite
         run: pnpm test:e2e
 
