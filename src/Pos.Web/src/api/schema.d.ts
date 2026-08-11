@@ -2777,6 +2777,8 @@ export interface components {
       /** Format: double */
       cartDiscountAmount: null | number | string
       tenders: null | components['schemas']['SaleTenderRequest'][]
+      /** Format: date-time */
+      occurredAt?: null | string
     }
     CreateStockAdjustmentRequest: {
       /** Format: uuid */
@@ -3270,6 +3272,8 @@ export interface components {
       voidReason?: null | string
       refundReason?: null | string
       refunds?: null | components['schemas']['LinkedRefundResponse'][]
+      /** Format: date-time */
+      recordedAt?: null | string
     }
     /** @enum {unknown} */
     SaleStatus: 'Completed' | 'Voided'

@@ -38,7 +38,14 @@ internal sealed class SaleWriter(
 
         // Read before the retry block, as StockLedger does: a transient-failure replay must
         // not re-timestamp the sale, or "what did we take on Tuesday" would move.
-        var completedAt = timeProvider.GetUtcNow();
+        var recordedAt = timeProvider.GetUtcNow();
+
+        // When the customer actually paid. The server's clock for an ordinary online sale; the
+        // till's own for one queued offline, which is the only way a sale rung at 22:00 and
+        // replayed at 09:00 lands in the right trading day and against the right drawer. The
+        // value has already been bounded by OfflineSaleRules at the edge — the writer does not
+        // re-check it, for the same reason it does not re-price the cart.
+        var completedAt = request.OccurredAt ?? recordedAt;
 
         // From the validated token, never the request. A caller able to supply this could
         // attribute a sale — and a price override — to a colleague, and nothing on the row
@@ -89,6 +96,7 @@ internal sealed class SaleWriter(
                 RoundingAdjustment = request.Priced.RoundingAdjustment,
                 Total = request.Priced.Total,
                 CompletedAt = completedAt,
+                RecordedAt = recordedAt,
             };
 
             db.Sales.Add(sale);
@@ -210,6 +218,7 @@ internal sealed class SaleWriter(
                 sale.Id,
                 saleNumber,
                 completedAt,
+                recordedAt,
                 change,
                 [.. lines.Select(l => l.Id)],
                 discrepancies);
@@ -313,6 +322,11 @@ internal sealed class SaleWriter(
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // No offline variant, and there is no OccurredAt on a refund request to supply one. A
+        // refund is a negotiation at the counter — the customer produces a receipt, somebody
+        // decides, the cash comes out of the drawer that is open — and every part of that needs
+        // the server anyway. So the two timestamps are the same value here, deliberately, and
+        // the column still reads honestly: this refund was recorded when it happened.
         var completedAt = timeProvider.GetUtcNow();
         var cashierId = actor.UserId
             ?? throw new InvalidOperationException("No user is attached to this request.");
@@ -430,6 +444,7 @@ internal sealed class SaleWriter(
                 RoundingAdjustment = -priced.RoundingAdjustment,
                 Total = -priced.Total,
                 CompletedAt = completedAt,
+                RecordedAt = completedAt,
             };
 
             db.Sales.Add(refund);
@@ -501,6 +516,7 @@ internal sealed class SaleWriter(
             result = new SaleCommitResult(
                 refund.Id,
                 saleNumber,
+                completedAt,
                 completedAt,
                 Money.Zero,
                 [.. refundLines.Select(l => l.Id)],

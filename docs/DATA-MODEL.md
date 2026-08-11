@@ -109,11 +109,12 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 
 **`Sale`** — the financial record. **Append-only: once `Completed`, never updated or deleted.**
 
-`SaleNumber` (per-tenant sequential, unique), `ClientTransactionId` (GUID, unique per tenant), `RegisterId`, `ShiftId`, `CashierId`, `Type` (`Sale`|`Refund`), `Status` (`Completed`|`Voided`), `OriginalSaleId?`, `Subtotal`, `DiscountTotal`, `TaxTotal`, `RoundingAdjustment`, `Total`, `CompletedAt`, `VoidedAt?`, `VoidedBy?`, `VoidReason?`.
+`SaleNumber` (per-tenant sequential, unique), `ClientTransactionId` (GUID, unique per tenant), `RegisterId`, `ShiftId`, `CashierId`, `Type` (`Sale`|`Refund`), `Status` (`Completed`|`Voided`), `OriginalSaleId?`, `Subtotal`, `DiscountTotal`, `TaxTotal`, `RoundingAdjustment`, `Total`, `CompletedAt`, `RecordedAt`, `VoidedAt?`, `VoidedBy?`, `VoidReason?`.
 
 - **A refund is a new `Sale` with `Type = Refund`** and negative amounts, linked by `OriginalSaleId`. Never an edit of the original.
 - **A void is a status flag plus compensating stock movements**, not a delete.
 - `SaleNumber` is generated inside the sale's transaction from a per-tenant counter. Staff and auditors need a human-quotable reference; a GUID is not one. Gaps are suspicious in an audit, so the counter is not a naive `MAX()+1` read outside the transaction.
+- **`CompletedAt` and `RecordedAt` are two different questions, and Phase 9 is why both are stored.** `CompletedAt` is when the customer stood at the counter — the client may supply it as `occurredAt` for a sale rung offline — and it is what every report, trading-day bound and Z-report groups by. `RecordedAt` is when the server wrote the row, always server-set, never client-supplied. They are equal for anything rung online, so the gap between them *is* the offline marker; nothing carries a flag a client would have to be trusted to set. Without the second column, a drawer counted at 18:00 that does not include a sale taken at 17:40 has nothing on the row to explain itself.
 
 **`SaleLine`** — `SaleId`, `ProductId`, `LineNumber`, `Description` *(snapshot)*, `Quantity`, `UnitPrice` *(snapshot)*, `TaxRate` *(snapshot)*, `DiscountAmount`, `LineSubtotal`, `LineTax`, `LineTotal`, `IsPriceOverridden`, `OverriddenBy?`.
 

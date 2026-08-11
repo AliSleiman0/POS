@@ -62,6 +62,11 @@ internal sealed class SaleConfiguration : IEntityTypeConfiguration<Sale>
             .HasDatabaseName("ux_sale_tenant_sale_number");
 
         // Reporting date ranges, and the keyset GET /sales pages on.
+        //
+        // On CompletedAt and not RecordedAt: every report in the system asks when the trade
+        // happened, not when the server heard about it. RecordedAt has no index of its own
+        // because nothing pages or filters on it — it is read one row at a time, beside a sale
+        // somebody is already looking at.
         builder.HasIndex(s => new { s.TenantId, s.CompletedAt })
             .HasDatabaseName("ix_sale_tenant_completed_at");
 

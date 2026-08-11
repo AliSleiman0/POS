@@ -96,14 +96,35 @@ public sealed class Sale : TenantEntity
     public Money Total { get; set; }
 
     /// <summary>
-    /// When the sale was completed, server-set from <c>TimeProvider</c>.
+    /// When the sale was completed — when the customer stood at the counter.
     /// </summary>
     /// <remarks>
-    /// Separate from <c>CreatedAt</c> for the case Phase 9 creates: an offline sale happened
-    /// when the customer stood there and is written when the till reconnects, and "what did
-    /// we take on Tuesday" means the first of those.
+    /// Server-set from <c>TimeProvider</c> for an online sale. An offline sale supplies it as
+    /// <c>occurredAt</c>, because it happened when the customer stood there and is written
+    /// when the till reconnects, and <b>"what did we take on Tuesday" means the first of
+    /// those</b> — the trading-day bounds, the Z-report and the shift's takings all read this
+    /// column. Bounded by <see cref="Sales.OfflineSaleRules"/> before it is accepted; see
+    /// <see cref="RecordedAt"/> for the other half of the pair.
     /// </remarks>
     public DateTimeOffset CompletedAt { get; set; }
+
+    /// <summary>
+    /// When the server actually wrote the row. Always server-set, never client-supplied.
+    /// </summary>
+    /// <remarks>
+    /// Equal to <see cref="CompletedAt"/> for a sale rung online, and later than it for one
+    /// that was queued offline and replayed. <b>Both are needed, and neither substitutes for
+    /// the other.</b> <see cref="CompletedAt"/> answers "when did this trade happen", which is
+    /// the reporting question; this one answers "when did we learn about it", which is the
+    /// reconciliation question — a drawer counted at 18:00 cannot be explained by a sale the
+    /// server first saw at 21:00, and without this column nothing on the row says so.
+    /// <para>
+    /// Non-null on every row, including those written before the column existed: the migration
+    /// backfills it from <see cref="CompletedAt"/>, which is exactly right for sales taken
+    /// when there was no offline path at all.
+    /// </para>
+    /// </remarks>
+    public DateTimeOffset RecordedAt { get; set; }
 
     public DateTimeOffset? VoidedAt { get; set; }
 

@@ -41,6 +41,12 @@ public sealed record SaleTenderRequest(string? Method, decimal? Amount, string? 
 /// <b>No totals.</b> The server computes every amount, and a client-sent total is not merely
 /// distrusted — there is nowhere to put one. A price a client can send is a price a customer
 /// can edit.
+/// <para>
+/// <c>occurredAt</c> is the sole exception to "the client sends inputs, the server decides
+/// facts", and it is one only because a sale queued offline has no other way to be dated. It
+/// is bounded by <see cref="OfflineSaleRules"/>, it never touches an amount, and the server
+/// stamps <c>RecordedAt</c> beside it regardless.
+/// </para>
 /// </remarks>
 public sealed record CreateSaleRequest(
     Guid? ClientTransactionId,
@@ -48,7 +54,19 @@ public sealed record CreateSaleRequest(
     Guid? ShiftId,
     IReadOnlyList<SaleLineRequest>? Lines,
     decimal? CartDiscountAmount,
-    IReadOnlyList<SaleTenderRequest>? Tenders);
+    IReadOnlyList<SaleTenderRequest>? Tenders,
+
+    /// <summary>
+    /// When the customer paid, for a sale rung offline and sent later. Omit it online.
+    /// </summary>
+    /// <remarks>
+    /// <b>Mint it once, when the sale completes, and send that same value on every attempt.</b>
+    /// It is part of the request body, so it is part of the fingerprint
+    /// <c>IdempotencyFilter</c> takes — a client that re-reads its clock on each retry sends a
+    /// different body under the same key and is answered <c>409 idempotency-key-reused</c>
+    /// for ever, which reads exactly like a sale that will not go through.
+    /// </remarks>
+    DateTimeOffset? OccurredAt = null);
 
 /// <summary>One priced line, as the register displays and the receipt prints it.</summary>
 public sealed record SaleLineResponse(
@@ -119,7 +137,19 @@ public sealed record SaleResponse(
     string? RefundReason = null,
 
     /// <summary>Refunds written against this sale. Empty on a refund and on a quote.</summary>
-    IReadOnlyList<LinkedRefundResponse>? Refunds = null);
+    IReadOnlyList<LinkedRefundResponse>? Refunds = null,
+
+    /// <summary>
+    /// When the server wrote the row, as against <c>completedAt</c>'s when the trade happened.
+    /// Null on a quote, which has no row.
+    /// </summary>
+    /// <remarks>
+    /// Equal to <c>completedAt</c> for anything rung online. The gap between them is how a
+    /// client tells an offline sale from an ordinary one without a flag it would have to be
+    /// trusted to set — and it is what the reconciliation screen shows when it has to explain
+    /// why a drawer counted at 18:00 did not include a sale taken at 17:40.
+    /// </remarks>
+    DateTimeOffset? RecordedAt = null);
 
 /// <summary>Why a sale is being reversed. Required — see the endpoint.</summary>
 public sealed record VoidSaleRequest(string? Reason);
@@ -650,12 +680,34 @@ public static class SaleEndpoints
         IAuditLog audit,
         OverrideGrantService grants,
         PosMetrics metrics,
+        TimeProvider timeProvider,
         System.Security.Claims.ClaimsPrincipal caller,
         IAuthorizationService authorization,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(metrics);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+
+        /*
+         * Checked first, before the cart is even read.
+         *
+         * Everything below this — the catalog reads, the authorisation, the pricing — is work
+         * done on behalf of a request that is going to be refused, and the refusal does not
+         * depend on any of it. Asking here also means the answer is the same whether the
+         * queued sale's products still exist, which matters: a till whose clock is wrong
+         * should be told its clock is wrong, not told about a product that was deactivated
+         * while it was offline.
+         */
+        if (request.OccurredAt is { } occurredAt)
+        {
+            var now = timeProvider.GetUtcNow();
+
+            if (!OfflineSaleRules.IsAcceptableOccurredAt(occurredAt, now))
+            {
+                return OfflineSaleTimestampInvalid(occurredAt, now);
+            }
+        }
 
         var (cart, errors, tracked, catalogPrices) =
             await BuildCartAsync(db, request, quoting: false, cancellationToken);
@@ -734,7 +786,8 @@ public static class SaleEndpoints
                 priced,
                 tenders,
                 tracked,
-                authorized.Grant?.UserId),
+                authorized.Grant?.UserId,
+                request.OccurredAt),
 
             // Runs inside the writer's transaction, once the numbers are known. This is what
             // makes "the key is inserted in the same transaction as the work" true rather than
@@ -742,7 +795,12 @@ public static class SaleEndpoints
             committed =>
             {
                 response = Project(priced, committed.ChangeGiven, committed, tenders);
-                idempotency.Record(db, StatusCodes.Status201Created, response, committed.CompletedAt);
+
+                // RecordedAt, not CompletedAt. The record describes *this attempt* — when the
+                // server answered and what it answered with — and for a replayed offline sale
+                // CompletedAt is hours earlier. Stamping the record with the trade's time
+                // would age it against a clock it has nothing to do with.
+                idempotency.Record(db, StatusCodes.Status201Created, response, committed.RecordedAt);
 
                 // Same transaction, same reasoning as the idempotency record above: an entry
                 // for a sale that rolled back would report money moving that never moved.
@@ -1365,6 +1423,37 @@ public static class SaleEndpoints
                 ["requiredPolicies"] = missing,
             });
 
+    /// <summary>
+    /// A sale whose <c>occurredAt</c> the server will not date a row by.
+    /// </summary>
+    /// <remarks>
+    /// A typed problem rather than a field error, because the outbox has to classify this and
+    /// classify it correctly: it is <b>permanent</b>. Retrying it changes nothing — the same
+    /// body is sent under the same key, and the answer is the same — so a client that treated
+    /// it as transient would back off for ever and the sale would never reach a person. As a
+    /// <c>problem+json</c> type it lands in the review queue on the first attempt, which is
+    /// where a sale nobody can date belongs.
+    /// <para>
+    /// 422 rather than 400: the request is well-formed and every field is the right shape. What
+    /// is wrong is that the server does not believe the till's clock, and that is a semantic
+    /// refusal about content — the distinction matters here because the client branches on the
+    /// status before it reads the type.
+    /// </para>
+    /// </remarks>
+    private static ProblemHttpResult OfflineSaleTimestampInvalid(
+        DateTimeOffset occurredAt,
+        DateTimeOffset now)
+        => TypedResults.Problem(
+            title: "That sale cannot be dated",
+            detail: OfflineSaleRules.DescribeRefusal(occurredAt, now),
+            statusCode: StatusCodes.Status422UnprocessableEntity,
+            type: "https://pos.example/errors/offline-sale-timestamp-invalid",
+            extensions: new Dictionary<string, object?>
+            {
+                ["occurredAt"] = occurredAt,
+                ["serverTime"] = now,
+            });
+
     private static bool NeedsDiscountPermission(Cart cart) =>
         !cart.CartDiscount.IsZero || cart.Lines.Any(l => !l.LineDiscount.IsZero);
 
@@ -1437,7 +1526,8 @@ public static class SaleEndpoints
             [.. (tenders ?? []).Select((t, index) => new SaleTenderResponse(
                 t.Method,
                 (decimal)t.Amount,
-                index == 0 && !change.IsZero ? (decimal)change : null))]);
+                index == 0 && !change.IsZero ? (decimal)change : null))],
+            RecordedAt: committed?.RecordedAt);
 
     /// <summary>Reads a stored sale back, from its own rows and never from the catalog.</summary>
     private static async Task<SaleResponse> ReadAsync(
@@ -1544,6 +1634,7 @@ public static class SaleEndpoints
             voidedByName,
             sale.VoidReason,
             sale.RefundReason,
-            refunds);
+            refunds,
+            sale.RecordedAt);
     }
 }

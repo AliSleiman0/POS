@@ -241,7 +241,8 @@ The endpoint that must not get this wrong.
       "unitPriceOverride": null, "discountAmount": 0 }
   ],
   "cartDiscountAmount": 0,
-  "tenders": [ { "method": "Cash", "amount": 20.00 } ]
+  "tenders": [ { "method": "Cash", "amount": 20.00 } ],
+  "occurredAt": null                  // offline only — see below
 }
 ```
 
@@ -251,7 +252,9 @@ The endpoint that must not get this wrong.
   "subtotal": 17.50, "discountTotal": 0, "taxTotal": 1.50,
   "roundingAdjustment": 0, "total": 19.00,
   "tenders": [ { "method": "Cash", "amount": 20.00, "changeGiven": 1.00 } ],
-  "lines": [ … ]
+  "lines": [ … ],
+  "completedAt": "2026-08-11T17:40:12Z",   // when the trade happened
+  "recordedAt":  "2026-08-11T17:40:12Z"    // when the server wrote it
 }
 ```
 
@@ -267,6 +270,16 @@ Semantics:
 - Tenders are validated against the methods the MVP accepts: **`Cash` only**. A `Card` tender no processor ever saw would sit in the takings reconciling against nothing.
 - Under-tender is `409` `.../under-tender`; over-tender is ordinary and the excess comes back as `changeGiven`.
 - Replaying the same `Idempotency-Key` returns the **original** sale, byte for byte, not a second one.
+
+#### `occurredAt` — dating a sale that was rung offline
+
+Omit it online and the server uses its own clock for both timestamps. A sale queued by the offline outbox sends the moment the customer actually paid, because **every report groups by `completedAt`** — a sale rung at 22:00 and replayed at 09:00 would otherwise land in the wrong trading day, in the wrong Z-report, against a drawer that was counted hours before.
+
+- `completedAt` is `occurredAt` when one is sent, and the server's clock otherwise. `recordedAt` is **always** the server's clock. Online they are equal; the gap between them is how a client tells an offline sale from an ordinary one without a flag it would have to be trusted to set.
+- Bounded in both directions by `OfflineSaleRules`: at most a few minutes ahead of the server (clock skew between two machines, not early trading) and at most a few days behind it (long enough for a bank-holiday weekend offline, short enough to catch a till whose battery died and whose clock reads years out). Outside that → `422` `.../offline-sale-timestamp-invalid`, carrying `occurredAt` and `serverTime` so the review queue can show a person what the till claimed.
+- **That refusal is permanent.** The same body under the same key gets the same answer, so a client must move it to a review queue on the first refusal rather than retrying against it.
+- **It is deliberately not checked against the shift's opening time.** Reconciliation re-files a refused sale into whatever drawer is open now, carrying its original `occurredAt` — which is correctly earlier than that shift. A rule forbidding it would turn the review queue into a dead end.
+- **Mint it once, when the sale completes, and send that same value on every attempt.** It is part of the body, so it is part of the fingerprint `IdempotencyFilter` takes: a client that re-reads its clock on each retry sends a different body under the same key and is answered `409 idempotency-key-reused` for ever, which at a till reads as a sale that simply will not go through.
 
 ### `POST /sales/{id}/void` and `/refund`
 
