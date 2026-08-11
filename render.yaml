@@ -59,6 +59,12 @@ services:
       #
       # Set by hand after creating that role. Either the URI or Npgsql keyword form
       # is accepted — see PostgresConnectionString.
+      #
+      # MUST carry `Channel Binding=Disable`. Render terminates TLS at a proxy, so
+      # SCRAM channel binding cannot succeed and Npgsql fails outright with
+      # "28000: SCRAM channel binding check failed". `SSL Mode=VerifyFull` is used
+      # alongside it to validate the certificate, which is what compensates for the
+      # MITM protection channel binding would otherwise have given.
       - key: ConnectionStrings__Postgres
         sync: false
 

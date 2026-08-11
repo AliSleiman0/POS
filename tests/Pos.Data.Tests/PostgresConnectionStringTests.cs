@@ -82,6 +82,38 @@ public sealed class PostgresConnectionStringTests
         Assert.Equal(SslMode.Require, parsed.SslMode);
     }
 
+    [Theory]
+    [InlineData("verify-full", SslMode.VerifyFull)]
+    [InlineData("verify-ca", SslMode.VerifyCA)]
+    [InlineData("require", SslMode.Require)]
+    [InlineData("disable", SslMode.Disable)]
+    public void Libpq_sslmode_values_are_translated_to_Npgsqls_spelling(string given, SslMode expected)
+    {
+        // A URI comes from a platform that speaks libpq, whose value vocabulary is not
+        // Npgsql's — `verify-full` is the same intent as `VerifyFull` and Npgsql rejects
+        // the former outright. Found in production: pasting Render's own connection string
+        // with the setting you actually want failed to start with "Couldn't set sslmode".
+        var parsed = new NpgsqlConnectionStringBuilder(
+            PostgresConnectionString.Normalize($"postgres://u:p@db.example.com/pos?sslmode={given}"));
+
+        Assert.Equal(expected, parsed.SslMode);
+    }
+
+    [Fact]
+    public void Channel_binding_survives_the_journey()
+    {
+        // Needed against a managed Postgres that terminates TLS at a proxy: SCRAM channel
+        // binding fails there with "SCRAM channel binding check failed", and the connection
+        // cannot be made at all without disabling it.
+        var normalized = PostgresConnectionString.Normalize(
+            "postgres://u:p@db.example.com/pos?sslmode=verify-full&channel_binding=disable");
+
+        var parsed = new NpgsqlConnectionStringBuilder(normalized);
+
+        Assert.Equal(SslMode.VerifyFull, parsed.SslMode);
+        Assert.Equal(ChannelBinding.Disable, parsed.ChannelBinding);
+    }
+
     [Fact]
     public void An_unknown_query_parameter_is_refused_rather_than_dropped()
     {

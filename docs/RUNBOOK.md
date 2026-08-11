@@ -278,49 +278,96 @@ window immediately, at the cost of signing everybody out.
 
 ## Restoring from backup
 
-> **Not yet executed against production.** This section is written from the local drill and
-> must be re-run and re-timed against real infrastructure before it can be trusted — see
-> [`PHASE-8-deployment.md`](phases/PHASE-8-deployment.md) §8.5. An untested backup is not a
-> backup.
->
-> **On Render's free plan there are no automatic backups at all, and the database is
-> deleted after 30 days.** Until the database is on a paid plan, the only backup is a
-> `pg_dump` somebody remembers to run. That is stated here rather than left implicit,
-> because "we're on a managed database" is otherwise assumed to mean "backups happen".
+> **Executed against production on 2026-08-11.** Dump and restore both verified, with the
+> timing below. It found a real defect on the first attempt — see the warning.
 
-**Restore into a scratch database first, always.** Never restore over a live one to "check"
-it: if the backup is bad, you now have neither.
+### `pg_dump` silently produces a BROKEN backup unless you lift FORCE RLS first
 
-```bash
-# 1. Take a dump. A free Render Postgres has NO automatic backups and is DELETED 30
-#    days after creation, so on the free plan this is the backup — run it on a
-#    schedule you actually keep, or upgrade to a paid plan, which adds daily
-#    snapshots and point-in-time recovery.
-pg_dump "$DATABASE_OWNER_URL" --format=custom --file=pos-$(date +%%F).dump
+**This is the single most important thing in this file.** Phase 1.6 sets `FORCE ROW LEVEL
+SECURITY` on all 23 tenant tables, which applies policies to the table *owner* as well.
+Managed Postgres does not give you a superuser, so the owner cannot bypass it, and `pg_dump`
+fails part-way:
 
-# 2. Restore into a SCRATCH database, never over the live one.
-createdb "$SCRATCH_URL"
-pg_restore --dbname="$SCRATCH_URL" --no-owner pos-YYYY-MM-DD.dump
-
-# 3. Verify the data actually arrived. Row counts alone are not enough — check that a
-#    known recent sale is present WITH its line snapshots, because the lines are what a
-#    disputed total is answered from.
-psql "$RESTORED_URL" -c "SELECT count(*) FROM tenant;"
-psql "$RESTORED_URL" -c "SELECT count(*) FROM sale;"
-psql "$RESTORED_URL" -c "
-  SELECT s.sale_number, s.total, count(l.id) AS lines
-  FROM sale s JOIN sale_line l ON (l.tenant_id, l.sale_id) = (s.tenant_id, s.id)
-  WHERE s.tenant_id = '<tenant-id>'
-  GROUP BY s.sale_number, s.total
-  ORDER BY s.sale_number DESC LIMIT 5;"
-
-# 4. Note how long the whole thing took, and update this section with the number.
+```
+pg_dump: error: query failed: ERROR:  query would be affected by row-level security policy
+for table "application_user"
 ```
 
-**Restore time measured:** _not yet measured against production._
+**It exits 1 but still leaves a file behind.** On the first drill that file was 89 KB,
+`pg_restore --list` read it happily and reported 27 tables — and the user table's data was
+missing. A backup script written as `pg_dump > backup.dump` with no exit-code check produces
+a plausible-looking backup from which **nobody can log in after a restore**, and you find out
+at the only moment that matters.
 
-When promoting a restore to live, the API must be stopped first — a running instance
-against a half-restored schema writes rows that the restore does not know about.
+So: lift FORCE for the dump, put it straight back, and **check the exit code every time**.
+Lifting it is safe in the narrow sense that the application connects as `pos_app`, which is
+not the owner and is bound by the policies either way — but it must not be left off.
+
+```bash
+# 1. Lift FORCE RLS (owner-only; pos_app remains policy-bound throughout).
+psql "$DATABASE_OWNER_URL" -v ON_ERROR_STOP=1 <<'SQL'
+DO $$ DECLARE t record; BEGIN
+  FOR t IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relforcerowsecurity
+  LOOP EXECUTE format('ALTER TABLE public.%I NO FORCE ROW LEVEL SECURITY', t.relname); END LOOP;
+END $$;
+SQL
+
+# 2. Dump. CHECK THE EXIT CODE — this is the step that silently lies.
+pg_dump "$DATABASE_OWNER_URL" --format=custom --no-owner --no-acl --file=pos-$(date +%F).dump
+test $? -eq 0 || { echo "DUMP FAILED — do not trust this file"; exit 1; }
+
+# 3. Put FORCE back IMMEDIATELY, whether or not the dump succeeded.
+psql "$DATABASE_OWNER_URL" -v ON_ERROR_STOP=1 <<'SQL'
+DO $$ DECLARE t record; BEGIN
+  FOR t IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relrowsecurity AND NOT c.relforcerowsecurity
+  LOOP EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t.relname); END LOOP;
+END $$;
+SQL
+
+# 4. Confirm it is back on. MUST print 23.
+psql "$DATABASE_OWNER_URL" -At -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n
+  ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relforcerowsecurity;"
+```
+
+### Restoring
+
+**Into a scratch database, always.** Never restore over a live one to "check" it: if the
+backup is bad you now have neither.
+
+```bash
+createdb pos_restore_check
+pg_restore --dbname=pos_restore_check --no-owner --no-acl pos-YYYY-MM-DD.dump
+```
+
+**Row counts are not verification.** Check that the things a shop would actually lose are
+present — a login it can use, and a sale *with its line snapshots*, which is what a disputed
+total is answered from:
+
+```sql
+SELECT count(*) AS tenants FROM tenant;
+SELECT count(*) AS users, bool_and(password_hash IS NOT NULL) AS can_log_in FROM application_user;
+SELECT s.sale_number, s.total, l.description, l.quantity, l.unit_price, l.line_tax
+FROM sale s JOIN sale_line l ON (l.tenant_id, l.sale_id) = (s.tenant_id, s.id)
+ORDER BY s.sale_number DESC LIMIT 5;
+SELECT count(*) AS policies FROM pg_policies WHERE schemaname = 'public';
+```
+
+**Measured 2026-08-11** against Render free Postgres (1 tenant, 1 sale, 89 KB of data):
+
+| Step | Time |
+|---|---|
+| Lift FORCE + dump + restore FORCE | **24s** |
+| `pg_restore` into a scratch database | **1s** |
+| Verification queries | seconds |
+
+That is a small database. The number to re-measure is the dump, which grows with sales
+history; the restore of a real shop's year will not be one second.
+
+**What was verified present after the restore:** the tenant, the Owner *with a usable
+password hash*, the product, the sale, its line snapshot (`1 × 1.2000`, tax `0.2244`), the
+tender, 4 audit entries, and all 23 row-level security policies.
 
 ## Exporting one tenant's data
 

@@ -103,7 +103,7 @@ public static class PostgresConnectionString
             // The indexer throws on a keyword Npgsql does not know, which is the right
             // outcome: a misspelled sslmode that was silently dropped would leave the
             // connection unencrypted while the configuration looked deliberate.
-            builder[key] = parameterValue;
+            builder[TranslateKey(key)] = TranslateValue(key, parameterValue);
         }
 
         if (builder.Database.Length == 0)
@@ -119,4 +119,63 @@ public static class PostgresConnectionString
 
     private static bool LooksLikeUri(string value) =>
         Schemes.Any(scheme => value.StartsWith(scheme + "://", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Rewrites a libpq parameter <i>name</i> that Npgsql does not accept as an alias.
+    /// </summary>
+    /// <remarks>
+    /// Npgsql aliases most of libpq's names — <c>sslmode</c>, <c>dbname</c>, <c>user</c> —
+    /// but not all of them, and an unaliased one throws "Couldn't set …". Only the ones
+    /// that actually differ are listed; everything else is passed through so Npgsql can
+    /// accept or reject it on its own terms.
+    /// </remarks>
+    private static string TranslateKey(string key) => Canonical(key) switch
+    {
+        // Needed against a managed Postgres that terminates TLS at a proxy, where SCRAM
+        // channel binding cannot succeed and the connection is impossible without this.
+        "channelbinding" => "Channel Binding",
+
+        _ => key,
+    };
+
+    /// <summary>
+    /// Rewrites a libpq parameter <i>value</i> into the spelling Npgsql accepts.
+    /// </summary>
+    /// <remarks>
+    /// A URI comes from a platform that speaks libpq, and libpq's value vocabulary is not
+    /// Npgsql's: <c>sslmode=verify-full</c> is exactly the same intent as
+    /// <c>SSL Mode=VerifyFull</c> and Npgsql rejects the former. Npgsql accepts libpq's
+    /// parameter <i>names</i> as aliases, which is why this is about values only and why
+    /// the simpler cases (<c>sslmode=require</c>) work without it.
+    /// <para>
+    /// Found the hard way: Render's own connection string carries <c>sslmode</c>, and a
+    /// deployment that pastes it with <c>verify-full</c> — the setting you actually want,
+    /// because it validates the certificate — failed to start with "Couldn't set sslmode".
+    /// </para>
+    /// <para>
+    /// Only the hyphenated forms need translating. Anything else is passed through and
+    /// left for Npgsql to accept or reject on its own terms, so this cannot quietly
+    /// swallow a value it has not been taught about.
+    /// </para>
+    /// </remarks>
+    private static string TranslateValue(string key, string value) =>
+        (Canonical(key), Canonical(value)) switch
+        {
+            ("sslmode", "verifyca") => nameof(Npgsql.SslMode.VerifyCA),
+            ("sslmode", "verifyfull") => nameof(Npgsql.SslMode.VerifyFull),
+
+            // libpq spells these with a hyphen too, and Npgsql's enum does not.
+            ("channelbinding", "disable") => "Disable",
+            ("channelbinding", "prefer") => "Prefer",
+            ("channelbinding", "require") => "Require",
+
+            _ => value,
+        };
+
+    /// <summary>
+    /// Lower-cased with separators removed, so <c>verify-full</c>, <c>VerifyFull</c> and
+    /// <c>verify_full</c> all compare equal.
+    /// </summary>
+    private static string Canonical(string value) =>
+        string.Concat(value.Where(char.IsLetterOrDigit)).ToLowerInvariant();
 }
