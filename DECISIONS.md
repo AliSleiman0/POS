@@ -90,6 +90,60 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 - ~~**Refresh token in an `httpOnly` cookie**~~ → **closed 2026-08-10: it stays in `sessionStorage`.** See below.
 
+### Resolved 2026-08-11 (during Phase 9)
+
+- **A sale rung offline carries its own timestamp.** `POST /sales` accepts an optional
+  `occurredAt`, and `Sale` gains a server-set `RecordedAt` beside `CompletedAt`.
+
+  Without it, a sale queued at 22:00 and replayed at 09:00 is dated when the network came
+  back. Every report in the system groups by `CompletedAt` — the trading-day bounds, the
+  Z-report, a shift's takings — so an evening's trade would appear in the following day's
+  figures and be missing from a drawer that was counted before it arrived. There is no way to
+  reconstruct it afterwards: the information simply is not on the row.
+
+  **It is the only client-supplied value in the system that reaches a stored column**, and it
+  is admitted with two guards. `OfflineSaleRules` bounds it — minutes ahead of the server for
+  clock skew between two machines, days behind it for a bank-holiday weekend offline but not
+  for a till whose battery died — and `RecordedAt` records the server's own clock regardless,
+  so the two can always be told apart. Outside the bounds is `422` with a stable type, because
+  the refusal is permanent and an outbox has to send it to a person rather than retry.
+
+  Deliberately **not** validated against the shift's opening time: reconciliation re-files a
+  refused sale into whatever drawer is open now, carrying its original `occurredAt`, and a rule
+  forbidding that would make the review queue a dead end.
+
+- **CLAUDE.md invariant 3 is amended: the client prices a cart when — and only when — the
+  server cannot be reached.** `src/Pos.Web/src/lib/pricing/` is a TypeScript port of
+  `Pos.Core.Pricing`, including a faithful reimplementation of .NET's `decimal`.
+
+  **This is a real weakening of a rule that was right**, and it is worth being plain about
+  why. The invariant says the server computes every total because two implementations of tax
+  and discount rules will differ eventually, and the place a difference surfaces is a customer
+  disputing a receipt at a counter. That reasoning still holds. What changed is the
+  alternative: offline there is no `POST /sales/quote` to ask, so the choice is not between one
+  engine and two. It is between two engines and a till that cannot take money when the line
+  goes down — which is the failure Phase 9 exists to fix, and the most common reason small
+  businesses reject a POS.
+
+  **What makes it survivable is `tests/fixtures/pricing-conformance.json`**: 913 carts
+  generated from the C# engine's own test corpus — both tax modes, the hand-worked cases and
+  500 seeded random baskets per mode — asserted by `PricingConformanceTests` on one side and
+  `pricing.conformance.test.ts` on the other. Amounts are compared as strings, **scale
+  included**, because `12.97` and `12.9700` are the same number and not the same result. A
+  change to either engine that is not a change to both turns one side red in CI.
+
+  Falsified rather than assumed: six deliberate breaks, five caught by the corpus. The sixth —
+  division rounding half away from zero instead of half to even — leaves all 913 carts
+  identical, because an exact tie at the 28th decimal place needs a quotient that terminates
+  precisely there and a ratio of two four-decimal money amounts never does. It is caught one
+  layer down by `decimal.test.ts`, whose expectations were read off the real .NET type. The
+  corpus proves the engines agree on carts a shop can ring; the unit tests prove the primitives
+  agree everywhere else. **Neither claim covers the other**, and the limit is recorded in both
+  files rather than left to be discovered.
+
+  The online path is unchanged. `POST /sales/quote` stays authoritative whenever it is
+  reachable, and the server still prices the sale that is finally written.
+
 ### Resolved 2026-08-10 (during Phase 8)
 
 - **Hosting is Render.** Three resources in one `render.yaml`: the API as a Docker web

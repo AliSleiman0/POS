@@ -22,9 +22,17 @@ namespace Pos.Core.Tests.Pricing;
 /// </remarks>
 public sealed class PricingPropertyTests
 {
-    private const int Seed = 20260802;
+    /*
+     * The carts themselves moved to PricingCorpus in Phase 9.
+     *
+     * Not a tidy-up. Phase 9 puts a second pricing engine in the browser, and the thing that
+     * keeps it honest is a committed corpus generated from *these* carts — so the generator has
+     * to have one definition. A copy over there would drift from this one on the first change
+     * to either, and the corpus would quietly stop comparing what it was built to compare.
+     */
+    private const int Seed = PricingCorpus.Seed;
 
-    private const int Carts = 500;
+    private const int Carts = PricingCorpus.RandomCarts;
 
     [Theory]
     [InlineData(TaxMode.Exclusive)]
@@ -164,7 +172,7 @@ public sealed class PricingPropertyTests
 
         for (var iteration = 0; iteration < Carts; iteration++)
         {
-            var cart = NextCart(random, mode);
+            var cart = PricingCorpus.NextCart(random, mode, iteration);
 
             PricedSale sale;
 
@@ -192,68 +200,6 @@ public sealed class PricingPropertyTests
             }
         }
     }
-
-    private static Cart NextCart(Random random, TaxMode mode)
-    {
-        var lines = new List<CartLine>();
-
-        // Awkward on purpose: prices with real fourth decimals, fractional quantities, rates
-        // that do not divide evenly, and line counts up to six so apportionment has enough
-        // parts to lose a cent between.
-        var lineCount = random.Next(1, 7);
-
-        for (var index = 0; index < lineCount; index++)
-        {
-            var unitPrice = Math.Round((decimal)(random.NextDouble() * 40d), 4);
-            var quantity = random.Next(0, 4) == 0
-                ? Math.Round((decimal)(random.NextDouble() * 3d), 3)   // weighed
-                : random.Next(1, 5);                                   // counted
-
-            var gross = unitPrice * quantity;
-
-            var lineDiscount = random.Next(0, 3) == 0
-                ? Math.Round(gross * (decimal)random.NextDouble(), 4)
-                : 0m;
-
-            lines.Add(new CartLine(
-                ProductId: Guid.CreateVersion7(),
-                Description: $"Line {index + 1}",
-                Quantity: quantity,
-                UnitPrice: (Money)unitPrice,
-                TaxRate: Rates[random.Next(Rates.Length)],
-                LineDiscount: (Money)lineDiscount));
-        }
-
-        var netTotal = lines.Aggregate(
-            0m, (running, line) => running + (line.UnitPrice.ToDecimal() * line.Quantity) - line.LineDiscount.ToDecimal());
-
-        // Up to the whole basket, including exactly the whole basket often enough to exercise
-        // the comped path rather than only the proportional one.
-        //
-        // Rounded to the storage scale in every branch, because that is the only kind of
-        // discount the API can accept: cartDiscountAmount is a client-supplied value bound
-        // for a numeric(19,4) column, and CatalogRules.IsStorableAmount refuses anything
-        // finer at the endpoint. Generating an unstorable discount would test the engine
-        // against a request that cannot exist, and the property would be asserting that
-        // rounded shares sum to an unrounded whole — which is not true and should not be.
-        var cartDiscount = random.Next(0, 3) switch
-        {
-            0 => 0m,
-            1 => Rounding.To(netTotal * (decimal)random.NextDouble(), Rounding.StorageScale),
-            _ => Rounding.To(netTotal, Rounding.StorageScale),
-        };
-
-        // Rounding the whole basket up would put the discount above it, which the engine is
-        // right to refuse; nudge it back so the comped path is exercised instead of skipped.
-        cartDiscount = Math.Min(cartDiscount, Rounding.To(netTotal, Rounding.StorageScale));
-
-        var increment = random.Next(0, 4) == 0 ? 0.05m : 0m;
-
-        return new Cart(lines, (Money)cartDiscount, mode, increment);
-    }
-
-    /// <summary>Rates that do not divide evenly, so the arithmetic has somewhere to go wrong.</summary>
-    private static readonly decimal[] Rates = [0m, 0.05m, 0.09m, 0.135m, 0.21m, 0.23m, 1m];
 
     private static string Describe(Cart cart) =>
         $"discount={cart.CartDiscount}, rounding={cart.CashRoundingIncrement}, lines=["

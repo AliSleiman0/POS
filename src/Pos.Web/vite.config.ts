@@ -17,6 +17,27 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    fs: {
+      /*
+       * The repository's `tests/fixtures` sits outside this project, and Vite
+       * refuses to read outside the project root by default — correctly.
+       *
+       * `pricing.conformance.test.ts` imports `pricing-conformance.json` from
+       * there, because the whole point of that file is that **one** corpus is
+       * asserted by both the .NET suite and this one; a copy inside `src/`
+       * would be a second corpus and would drift.
+       *
+       * Widened to that one directory rather than to the repository root. The
+       * root holds `appsettings.json`, `docker-compose.yml` and the migrations,
+       * and a dev server that would hand those to anything reaching
+       * localhost:5173 is a worse trade than typing a longer path here. The
+       * directory named below contains generated test fixtures and nothing else.
+       */
+      allow: [
+        path.resolve(import.meta.dirname),
+        path.resolve(import.meta.dirname, '../../tests/fixtures'),
+      ],
+    },
     proxy: {
       // Proxy the API in development so the browser sees a single origin.
       // Avoids CORS locally and keeps cookie-based refresh tokens same-site,
