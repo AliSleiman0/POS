@@ -1,9 +1,9 @@
 # Session Handoff
 
-**Written:** 2026-08-10 · **Branch:** `phase-8/deployment` (6 commits, unpushed) · **Phase 8 part-done**
+**Written:** 2026-08-11 · **Branch:** `phase-8/deployment` (pushed, CI green) · **Phase 8 part-done**
 
-> Everything in Phase 8 that can be built and proven **without a Fly account has been**. What
-> is left is not more code — it is running the code against real infrastructure.
+> Everything in Phase 8 that can be built and proven **without a hosting account has been**.
+> What is left is not more code — it is running the code against real infrastructure.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable
 > decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in
@@ -13,15 +13,22 @@
 
 ## Before anything else
 
-**`fly auth login`.** `flyctl v0.4.79` is installed (`winget install --id Fly-io.flyctl` —
-note the id is `Fly-io.flyctl`, not `Fly.Flyctl`). It is not authenticated, and that one
-command is what unblocks the remaining four items. A Sentry account (free, no card) and its
-DSN unblocks the last part of 8.4.
+**Create a Render account and apply the blueprint.** Hosting moved from Fly to Render on
+2026-08-11 because Fly requires a payment card and the owner is not adding one; the reasoning
+and the two limitations accepted with it are in [`DECISIONS.md`](../DECISIONS.md). `flyctl` is
+installed and authenticated but nothing uses it — the Fly config has been removed.
 
-Everything is green as of this commit: **1375 .NET** (288 Core, 122 Data, 965 Api),
-**225 Vitest**, **60 Playwright**, web lint/format/build clean. CI on `main` was green at
-`d1ee916` before the branch started — the two red runs the previous handoff warned about were
-superseded by that commit, so that warning is closed.
+1. Sign up at render.com with GitHub (no card), and give it access to this repository.
+2. **New → Blueprint**, pick this repo. It reads `render.yaml` and creates three resources.
+3. Follow [`RUNBOOK.md § Creating the pos_app role`](RUNBOOK.md#creating-the-pos_app-role),
+   then [`§ Secrets`](RUNBOOK.md#secrets-and-where-each-one-lives) — including **turning
+   Render's auto-deploy off**, or it races the migration gate.
+
+A Sentry account (free, no card) and its DSN unblocks the last part of 8.4.
+
+Everything is green: **1387 .NET** (288 Core, 134 Data, 965 Api), **225 Vitest**,
+**60 Playwright**, web lint/format/build clean — locally *and* on the runner, where all four
+CI jobs passed for this branch.
 
 ## What is done
 
@@ -38,29 +45,26 @@ superseded by that commit, so that warning is closed.
 
 ## What is left, in the order to do it
 
-1. **`fly auth login`**, then provision. App names on Fly are global, so `pos-api` / `pos-web`
-   are probably taken — pick a suffix and **change it in four places**: `fly.toml`,
-   `src/Pos.Web/fly.toml` (the `VITE_API_BASE_URL` build arg), `src/Pos.Web/Caddyfile` (the
-   CSP's `connect-src`) and `.github/workflows/deploy.yml` (`API_APP`, `WEB_APP`,
-   `API_ORIGIN`). **They are a matched set**: get one wrong and the browser blocks every call
-   while the API reports perfectly healthy.
-2. **Create the `pos_app` role by hand** on the Fly Postgres, mirroring
-   `docker/postgres-init/01-app-role.sh` *and* the Phase 7.0 `REVOKE UPDATE, DELETE`. The
-   readiness probe refuses to serve if the app connects as anything with `BYPASSRLS`, so a
-   mistake here shows up as a machine that never takes traffic rather than as a silent leak.
-3. **Set the secrets** (`fly secrets set`): `ConnectionStrings__Postgres` (as `pos_app`),
-   `Jwt__SigningKey`, `Jwt__Issuer`, `Jwt__Audience`, `Cors__AllowedOrigins__0`, `Sentry__Dsn`.
-   And the GitHub secrets `deploy.yml` reads: `FLY_API_TOKEN`, `POSTGRES_APP`,
-   `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, `POSTGRES_DATABASE`.
-4. **8.5, the restore drill.** The single most valuable checkbox in the phase.
+1. **Apply the blueprint and set up the role and secrets**, as above. Render service names
+   are unique per account rather than globally, so `pos-api` / `pos-web` should be available —
+   but if either changes, **three places must change with it**: `Jwt__Issuer`/`Audience` and
+   `Cors__AllowedOrigins__0` on the API, `VITE_API_BASE_URL` on the static site, and the CSP's
+   `connect-src` in `render.yaml`. **They are a matched set**: get one wrong and the browser
+   blocks every call while the API reports perfectly healthy.
+2. **Confirm `CREATE ROLE` actually works** on Render's free Postgres. If it does not, the app
+   would connect as the database owner — not fatal, because Phase 1.6 sets `FORCE ROW LEVEL
+   SECURITY` so policies still apply to the owner, but it is protection by a different
+   mechanism than `RowLevelSecurityHealthCheck` tests for. Record it as a deviation rather
+   than accept it quietly.
+3. **8.5, the restore drill.** The single most valuable checkbox in the phase.
    `RUNBOOK.md § Restoring from backup` has the procedure with the timing deliberately blank —
    **fill it in from a real run.** Do not tick it from a snapshot existing.
-5. **8.6, the production probe.** Not built. The plan was: have `IsolationManifest` emit
+4. **8.6, the production probe.** Not built. The plan was: have `IsolationManifest` emit
    `isolation-manifest.json`, and add `tools/Pos.Probe` to replay the `Collection` and `ById`
    cases over HTTPS against two throwaway tenants. The manifest stays the single source of
    truth so the probe inherits new endpoints for free. Onboard `probe-a`/`probe-b`, run it,
    deactivate them.
-6. **8.8, the seven verification steps** in the phase doc, against the deployed environment.
+5. **8.8, the seven verification steps** in the phase doc, against the deployed environment.
 
 ## Things that will bite you
 
@@ -73,8 +77,11 @@ superseded by that commit, so that warning is closed.
    first, and both made the container verify *less* than CI does — `.editorconfig` carries the
    analyzer severities (12 errors in untouched migration files), and `pnpm build` type-checks
    `e2e/` through `tsc -b`. Do not "tidy" them back out.
-3. **The four app-name/origin places above are a matched set.** Repeated because it is the
-   failure with the least helpful symptom.
+3. **The origin values are a matched set.** Repeated because it is the failure with the least
+   helpful symptom: the API reports perfectly healthy while the browser blocks everything.
+   Also: a free Render service **sleeps after ~15 minutes** and takes about a minute to wake,
+   so the first request after a quiet spell looks like an outage and is not one. The
+   post-deploy check in `deploy.yml` retries for five minutes for exactly this reason.
 4. **A rate-limited login looks like a broken test.** The login limit is per source address,
    and every Playwright spec comes from `127.0.0.1` — which is the same collision a shop
    behind NAT has. `playwright.config.ts` sets `RateLimits__LoginAttemptsPerWindow` high for

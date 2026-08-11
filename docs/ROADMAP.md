@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current phase** | **Phase 8 in progress** — 8.1, 8.3, 8.4 and 8.7 done; 8.2 and 8.6 are code-complete but unprovisioned; 8.5 and 8.8 are blocked. 1375 .NET + 225 Vitest + 60 Playwright green |
-| **Next up** | **`fly auth login`.** Everything that can be built and verified without a Fly account has been. What remains needs real infrastructure: provisioning (8.2), the restore drill (8.5), the production cross-tenant probe (8.6) and the end-to-end verification (8.8). |
+| **Current phase** | **Phase 8 in progress** — 8.1, 8.3, 8.4 and 8.7 done; 8.2 and 8.6 are code-complete but unprovisioned; 8.5 and 8.8 are blocked. 1387 .NET + 225 Vitest + 60 Playwright green, in CI too |
+| **Next up** | **Apply the Render blueprint.** Hosting moved Fly → Render (Fly requires a card); see `DECISIONS.md`. Everything buildable without an account is done. What remains needs real infrastructure: provisioning (8.2), the restore drill (8.5), the production cross-tenant probe (8.6) and the end-to-end verification (8.8). |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
-| **Last updated** | 2026-08-10 |
+| **Last updated** | 2026-08-11 |
 
 ## Phase overview
 
@@ -129,7 +129,7 @@ Detail: [phases/PHASE-7-employees-audit.md](phases/PHASE-7-employees-audit.md)
 Detail: [phases/PHASE-8-deployment.md](phases/PHASE-8-deployment.md)
 
 - [x] **8.1 Containerize** — `aspnet:10.0-noble-chiseled-extra` (`-extra` is load-bearing: plain chiseled ships no ICU and no tzdata, so every IANA zone breaks *inside the container only*). 168 MB, non-root, no SDK/source/shell, secrets inspected rather than assumed. `Hosting:BehindTlsTerminatingProxy` prevents the redirect loop an edge proxy would otherwise cause. The web client stopped assuming same-origin — including two raw `fetch` calls that bypassed the typed client, one of which would have signed every cashier out at the first token rotation.
-- [ ] **8.2 Hosting** — 🔨 **code done, provisioning outstanding.** CORS locked to exact origins with an empty Production list refusing to boot; RLS role verified by the readiness probe; `fly.toml`, Caddyfile and both images built and served locally. **Needs `fly auth login`.**
+- [ ] **8.2 Hosting** — 🔨 **config done, provisioning outstanding.** **Render**, not Fly: Fly requires a payment card. CORS locked to exact origins with an empty Production list refusing to boot; RLS role verified by the readiness probe; `render.yaml` defines all three resources; connection strings accepted in URI *or* keyword form. **Needs a Render account.** Two free-plan limitations accepted and recorded: the API sleeps after ~15 min idle, and the database is deleted after 30 days.
 - [x] **8.3 Migrations in CI/CD** — `deploy.yml` gated on CI, idempotent SQL applied as the owner through a proxied `psql`, image deployed by digest so a rollback is a redeploy. `StartupMigrationTests` IL-scans the three shipped assemblies and was falsified. Dependency audits added to CI. Script verified building a schema from nothing. **The pipeline has not run for real.**
 - [x] **8.4 Observability** — JSON logs with `TenantId`/`UserId`/`RegisterId` on every request scope; Sentry behind a scrubber tested as a security boundary; Owner-only `POST /diagnostics/test-error`; four metrics. Two real bugs in the metrics filter were caught by its own tests.
 - [ ] **8.5 Backups + restore drill** — ⏸️ **blocked on hosting.** Runbook procedure written; the drill and its timing are deliberately blank until executed.

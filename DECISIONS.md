@@ -92,16 +92,46 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 
 ### Resolved 2026-08-10 (during Phase 8)
 
-- **Hosting is Fly.io.** Two apps and one managed Postgres: the API container, and a second
-  app serving the built SPA through Caddy. Chosen over Azure App Service and a VPS on cost at
-  this size and on how little operational surface it carries — the deploy is a `fly.toml` and
-  a CLI call, `*.fly.dev` gives HTTPS with no domain to buy, and the managed Postgres has
-  snapshots and point-in-time recovery without anybody owning a backup cron.
+- **Hosting is Render.** Three resources in one `render.yaml`: the API as a Docker web
+  service, the SPA as a static site, and a managed Postgres.
+
+  **Fly.io was chosen first and reversed the same day, for a reason that is about us rather
+  than the technology.** Fly requires a payment card before it will create anything, and the
+  owner is not adding one at this stage. That is a legitimate constraint and it decides the
+  question — Render is the only credible option that starts with no card (Railway now gives a
+  one-off $5 trial and then $1/month, which does not cover an app *and* a database).
+
+  **The two limitations are real and are accepted with open eyes**, not glossed:
+
+  - A **free web service sleeps after ~15 minutes idle** and takes about a minute to wake.
+    For a till with a customer at the counter that is disqualifying — it is precisely the
+    failure this product exists to avoid, and it was why the Fly config pinned a machine
+    running. It is fine for proving a deployment and running Phase 8's verification.
+    **Moving the API to a paid instance is the single change that makes this
+    production-viable**, and it is the first thing to do before a real shop uses it.
+  - A **free Postgres is deleted 30 days after creation** (with a 14-day grace period). The
+    restore drill against it is still real and worth doing, but "backups proven to restore"
+    means less against a database that removes itself next month.
+
+  Almost nothing was provider-specific, which is why the switch cost an hour: the Dockerfile,
+  CORS, the RLS readiness check, the onboarding command, the runbook and every test are
+  unchanged. What moved was `fly.toml` → `render.yaml`, the deploy pipeline's CLI calls →
+  deploy hooks, and the SPA's headers from a Caddyfile into the blueprint.
 
   **The web app is deliberately not served by the API.** They have different scaling and
   caching characteristics, and serving the SPA from Kestrel means a CSS change restarts the
-  backend — a cashier mid-sale pays for a frontend deploy. The cost of splitting them is that
-  every call is cross-origin, which is what forced the two decisions below.
+  backend — a cashier mid-sale pays for a frontend deploy. On Render this also means the SPA
+  sits on a CDN that does *not* sleep, so only the first API call pays the cold start. The
+  cost of splitting them is that every call is cross-origin, which is what forced the two
+  decisions below.
+
+- **A Postgres connection string is accepted in either shape.** Managed hosts hand out
+  `postgres://user:pass@host/db`; Npgsql speaks `Host=…;Database=…`. The two are not
+  interchangeable and the failure is late and misleading — the configuration looks present and
+  correct, the app starts, and the first query throws a parse error about a keyword named
+  "postgres". `PostgresConnectionString.Normalize` converts at the one place every entry point
+  goes through, so the API, the seeder and the onboarding command all take whatever the
+  platform gave rather than each documenting a hand conversion done under time pressure.
 
 - **The refresh token stays in `sessionStorage`; the access token stays in memory.** Deferred
   from Phase 4.2 to here because the answer depended on the topology, and the topology is now
