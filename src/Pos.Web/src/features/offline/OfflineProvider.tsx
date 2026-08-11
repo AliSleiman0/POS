@@ -26,7 +26,8 @@ import {
   type Connectivity,
 } from '@/lib/offline/connectivity'
 import { openOfflineDb, type OfflineDb } from '@/lib/offline/db'
-import { countForReview, countPending } from '@/lib/offline/outbox'
+import { countForReview, countPending, oldestPendingAge } from '@/lib/offline/outbox'
+import { describeRisk, requestPersistence, type PersistenceState } from '@/lib/offline/persist'
 import { replayOutbox } from '@/lib/offline/replay'
 import { syncCatalog } from '@/lib/offline/sync'
 import { OfflineContext, type OfflineState } from './offlineContext'
@@ -50,6 +51,8 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
   const [pendingSales, setPendingSales] = useState(0)
   const [reviewSales, setReviewSales] = useState(0)
   const [syncing, setSyncing] = useState(false)
+  const [persistence, setPersistence] = useState<PersistenceState>('unknown')
+  const [risk, setRisk] = useState<string | null>(null)
 
   /** Guards against two syncs overlapping — a reconnect landing on a tick. */
   const running = useRef(false)
@@ -87,6 +90,20 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => startConnectivityWatch(), [])
 
+  /*
+   * Asked once, on sign-in.
+   *
+   * Some browsers grant this silently based on how much the site has been used,
+   * so asking early and asking while somebody is present are both worth more
+   * than asking at the moment a sale needs saving. It cannot fail loudly — a
+   * refusal is an answer the app reports rather than an error.
+   */
+  useEffect(() => {
+    if (status === 'authenticated') {
+      void requestPersistence().then(setPersistence)
+    }
+  }, [status])
+
   useEffect(() => onConnectivityChange(setConnectivity), [])
 
   const refresh = useCallback(async () => {
@@ -105,7 +122,15 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     setMirrorSize(size)
     setPendingSales(pending)
     setReviewSales(review)
-  }, [db])
+
+    setRisk(
+      describeRisk({
+        pendingSales: pending,
+        oldestPendingAgeMs: await oldestPendingAge(db),
+        persistence,
+      }),
+    )
+  }, [db, persistence])
 
   /**
    * One pass: send what is owed, then pull what changed.
@@ -174,10 +199,24 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       pendingSales,
       reviewSales,
       syncing,
+      persistence,
+      risk,
       sync,
       refresh,
     }),
-    [db, connectivity, mirroredAt, mirrorSize, pendingSales, reviewSales, syncing, sync, refresh],
+    [
+      db,
+      connectivity,
+      mirroredAt,
+      mirrorSize,
+      pendingSales,
+      reviewSales,
+      syncing,
+      persistence,
+      risk,
+      sync,
+      refresh,
+    ],
   )
 
   return <OfflineContext value={value}>{children}</OfflineContext>

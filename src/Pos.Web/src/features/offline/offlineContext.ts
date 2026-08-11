@@ -1,6 +1,7 @@
 import { createContext, use } from 'react'
 import type { OfflineDb } from '@/lib/offline/db'
 import type { Connectivity } from '@/lib/offline/connectivity'
+import type { PersistenceState } from '@/lib/offline/persist'
 
 /** What the offline layer tells the rest of the app. */
 export interface OfflineState {
@@ -29,6 +30,17 @@ export interface OfflineState {
 
   /** Whether a catalog sync is running now. */
   syncing: boolean
+
+  /** Whether the browser has promised to keep this till's data. */
+  persistence: PersistenceState
+
+  /**
+   * A warning worth showing the shop, or null.
+   *
+   * Null most of the time, and that is the design: a warning shown constantly
+   * is one nobody reads, which would cost the real one its meaning.
+   */
+  risk: string | null
 
   /** Bring the mirror up to date. Safe to call while one is running. */
   sync: () => Promise<void>

@@ -825,6 +825,19 @@ export function RegisterPage() {
         <UnresolvedPaymentBanner onRetry={retryRecovery} />
       ) : null}
 
+      {/* The honest-limits warning, in the page and where the selling happens.
+          Null most of the time by design — a banner that is always there is one
+          nobody reads, and this one has to be read. */}
+      {offline.risk !== null ? (
+        <div
+          role="alert"
+          data-testid="offline-risk"
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2.5"
+        >
+          <p className="flex-1 text-sm text-foreground">{offline.risk}</p>
+        </div>
+      ) : null}
+
       {unknownCode !== null ? (
         <UnknownCodeBanner
           code={unknownCode}

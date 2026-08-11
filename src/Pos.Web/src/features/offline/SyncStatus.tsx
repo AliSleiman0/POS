@@ -73,7 +73,7 @@ export function SyncStatus() {
         // A link, because unlike the count above there is something a person
         // has to go and do about it.
         <Link
-          to="/admin/sync"
+          to="/sync"
           data-testid="review-sales"
           className="rounded-full bg-destructive/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-destructive hover:bg-destructive/25"
           title="Sales the server refused. These need a manager."

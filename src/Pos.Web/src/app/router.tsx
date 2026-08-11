@@ -10,6 +10,7 @@ import { AuditListPage } from '@/features/admin/audit/AuditListPage'
 import { EmployeeListPage } from '@/features/admin/employees/EmployeeListPage'
 import { RegisterListPage } from '@/features/admin/registers/RegisterListPage'
 import { SettingsPage } from '@/features/admin/settings/SettingsPage'
+import { OutboxReviewPage } from '@/features/offline/OutboxReviewPage'
 import { CategoriesPage } from '@/features/catalog/CategoriesPage'
 import { ProductDetailPage } from '@/features/catalog/ProductDetailPage'
 import { ProductListPage } from '@/features/catalog/ProductListPage'
@@ -119,6 +120,23 @@ export const router = createBrowserRouter([
               { path: 'activity', element: <AuditListPage /> },
               { path: 'settings', element: <SettingsPage /> },
             ],
+          },
+
+          {
+            /*
+             * CanCloseShift, not CanManageEmployees — so it sits beside the
+             * reports rather than inside the Owner-only /admin block.
+             *
+             * Reconciling a refused sale is the same authority as reconciling a
+             * drawer: it decides what the shift's takings were. A Manager can
+             * close a shift, so a Manager can resolve a sale that missed one.
+             */
+            path: 'sync',
+            element: (
+              <RequirePolicy policy="CanCloseShift">
+                <OutboxReviewPage />
+              </RequirePolicy>
+            ),
           },
 
           {
