@@ -88,8 +88,18 @@ services:
   - name: pos-web
     type: web
     runtime: static
+
+    # The build runs from here, not the repository root — there is no package.json
+    # at the root, so `pnpm install` there fails with "no such file". Both paths
+    # below are relative to this directory.
+    rootDir: src/Pos.Web
+
+    # corepack pins pnpm to the version in package.json's packageManager field, so
+    # the build cannot quietly resolve a different one than CI and a developer do.
+    # --frozen-lockfile fails if package.json and the lockfile disagree rather than
+    # silently resolving a different tree than the one that was tested.
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
-    staticPublishPath: ./src/Pos.Web/dist
+    staticPublishPath: ./dist
 
     envVars:
       # Vite inlines VITE_* at BUILD time, so this is baked into the bundle and
