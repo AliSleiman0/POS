@@ -125,6 +125,41 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
   cost of splitting them is that every call is cross-origin, which is what forced the two
   decisions below.
 
+- **The Render deployment is a DEVELOPMENT environment, not production.** Decided
+  2026-08-11 after Phase 8 was verified on it. The free plan stays, with all three of its
+  consequences accepted deliberately rather than tolerated silently:
+
+  - The API **sleeps after ~15 minutes** and takes about a minute to wake. Unacceptable for a
+    till with a customer at the counter, fine for a demo and for verification. **Upgrading the
+    API instance is the single change that makes this production-viable** — it is not a
+    rewrite, and that is why the limitation is affordable.
+  - The database is **deleted 30 days after creation** (2026-09-10 for the current one) and
+    has **no automatic backups**. The `pg_dump` procedure in the runbook is the backup.
+  - Credentials on it are treated as development credentials. One `pos_app` password was
+    exposed in a session transcript and rotated; the exposure was judged acceptable on those
+    grounds rather than escalated.
+
+  **What this defers rather than settles:** the moment a real shop's sales are on this, all
+  three become production problems on the same day. The trigger to revisit is a paying client,
+  not a date.
+
+- **`SentryScrubber` does not scrub exception messages, and that is accepted for now.** It
+  strips headers, request bodies, query strings, tags and extras — but an exception *message*
+  travels as-is, and Npgsql puts the whole connection string into one. That is how a password
+  reached a transcript during Phase 8.
+
+  Accepted because no Sentry DSN is configured, so nothing is being sent anywhere: the SDK is
+  inert without one. **The trigger is the DSN.** Wiring real error tracking to this deployment
+  without closing the gap would send a live database credential to a third party on the first
+  connection failure, which is the one failure guaranteed to happen eventually.
+
+- **`pos_app` keeps `DELETE` on `sale`, `sale_line`, `tender` and `stock_movement`.** Invariant
+  4 calls those append-only, and the Phase 7.0 revoke covered `audit_entry` only. Accepted:
+  the rule is enforced by application code and by `No_route_updates_or_deletes_a_sale`, which
+  enumerates the routing table, so there is no path to a delete. The grant is a missing second
+  layer rather than an open door — the same shape of defence-in-depth that RLS provides for
+  tenancy, and worth adding as a deliberate migration rather than a hurried one.
+
 - **A Postgres connection string is accepted in either shape.** Managed hosts hand out
   `postgres://user:pass@host/db`; Npgsql speaks `Host=…;Database=…`. The two are not
   interchangeable and the failure is late and misleading — the configuration looks present and

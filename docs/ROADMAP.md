@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | **Phase 8 in progress** — 8.1–8.7 done and deployed; only the Sentry test error is outstanding (needs a DSN). 1393 .NET + 225 Vitest + 60 Playwright green, in CI too |
-| **Next up** | **One thing closes Phase 8:** a Sentry DSN, so the deliberate test error can be fired at real error tracking. Everything else is deployed and verified — a cash sale rung end to end, a restore drill executed, and a cross-tenant probe run against production. |
+| **Current phase** | **Phase 8 complete — the MVP line is crossed.** Deployed, verified end to end, restore drill executed, cross-tenant probe clean. 1393 .NET + 225 Vitest + 60 Playwright green, in CI too |
+| **Next up** | **Phase 9 (offline), or a real shop.** `DECISIONS.md` argues for the latter and now there is a URL to hand somebody. Phase 9 is the hardest correctness work in the project and is much easier to justify once a real user has asked for it. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
 | **Last updated** | 2026-08-11 |
 
@@ -28,7 +28,7 @@
 | 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ✅ Done |
 | 6 | [Receipts & reporting](phases/PHASE-6-receipts-reporting.md) | Receipt render/print, Z-report, sale history | ✅ Done |
 | 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log, settings | ✅ Done |
-| 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ⬜ Not started |
+| 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ✅ Done |
 | — | **← MVP line.** Everything above ships as v1. | | |
 | 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ⬜ Not started |
 | 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, desktop, platform admin (card payments dropped) | ⬜ Not started |

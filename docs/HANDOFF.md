@@ -1,9 +1,14 @@
 # Session Handoff
 
-**Written:** 2026-08-11 · **Branch:** `phase-8/deployment` (pushed, CI green) · **Phase 8 part-done**
+**Written:** 2026-08-11 · **Branch:** `phase-8/deployment` (pushed, CI green, **not merged**) ·
+**Phase 8 complete — the MVP line is crossed**
 
-> Everything in Phase 8 that can be built and proven **without a hosting account has been**.
-> What is left is not more code — it is running the code against real infrastructure.
+> Phases 0–8 are done. The product is **deployed, verified end to end, and recoverable**.
+> A cash sale has been rung on it, a restore has actually been performed, and a cross-tenant
+> probe has been run against the deployed instance.
+>
+> Next is **Phase 9 (offline)** — or a real shop. [`DECISIONS.md`](../DECISIONS.md) argues for
+> the shop, and now there is a URL to hand somebody.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable
 > decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in
@@ -13,119 +18,162 @@
 
 ## Before anything else
 
-**Create a Render account and apply the blueprint.** Hosting moved from Fly to Render on
-2026-08-11 because Fly requires a payment card and the owner is not adding one; the reasoning
-and the two limitations accepted with it are in [`DECISIONS.md`](../DECISIONS.md). `flyctl` is
-installed and authenticated but nothing uses it — the Fly config has been removed.
+1. **Merge `phase-8/deployment`.** Pushed, all four CI jobs green, 12 commits, ~60 files.
+2. **`deploy.yml` fires on the first green CI run on `main`** and will fail at its first step,
+   because none of `DATABASE_OWNER_URL`, `RENDER_API_DEPLOY_HOOK`, `RENDER_WEB_DEPLOY_HOOK`,
+   `API_ORIGIN` or `WEB_ORIGIN` exists as a GitHub secret yet. A loud, harmless failure — but
+   set them before merging, or the first thing `main` does is go red. See
+   [`RUNBOOK.md § Secrets`](RUNBOOK.md#secrets-and-where-each-one-lives).
+3. **Render's auto-deploy is still ON.** The runbook says to turn it off so the pipeline's
+   migration gate is real. It was left on deliberately to iterate on a branch. **Turn it off
+   when the pipeline takes over**, or the gate is decorative.
+4. **The deployed database is deleted on 2026-09-10.** Free plan, 30 days, no automatic
+   backups. If anything on it matters, `pg_dump` it first — and read
+   [`RUNBOOK.md § Restoring from backup`](RUNBOOK.md#restoring-from-backup) before you do,
+   because the obvious command produces a broken file.
 
-1. Sign up at render.com with GitHub (no card), and give it access to this repository.
-2. **New → Blueprint**, pick this repo. It reads `render.yaml` and creates three resources.
-3. Follow [`RUNBOOK.md § Creating the pos_app role`](RUNBOOK.md#creating-the-pos_app-role),
-   then [`§ Secrets`](RUNBOOK.md#secrets-and-where-each-one-lives) — including **turning
-   Render's auto-deploy off**, or it races the migration gate.
+## Where it is deployed
 
-A Sentry account (free, no card) and its DSN unblocks the last part of 8.4.
-
-Everything is green: **1387 .NET** (288 Core, 134 Data, 965 Api), **225 Vitest**,
-**60 Playwright**, web lint/format/build clean — locally *and* on the runner, where all four
-CI jobs passed for this branch.
-
-## What is done
-
-| | State |
+| | |
 |---|---|
-| **8.1 Containerize** | ✅ Done and verified |
-| **8.1b Web base URL** | ✅ Done — `VITE_API_BASE_URL` |
-| **8.2 Hosting** | 🔨 Code done. **Provisioning outstanding** |
-| **8.3 Migrations in CI/CD** | ✅ Written and locally verified. **Pipeline has never run** |
-| **8.4 Observability** | ✅ Done bar a live Sentry DSN |
-| **8.5 Backups + restore** | ⏸️ Blocked. Procedure written, drill not executed |
-| **8.6 Security pass** | 🔨 Code done. **Production probe outstanding** |
-| **8.7 Onboarding** | ✅ Done and verified by using it |
+| Web | https://pos-web-lcc5.onrender.com |
+| API | https://pos-api-jc43.onrender.com |
+| Login | `harbour-stores` / `owner@harbourstores.example` / `Harbour-Verify-1` |
 
-## What is left, in the order to do it
+**This is a development environment and is recorded as one in `DECISIONS.md`.** The API sleeps
+after ~15 minutes (about a minute to wake — the first page load renders an empty shell before
+recovering), and the database expires. Upgrading the API instance is the one change that makes
+it production-viable; it is not a rewrite.
 
-1. **Apply the blueprint and set up the role and secrets**, as above. Render service names
-   are unique per account rather than globally, so `pos-api` / `pos-web` should be available —
-   but if either changes, **three places must change with it**: `Jwt__Issuer`/`Audience` and
-   `Cors__AllowedOrigins__0` on the API, `VITE_API_BASE_URL` on the static site, and the CSP's
-   `connect-src` in `render.yaml`. **They are a matched set**: get one wrong and the browser
-   blocks every call while the API reports perfectly healthy.
-2. **Confirm `CREATE ROLE` actually works** on Render's free Postgres. If it does not, the app
-   would connect as the database owner — not fatal, because Phase 1.6 sets `FORCE ROW LEVEL
-   SECURITY` so policies still apply to the owner, but it is protection by a different
-   mechanism than `RowLevelSecurityHealthCheck` tests for. Record it as a deviation rather
-   than accept it quietly.
-3. **8.5, the restore drill.** The single most valuable checkbox in the phase.
-   `RUNBOOK.md § Restoring from backup` has the procedure with the timing deliberately blank —
-   **fill it in from a real run.** Do not tick it from a snapshot existing.
-4. **8.6, the production probe.** Not built. The plan was: have `IsolationManifest` emit
-   `isolation-manifest.json`, and add `tools/Pos.Probe` to replay the `Collection` and `ById`
-   cases over HTTPS against two throwaway tenants. The manifest stays the single source of
-   truth so the probe inherits new endpoints for free. Onboard `probe-a`/`probe-b`, run it,
-   deactivate them.
-5. **8.8, the seven verification steps** in the phase doc, against the deployed environment.
+## What Phase 8 actually proved
+
+Not "the code was written" — each of these was run against the deployed instance:
+
+- A **cash sale**: €1.20 = €0.98 + €0.22 at 23% inclusive, €2.00 tendered, €0.80 change from
+  the server, stock 50 → 49, receipt rendered with the shop's address and tax number.
+- The **trading day** bounded at 03:00–03:00 UTC = 04:00 Dublin. ICU and real IANA data, in a
+  container, in production.
+- `/health/ready` green — which is the database **and** the row-level-security role check, so
+  "production connects as the non-owner role" is proven rather than claimed.
+- CORS echoes the allowed origin and stays silent for any other. `/openapi/v1.json` and
+  `/scalar/` both 404.
+- A **restore drill**, which found a real defect (below).
+- A **cross-tenant probe**: 33 claims, no violations, by-id routes answering 404 not 403.
+
+## The two findings worth carrying forward
+
+1. **`pg_dump` silently produces a broken backup.** `FORCE ROW LEVEL SECURITY` applies to the
+   table owner, and managed Postgres gives no superuser — so pg_dump exits 1 **and still
+   leaves a plausible file**. The first one was 89 KB, `pg_restore --list` read it happily and
+   reported 27 tables, and the users table's data was missing: a backup nobody can log in
+   from. The corrected procedure, with the exit-code check, is in the runbook. **This applies
+   to any host that does not give you a superuser**, so it survives a move off Render.
+
+2. **Render's proxy breaks SCRAM channel binding.** Npgsql fails with
+   `28000: SCRAM channel binding check failed` until the connection string carries
+   `Channel Binding=Disable`. `SSL Mode=VerifyFull` is used alongside it so the certificate is
+   still validated. `PostgresConnectionString` now also translates libpq's spellings
+   (`sslmode=verify-full` → `SSL Mode=VerifyFull`), which is what pasting the platform's own
+   URL would otherwise trip over.
+
+## Phase 9 — read these first
+
+[`docs/phases/PHASE-9-offline.md`](phases/PHASE-9-offline.md), all five milestones, and the
+**Note at the bottom** — it names the honest fallback if this proves harder than expected, and
+it is the most important paragraph in the file.
+
+Then [`DECISIONS.md`](../DECISIONS.md) → "Offline Requirements", which already settled the
+shape: PWA, IndexedDB, client-generated GUIDs, and **oversell flagged for staff review rather
+than silently corrected**.
+
+### Why this is an addition rather than a rewrite
+
+**Phase 3.5's idempotency is the whole reason this phase is tractable.** The outbox replays the
+*same* `POST /sales` with its original `Idempotency-Key`. That means no bulk-upload endpoint,
+no separate sync API, and no second server-side code path where the pricing rules could
+disagree with themselves. Do not invent one.
+
+Already true and load-bearing for 9.3:
+
+| Inherited | Where |
+|---|---|
+| `Idempotency-Key` fingerprints the **raw body**; same key + different body is `409 idempotency-key-reused` | `IdempotencyFilter` |
+| The cart and its sale GUID already survive a reload | Phase 5.5, `features/register/storage.ts` |
+| "Did my sale land?" is answered by **asking**, never by re-POSTing | `GET /sales/by-client-transaction/{id}` |
+| A sale that oversells already raises a `StockDiscrepancy` instead of failing | Phase 3.6, surfaced at `GET /stock/discrepancies` |
+| `SaleLine` snapshots price, tax and discount, so a queued sale keeps what the customer was charged | Phase 3.3 |
+
+**9.4's "duplicate submission" is therefore already solved.** The genuinely new work is
+oversell reconciliation and the review UI.
+
+### Current code Phase 9 will touch
+
+- `src/Pos.Web/src/api/client.ts` — the generated client and its single-flight refresh. An
+  offline request must not trigger a refresh storm; `refreshSession` already collapses
+  concurrent callers, but the offline path is a new caller.
+- `src/Pos.Web/src/features/register/storage.ts` — `sessionStorage` today. 9.3 needs IndexedDB
+  and **durability across a browser close**, which `sessionStorage` deliberately does not give
+  (invariant 11: a shared till hands the next shift nothing). **Reconcile those two intentions
+  explicitly** rather than quietly widening the storage — a queued sale surviving a shift
+  change is a different decision from a cart surviving one.
+- `RegisterPage.tsx` barcode lookup — 9.2 wants IndexedDB first, always.
+- `vite.config.ts` — no PWA plugin yet.
 
 ## Things that will bite you
 
-1. **`InvariantGlobalization` must stay `false`, and the base image is now part of that.**
-   `aspnet:10.0-noble-chiseled-extra` — the `-extra` carries ICU and tzdata. Plain
-   `-chiseled` has neither, and the failure is *only inside the container*: CI and every
-   developer machine stay green while every receipt timestamp and business-day boundary
-   breaks in production.
-2. **`.editorconfig` and `e2e/` are deliberately in the build contexts.** Both were excluded
-   first, and both made the container verify *less* than CI does — `.editorconfig` carries the
-   analyzer severities (12 errors in untouched migration files), and `pnpm build` type-checks
-   `e2e/` through `tsc -b`. Do not "tidy" them back out.
-3. **The origin values are a matched set.** Repeated because it is the failure with the least
-   helpful symptom: the API reports perfectly healthy while the browser blocks everything.
-   Also: a free Render service **sleeps after ~15 minutes** and takes about a minute to wake,
-   so the first request after a quiet spell looks like an outage and is not one. The
-   post-deploy check in `deploy.yml` retries for five minutes for exactly this reason.
-4. **A rate-limited login looks like a broken test.** The login limit is per source address,
-   and every Playwright spec comes from `127.0.0.1` — which is the same collision a shop
-   behind NAT has. `playwright.config.ts` sets `RateLimits__LoginAttemptsPerWindow` high for
-   that reason. If e2e specs start timing out at `waitForURL` with the sign-in form still on
-   screen, that is a 429 and not a UI bug.
-5. **The .NET suite gives every request a unique client address** (`ClientAddressStartupFilter`).
+1. **`InvariantGlobalization` must stay `false`**, and the container base image is part of
+   that: `aspnet:10.0-noble-chiseled-extra`. Plain `-chiseled` has no ICU and no tzdata, and
+   fails *only inside the container* while CI and every dev machine stay green.
+2. **`.editorconfig` and `e2e/` are deliberately in the Docker build contexts.** Both were
+   excluded first and both made the container verify *less* than CI does. Do not tidy them out.
+3. **A rate-limited login looks like a broken test.** The login limit is per source address and
+   every Playwright spec comes from `127.0.0.1` — the same collision a shop behind NAT has.
+   `playwright.config.ts` sets `RateLimits__LoginAttemptsPerWindow` high for that reason. If
+   e2e specs time out at `waitForURL` with the sign-in form still on screen, that is a 429.
+4. **The .NET suite gives every request a unique client address** (`ClientAddressStartupFilter`).
    Without it the whole assembly is one rate-limit partition and ~600 tests fail for one
    fixture reason.
+5. **Origin values are a matched set** — `Jwt__Issuer`/`Audience`, `Cors__AllowedOrigins__0`,
+   `VITE_API_BASE_URL` and the CSP's `connect-src`. Render appends a random suffix to service
+   names, which is how all four were wrong on the first deploy. The symptom is the least
+   helpful in the system: the API reports perfectly healthy while the browser blocks
+   everything.
 6. **Still true from before:** `pnpm format:check` is its own CI step; port 5173 with
    `reuseExistingServer`; never run `dotnet test` and Playwright at once (Docker starves); a
    leftover `dotnet run` locks the build and holds :5013; EF's `SqlQuery<T>` maps by
    snake_case, so single-word aliases like `AS "Value"` only.
 
-## Two accepted behaviours in the container
+## Accepted debts — decided, not forgotten
 
-Neither is a defect; both would otherwise be rediscovered from a log at an awkward moment.
+All three are recorded with their triggers in [`DECISIONS.md`](../DECISIONS.md):
 
-- `Cannot load library libgssapi_krb5.so.2`, twice at connection-pool start. Npgsql probes for
-  GSSAPI; the chiseled image has no Kerberos library and no package manager to add one.
-  Password auth succeeds and every query runs.
-- Data Protection keys are not persisted, so each machine generates its own. Nothing depends
-  on them — `AddDefaultTokenProviders()` is deliberately absent, auth is JWT with our own
-  signing key, and refresh and device tokens are opaque and hashed. **If a password-reset flow
-  is ever added this stops being harmless**, and that is the trigger to add a shared key ring.
+- **`SentryScrubber` does not scrub exception messages**, and Npgsql puts the connection string
+  in one. Harmless while no DSN is configured — the SDK is inert. **The DSN is the trigger:**
+  wiring real error tracking without closing this sends a live database credential to a third
+  party on the first connection failure.
+- **`pos_app` keeps `DELETE` on `sale`, `sale_line`, `tender`, `stock_movement`**, which
+  invariant 4 calls append-only. Enforced by code and by `No_route_updates_or_deletes_a_sale`;
+  the grant is a missing second layer, not an open door.
+- **The deployment is dev.** Sleeping API, expiring database, dev-grade credentials.
 
-## What Phase 8 has not changed
+## Longer-standing gaps Phase 8 did not change
 
-- **No password change or reset flow.** An Owner sets an initial password and cannot change
-  it. `RUNBOOK.md` now documents the manual procedure and the credential-leak exposure table,
-  which is an honest stopgap and not a fix. This is the largest remaining gap for a shipped
-  product and it is on no phase's list.
-- **A deactivated user's access token still works for ~15 minutes.** Rotating the signing key
-  is the only immediate remedy; documented in the runbook.
+- **No password change or reset flow.** An Owner sets an initial password and cannot change it.
+  `RUNBOOK.md` documents the manual procedure and a credential-leak exposure table, which is a
+  stopgap and not a fix. On no phase's list, and still the largest gap for a shipped product.
+- **A deactivated user's access token works for up to ~15 minutes.** Rotating the signing key
+  is the only immediate remedy.
 - **`/reports/sales-summary` and `/reports/top-products`** — documented, not built.
 - **Margin cost is not snapshotted.** `SaleLine` records no cost price, so `/reports/margins`
   restates itself when a supplier's price changes.
-- **The beep, a real thermal printer, and an owner actually reading the audit log** remain
-  unverified — eight sessions for the beep now.
-- **Nobody who has worked a till has used any of it.** Still the real bar, and no phase gate
-  clears it. `DECISIONS.md` argues for getting a real client on this before Phase 9, and that
-  argument gets stronger every phase.
+- **The beep** (unverified since 5.2 — eight sessions), **a real thermal printer**, and
+  **whether the audit log answers the question somebody actually asks**.
+- **Nobody who has worked a till has used any of it.** No phase gate clears this, it is still
+  the real bar, and it is now the cheapest thing on this list to fix.
 
 ## Still open
 
 - **Pricing/business model.** One-time vs. recurring, given that we host. Blocks nothing until
-  Phase 10 but must be settled before quoting anyone — and 8.2 has now fixed the cost base it
-  has to cover (roughly $5–15/month per deployment on Fly).
+  Phase 10, but must be settled before quoting anyone. Phase 8 fixed the cost base it has to
+  cover: **$0/month as deployed**, and the price of one small instance plus a paid Postgres
+  for a shop that cannot tolerate a sleeping till.
