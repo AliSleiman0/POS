@@ -103,6 +103,14 @@ export default defineConfig({
     // pnpm's strict node_modules can hand @base-ui/react its own copy of React,
     // which makes hooks fail with "Cannot read properties of null (reading
     // 'useRef')" — React's dispatcher is per-copy. Force a single instance.
+    //
+    // The same symptom has a second, unrelated cause worth knowing, because it
+    // costs an hour to diagnose and looks like a code defect: a **stale
+    // dep-optimizer cache**. Adding a dependency invalidates the pre-bundle,
+    // and a half-rebuilt `node_modules/.vite` can serve two Reacts — every
+    // component then dies with "Invalid hook call", including ones nobody
+    // touched. `rm -rf node_modules/.vite` fixes it. CI never sees it, since a
+    // fresh checkout has no cache to be stale.
     dedupe: ['react', 'react-dom'],
   },
   server: {

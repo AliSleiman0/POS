@@ -6,6 +6,8 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { useAuth } from '@/auth/authContext'
 import { IfPolicy } from '@/auth/guards'
 import { CartProvider } from '@/features/register/CartProvider'
+import { OfflineProvider } from '@/features/offline/OfflineProvider'
+import { SyncStatus } from '@/features/offline/SyncStatus'
 import { UpdatePrompt } from '@/features/offline/UpdatePrompt'
 import { OverrideProvider } from '@/features/register/OverrideProvider'
 import { useCurrentShift } from '@/features/register/queries'
@@ -32,90 +34,102 @@ export function AppLayout() {
   const { user, tenant, logout } = useAuth()
 
   return (
-    <CartProvider>
-      <OverrideProvider>
-        <div className="flex h-full flex-col">
-          {/* Above the header, so it is the first thing on screen and cannot be
+    /*
+     * OfflineProvider outside CartProvider, deliberately.
+     *
+     * The cart and the register read the offline state — mirror-first scanning,
+     * and whether a completed sale goes to the network or to the queue — so it
+     * has to be above them. Nothing in here reads the cart back except
+     * `UpdatePrompt`, which sits inside both.
+     */
+    <OfflineProvider>
+      <CartProvider>
+        <OverrideProvider>
+          <div className="flex h-full flex-col">
+            {/* Above the header, so it is the first thing on screen and cannot be
               mistaken for part of the till's own chrome. Inside CartProvider
               because whether it may apply depends on the cart being empty. */}
-          <UpdatePrompt />
+            <UpdatePrompt />
 
-          <header className="flex items-center gap-6 border-b border-border px-4 py-2">
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-sm font-semibold text-foreground">
-                {tenant?.name ?? 'POS'}
-              </span>
-              <span className="truncate text-xs text-muted-foreground">{tenant?.slug}</span>
-            </div>
-
-            <nav className="flex flex-1 items-center gap-1">
-              <NavItem to="/">Overview</NavItem>
-              <IfPolicy policy="CanSell">
-                <NavItem to="/register">Register</NavItem>
-                <NavItem to="/sales">Sales</NavItem>
-              </IfPolicy>
-              <IfPolicy policy="CanManageCatalog">
-                <NavItem to="/catalog">Catalog</NavItem>
-                <NavItem to="/catalog/categories">Categories</NavItem>
-                <NavItem to="/catalog/tax-classes">Tax</NavItem>
-                <NavItem to="/stock">Stock</NavItem>
-              </IfPolicy>
-              {/* A third group: reconciliation is CanCloseShift, which a Cashier
-                  does not hold and a Manager does. */}
-              <IfPolicy policy="CanCloseShift">
-                <NavItem to="/reports/daily">Reports</NavItem>
-              </IfPolicy>
-              {/* And a fourth: running the shop itself, which is Owner-only.
-                  Whoever can add a user can add one who sells. */}
-              <IfPolicy policy="CanManageEmployees">
-                <NavItem to="/admin/people">People</NavItem>
-                <NavItem to="/admin/tills">Tills</NavItem>
-                <NavItem to="/admin/activity">Activity</NavItem>
-                <NavItem to="/admin/settings">Settings</NavItem>
-              </IfPolicy>
-            </nav>
-
-            <ShiftIndicator />
-
-            <div className="flex items-center gap-3">
-              <div className="flex flex-col items-end">
-                <span className="text-sm font-medium text-foreground">{user?.displayName}</span>
-                <span className="text-xs text-muted-foreground">{user?.role}</span>
+            <header className="flex items-center gap-6 border-b border-border px-4 py-2">
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-semibold text-foreground">
+                  {tenant?.name ?? 'POS'}
+                </span>
+                <span className="truncate text-xs text-muted-foreground">{tenant?.slug}</span>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  // The basket does not follow a sign-out. It survives a route
-                  // change and a session expiring — both are the same person
-                  // still serving the same customer — but signing out at a
-                  // shared till means the next person, and handing them the
-                  // last one's cart is how the wrong items get sold.
-                  clearCart()
-                  void logout()
-                }}
-              >
-                Sign out
-              </Button>
-            </div>
-          </header>
 
-          {/* Inside the layout, so a crash on one screen leaves the navigation
+              <nav className="flex flex-1 items-center gap-1">
+                <NavItem to="/">Overview</NavItem>
+                <IfPolicy policy="CanSell">
+                  <NavItem to="/register">Register</NavItem>
+                  <NavItem to="/sales">Sales</NavItem>
+                </IfPolicy>
+                <IfPolicy policy="CanManageCatalog">
+                  <NavItem to="/catalog">Catalog</NavItem>
+                  <NavItem to="/catalog/categories">Categories</NavItem>
+                  <NavItem to="/catalog/tax-classes">Tax</NavItem>
+                  <NavItem to="/stock">Stock</NavItem>
+                </IfPolicy>
+                {/* A third group: reconciliation is CanCloseShift, which a Cashier
+                  does not hold and a Manager does. */}
+                <IfPolicy policy="CanCloseShift">
+                  <NavItem to="/reports/daily">Reports</NavItem>
+                </IfPolicy>
+                {/* And a fourth: running the shop itself, which is Owner-only.
+                  Whoever can add a user can add one who sells. */}
+                <IfPolicy policy="CanManageEmployees">
+                  <NavItem to="/admin/people">People</NavItem>
+                  <NavItem to="/admin/tills">Tills</NavItem>
+                  <NavItem to="/admin/activity">Activity</NavItem>
+                  <NavItem to="/admin/settings">Settings</NavItem>
+                </IfPolicy>
+              </nav>
+
+              <SyncStatus />
+
+              <ShiftIndicator />
+
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-end">
+                  <span className="text-sm font-medium text-foreground">{user?.displayName}</span>
+                  <span className="text-xs text-muted-foreground">{user?.role}</span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // The basket does not follow a sign-out. It survives a route
+                    // change and a session expiring — both are the same person
+                    // still serving the same customer — but signing out at a
+                    // shared till means the next person, and handing them the
+                    // last one's cart is how the wrong items get sold.
+                    clearCart()
+                    void logout()
+                  }}
+                >
+                  Sign out
+                </Button>
+              </div>
+            </header>
+
+            {/* Inside the layout, so a crash on one screen leaves the navigation
           usable instead of blanking the whole application.
 
           No padding here: the register runs edge to edge, and every other page
           brings its own. A layout that special-cased one route's padding would
           have to know which route it was rendering. */}
-          <main className="min-h-0 flex-1 overflow-y-auto">
-            <ErrorBoundary>
-              <Outlet />
-            </ErrorBoundary>
-          </main>
+            <main className="min-h-0 flex-1 overflow-y-auto">
+              <ErrorBoundary>
+                <Outlet />
+              </ErrorBoundary>
+            </main>
 
-          <ApiFooter />
-        </div>
-      </OverrideProvider>
-    </CartProvider>
+            <ApiFooter />
+          </div>
+        </OverrideProvider>
+      </CartProvider>
+    </OfflineProvider>
   )
 }
 
