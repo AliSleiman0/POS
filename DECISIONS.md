@@ -144,6 +144,30 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
   The online path is unchanged. `POST /sales/quote` stays authoritative whenever it is
   reachable, and the server still prices the sale that is finally written.
 
+- **The outbox is durable; the cart and the credential are not.** CLAUDE.md invariant 11 says
+  the register survives a reload and credentials do not, and sends both the cart and the
+  refresh token to `sessionStorage` so a shared till hands the next shift nothing. Phase 9's
+  handoff asked for this to be reconciled explicitly rather than quietly widened, so:
+
+  | | Where | Survives a browser close? |
+  |---|---|---|
+  | Cart | `sessionStorage` | **No** — the next shift must not inherit a basket |
+  | Refresh token | `sessionStorage` | **No** — invariant 11, untouched |
+  | Catalog mirror | IndexedDB | Yes — public shop data; rebuilding costs a download |
+  | Outbox | IndexedDB | **Yes** — a queued sale is money that has already changed hands |
+
+  **A queued sale is a third category, and that is the whole argument.** Losing a basket on a
+  tab close is the correct direction to fail — a cashier re-scans. Losing a sale a customer has
+  already paid for is not, and no amount of shared-device hygiene makes it so. Nothing in
+  IndexedDB is a credential, and the database is keyed per tenant, so a tablet signed into a
+  second shop can neither read the first's prices nor replay its queue.
+
+  **The cost is accepted and stated in the app.** A till restarted while offline cannot sign in
+  — the refresh token died with the tab and a PIN is verified by the server — so it cannot
+  trade until the connection returns. Its queue is kept and sent then. Caching PIN hashes
+  locally would fix that and would remove server-side lockout and rate limiting, which is a
+  larger security change than the capability is worth.
+
 ### Resolved 2026-08-10 (during Phase 8)
 
 - **Hosting is Render.** Three resources in one `render.yaml`: the API as a Docker web

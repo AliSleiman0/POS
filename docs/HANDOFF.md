@@ -1,14 +1,16 @@
 # Session Handoff
 
-**Written:** 2026-08-11 · **Branch:** `phase-8/deployment` (pushed, CI green, **not merged**) ·
-**Phase 8 complete — the MVP line is crossed**
+**Written:** 2026-08-11 · **Branch:** `phase-9/offline` (**not pushed, not merged**) ·
+**Phase 9 built and green, with four gaps recorded**
 
-> Phases 0–8 are done. The product is **deployed, verified end to end, and recoverable**.
-> A cash sale has been rung on it, a restore has actually been performed, and a cross-tenant
-> probe has been run against the deployed instance.
+> A till now sells with the network off. The sale is priced locally by an engine pinned to the
+> server's, queued before any network attempt, and lands **exactly once** when the connection
+> returns — dated when the customer paid rather than when it synced. That is asserted end to
+> end against a real API and a real Postgres, not described.
 >
-> Next is **Phase 9 (offline)** — or a real shop. [`DECISIONS.md`](../DECISIONS.md) argues for
-> the shop, and now there is a URL to hand somebody.
+> **Four things are not done.** They are listed in
+> [`PHASE-9-offline.md` § What is not done](phases/PHASE-9-offline.md#what-is-not-done) and
+> repeated below. None is a stub; each is absent.
 
 > This file is session state, not durable truth. Overwrite it when you finish. Durable
 > decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in
@@ -18,162 +20,121 @@
 
 ## Before anything else
 
-1. **Merge `phase-8/deployment`.** Pushed, all four CI jobs green, 12 commits, ~60 files.
-2. **`deploy.yml` fires on the first green CI run on `main`** and will fail at its first step,
-   because none of `DATABASE_OWNER_URL`, `RENDER_API_DEPLOY_HOOK`, `RENDER_WEB_DEPLOY_HOOK`,
-   `API_ORIGIN` or `WEB_ORIGIN` exists as a GitHub secret yet. A loud, harmless failure — but
-   set them before merging, or the first thing `main` does is go red. See
-   [`RUNBOOK.md § Secrets`](RUNBOOK.md#secrets-and-where-each-one-lives).
-3. **Render's auto-deploy is still ON.** The runbook says to turn it off so the pipeline's
-   migration gate is real. It was left on deliberately to iterate on a branch. **Turn it off
-   when the pipeline takes over**, or the gate is decorative.
-4. **The deployed database is deleted on 2026-09-10.** Free plan, 30 days, no automatic
-   backups. If anything on it matters, `pg_dump` it first — and read
-   [`RUNBOOK.md § Restoring from backup`](RUNBOOK.md#restoring-from-backup) before you do,
-   because the obvious command produces a broken file.
+1. **`phase-8/deployment` is still unmerged**, and `phase-9/offline` was branched from it. The
+   Phase 8 handoff's warnings still apply in full and have **not** been actioned:
+   `deploy.yml` fires on the first green CI run on `main` and will fail because none of
+   `DATABASE_OWNER_URL`, `RENDER_API_DEPLOY_HOOK`, `RENDER_WEB_DEPLOY_HOOK`, `API_ORIGIN` or
+   `WEB_ORIGIN` exists as a GitHub secret. Set them before merging either branch.
+2. **Two migrations are new and unapplied anywhere but local dev**: `OfflineSaleTimestamps`
+   and `CatalogSync`. Both are hand-edited — read them before deploying, especially the
+   `FORCE ROW LEVEL SECURITY` note in the first.
+3. **The deployed database was due for deletion on 2026-09-10.** Free plan, 30 days, no
+   automatic backups. Unchanged by this phase.
+4. **`pnpm build` before `pnpm test:e2e`**, or five service-worker specs skip. CI now does this;
+   locally it is on you. They throw rather than skip under `CI`.
 
-## Where it is deployed
+## What Phase 9 actually does
 
-| | |
-|---|---|
-| Web | https://pos-web-lcc5.onrender.com |
-| API | https://pos-api-jc43.onrender.com |
-| Login | `harbour-stores` / `owner@harbourstores.example` / `Harbour-Verify-1` |
+- **Sells offline.** Scan from the mirror, price with the ported engine, tender, take cash. The
+  panel says *"Saved on this till"* and shows a local reference — there is no sale number,
+  because `SaleSequence` is assigned inside the server's transaction.
+- **Lands exactly once.** The queued sale replays as an ordinary `POST /sales` with its
+  original `Idempotency-Key`. No bulk endpoint, no sync API, no second server write path.
+- **Keeps the right date.** `occurredAt` is minted once when the sale completes and replayed
+  unchanged; `Sale.RecordedAt` records the server's clock beside it.
+- **Explains itself.** Header chip: online/offline, *n* to send, *n* needing review, and the
+  mirror's age. `/sync` explains every refusal and what it means for the money.
+- **Does not overpromise.** The limits panel is written to be unflattering, and a test rejects
+  the words *safe*, *secure* and *guaranteed* in every warning the app can produce.
 
-**This is a development environment and is recorded as one in `DECISIONS.md`.** The API sleeps
-after ~15 minutes (about a minute to wake — the first page load renders an empty shell before
-recovering), and the database expires. Upgrading the API instance is the one change that makes
-it production-viable; it is not a rewrite.
+## What is NOT done
 
-## What Phase 8 actually proved
+1. **Offline shift close.** A drawer cannot be closed while the till is offline. The design is
+   settled and small (`CloseShiftRequest` carries only a typed `countedCash`, so it queues like
+   any other write) — it is simply not built.
+2. **Price-change-on-reconnect for an open cart.** The mirror updates; nothing tells the
+   cashier the shelf price moved under a product already in the basket. The *charge* is
+   correct — the customer pays what they were told — but the phase doc asks for it to be
+   surfaced.
+3. **A measured 10k-product sync.** The design answers it (cursor pages, a yield between them,
+   bounded index-backed search). Nobody has run it. A design is not a measurement.
+4. **Oversell through two offline browsers.** The server behaviour is genuinely covered by
+   `SaleCommitTests`; nobody has driven two clients offline and sold the same last unit in
+   both. Step 6 of the phase doc's manual script is how.
 
-Not "the code was written" — each of these was run against the deployed instance:
+Also deliberate, not a gap: **no offline PIN login**. See `DECISIONS.md`.
 
-- A **cash sale**: €1.20 = €0.98 + €0.22 at 23% inclusive, €2.00 tendered, €0.80 change from
-  the server, stock 50 → 49, receipt rendered with the shop's address and tax number.
-- The **trading day** bounded at 03:00–03:00 UTC = 04:00 Dublin. ICU and real IANA data, in a
-  container, in production.
-- `/health/ready` green — which is the database **and** the row-level-security role check, so
-  "production connects as the non-owner role" is proven rather than claimed.
-- CORS echoes the allowed origin and stays silent for any other. `/openapi/v1.json` and
-  `/scalar/` both 404.
-- A **restore drill**, which found a real defect (below).
-- A **cross-tenant probe**: 33 claims, no violations, by-id routes answering 404 not 403.
+## The three decisions this phase made
 
-## The two findings worth carrying forward
+All three are in [`DECISIONS.md`](../DECISIONS.md) under *Resolved 2026-08-11*. Read them
+before changing any of this.
 
-1. **`pg_dump` silently produces a broken backup.** `FORCE ROW LEVEL SECURITY` applies to the
-   table owner, and managed Postgres gives no superuser — so pg_dump exits 1 **and still
-   leaves a plausible file**. The first one was 89 KB, `pg_restore --list` read it happily and
-   reported 27 tables, and the users table's data was missing: a backup nobody can log in
-   from. The corrected procedure, with the exit-code check, is in the runbook. **This applies
-   to any host that does not give you a superuser**, so it survives a move off Render.
-
-2. **Render's proxy breaks SCRAM channel binding.** Npgsql fails with
-   `28000: SCRAM channel binding check failed` until the connection string carries
-   `Channel Binding=Disable`. `SSL Mode=VerifyFull` is used alongside it so the certificate is
-   still validated. `PostgresConnectionString` now also translates libpq's spellings
-   (`sslmode=verify-full` → `SSL Mode=VerifyFull`), which is what pasting the platform's own
-   URL would otherwise trip over.
-
-## Phase 9 — read these first
-
-[`docs/phases/PHASE-9-offline.md`](phases/PHASE-9-offline.md), all five milestones, and the
-**Note at the bottom** — it names the honest fallback if this proves harder than expected, and
-it is the most important paragraph in the file.
-
-Then [`DECISIONS.md`](../DECISIONS.md) → "Offline Requirements", which already settled the
-shape: PWA, IndexedDB, client-generated GUIDs, and **oversell flagged for staff review rather
-than silently corrected**.
-
-### Why this is an addition rather than a rewrite
-
-**Phase 3.5's idempotency is the whole reason this phase is tractable.** The outbox replays the
-*same* `POST /sales` with its original `Idempotency-Key`. That means no bulk-upload endpoint,
-no separate sync API, and no second server-side code path where the pricing rules could
-disagree with themselves. Do not invent one.
-
-Already true and load-bearing for 9.3:
-
-| Inherited | Where |
-|---|---|
-| `Idempotency-Key` fingerprints the **raw body**; same key + different body is `409 idempotency-key-reused` | `IdempotencyFilter` |
-| The cart and its sale GUID already survive a reload | Phase 5.5, `features/register/storage.ts` |
-| "Did my sale land?" is answered by **asking**, never by re-POSTing | `GET /sales/by-client-transaction/{id}` |
-| A sale that oversells already raises a `StockDiscrepancy` instead of failing | Phase 3.6, surfaced at `GET /stock/discrepancies` |
-| `SaleLine` snapshots price, tax and discount, so a queued sale keeps what the customer was charged | Phase 3.3 |
-
-**9.4's "duplicate submission" is therefore already solved.** The genuinely new work is
-oversell reconciliation and the review UI.
-
-### Current code Phase 9 will touch
-
-- `src/Pos.Web/src/api/client.ts` — the generated client and its single-flight refresh. An
-  offline request must not trigger a refresh storm; `refreshSession` already collapses
-  concurrent callers, but the offline path is a new caller.
-- `src/Pos.Web/src/features/register/storage.ts` — `sessionStorage` today. 9.3 needs IndexedDB
-  and **durability across a browser close**, which `sessionStorage` deliberately does not give
-  (invariant 11: a shared till hands the next shift nothing). **Reconcile those two intentions
-  explicitly** rather than quietly widening the storage — a queued sale surviving a shift
-  change is a different decision from a cart surviving one.
-- `RegisterPage.tsx` barcode lookup — 9.2 wants IndexedDB first, always.
-- `vite.config.ts` — no PWA plugin yet.
+1. **`occurredAt` on `POST /sales`.** The only client-supplied value in the system that reaches
+   a stored column, bounded in both directions, with `RecordedAt` beside it.
+2. **Invariant 3 amended.** Two pricing engines, pinned by
+   `tests/fixtures/pricing-conformance.json` — 913 carts, asserted from C# *and* TypeScript,
+   compared **as strings so the decimal scale is pinned too**. A change to either engine that
+   is not a change to both turns one side red.
+3. **Invariant 11 reconciled.** Cart and credential stay in `sessionStorage`; the outbox is
+   durable in IndexedDB, because a queued sale is money that already changed hands.
 
 ## Things that will bite you
 
-1. **`InvariantGlobalization` must stay `false`**, and the container base image is part of
-   that: `aspnet:10.0-noble-chiseled-extra`. Plain `-chiseled` has no ICU and no tzdata, and
-   fails *only inside the container* while CI and every dev machine stay green.
-2. **`.editorconfig` and `e2e/` are deliberately in the Docker build contexts.** Both were
-   excluded first and both made the container verify *less* than CI does. Do not tidy them out.
-3. **A rate-limited login looks like a broken test.** The login limit is per source address and
-   every Playwright spec comes from `127.0.0.1` — the same collision a shop behind NAT has.
-   `playwright.config.ts` sets `RateLimits__LoginAttemptsPerWindow` high for that reason. If
-   e2e specs time out at `waitForURL` with the sign-in form still on screen, that is a 429.
-4. **The .NET suite gives every request a unique client address** (`ClientAddressStartupFilter`).
-   Without it the whole assembly is one rate-limit partition and ~600 tests fail for one
-   fixture reason.
-5. **Origin values are a matched set** — `Jwt__Issuer`/`Audience`, `Cors__AllowedOrigins__0`,
-   `VITE_API_BASE_URL` and the CSP's `connect-src`. Render appends a random suffix to service
-   names, which is how all four were wrong on the first deploy. The symptom is the least
-   helpful in the system: the API reports perfectly healthy while the browser blocks
-   everything.
-6. **Still true from before:** `pnpm format:check` is its own CI step; port 5173 with
-   `reuseExistingServer`; never run `dotnet test` and Playwright at once (Docker starves); a
-   leftover `dotnet run` locks the build and holds :5013; EF's `SqlQuery<T>` maps by
-   snake_case, so single-word aliases like `AS "Value"` only.
+1. **`node_modules/.vite` goes stale when a dependency is added**, and the symptom is every
+   component dying with *"Invalid hook call"* in code you did not touch — `ToastProvider`, in
+   this case. It looks exactly like a duplicate-React bug and it is not. `rm -rf
+   node_modules/.vite`. CI never sees it. Recorded in `vite.config.ts`.
+2. **`occurredAt` is part of the idempotency fingerprint.** Anything that rebuilds a queued
+   request instead of replaying the stored body will re-read the clock, send a different body
+   under the same key, and be answered `409 idempotency-key-reused` **for ever** — which at a
+   till reads as a sale that will not go through. There is a test whose entire point is that
+   two builds of the same cart differ.
+3. **The pricing port's rounding is asymmetric on purpose.** Division rounds **half to even**
+   (that is what .NET's `decimal` does when it runs out of room); the pipeline rounds **half
+   away from zero**. Both were read off the real type by probing it. Do not "tidy" them into
+   agreement.
+4. **A decimal's *scale* is part of the result.** `12.97` and `12.9700` are the same number and
+   not the same result — scale propagates through the multiplication that follows, and the
+   pipeline rounds only at the end. The corpus compares strings for this reason.
+5. **The catalog feed may repeat a row and cannot skip one.** Its sort key is
+   `COALESCE(updated_at, created_at)`, which moves when a row is edited. The mirror's writes
+   must stay upserts.
+6. **A migration's `UPDATE` matches zero rows under `FORCE ROW LEVEL SECURITY`** when it runs
+   as the owner with no `app.tenant_id` set — silently. Invisible locally, because `pos` is a
+   superuser with `BYPASSRLS`. Verified against a `NOSUPERUSER NOBYPASSRLS` owner: `UPDATE 0`
+   versus `UPDATE 2`.
+7. **The pending-sales badge is hidden before the provider has counted.** A test that waits for
+   it to disappear passes instantly on a fresh page. Poll the server instead — three e2e drafts
+   died on this.
+8. **Still true from before:** `pnpm format:check` is its own CI step; never run `dotnet test`
+   and Playwright at once; a leftover `dotnet run` holds :5013; `InvariantGlobalization` must
+   stay `false`; origin values are a matched set.
 
-## Accepted debts — decided, not forgotten
+## Where the offline code lives
 
-All three are recorded with their triggers in [`DECISIONS.md`](../DECISIONS.md):
+| | |
+|---|---|
+| `src/Pos.Web/src/lib/pricing/` | The ported engine. `decimal.ts` is the load-bearing file |
+| `src/Pos.Web/src/lib/offline/` | `db`, `catalog`, `sync`, `outbox`, `replay`, `connectivity`, `persist` |
+| `src/Pos.Web/src/features/offline/` | Provider, status chip, queued-sale panel, review page, limits |
+| `tests/fixtures/pricing-conformance.json` | The oracle. Regenerate with `POS_REGENERATE_PRICING_CORPUS=1` — it rewrites and then **fails**, deliberately |
+| `src/Pos.Web/e2e/offline.spec.ts` | The five specs that prove the phase |
 
-- **`SentryScrubber` does not scrub exception messages**, and Npgsql puts the connection string
-  in one. Harmless while no DSN is configured — the SDK is inert. **The DSN is the trigger:**
-  wiring real error tracking without closing this sends a live database credential to a third
-  party on the first connection failure.
-- **`pos_app` keeps `DELETE` on `sale`, `sale_line`, `tender`, `stock_movement`**, which
-  invariant 4 calls append-only. Enforced by code and by `No_route_updates_or_deletes_a_sale`;
-  the grant is a missing second layer, not an open door.
-- **The deployment is dev.** Sleeping API, expiring database, dev-grade credentials.
+## Test counts
 
-## Longer-standing gaps Phase 8 did not change
+1441 .NET · 321 Vitest · 70 Playwright. All green locally. **Not yet run in CI** — the branch
+is unpushed.
 
-- **No password change or reset flow.** An Owner sets an initial password and cannot change it.
-  `RUNBOOK.md` documents the manual procedure and a credential-leak exposure table, which is a
-  stopgap and not a fix. On no phase's list, and still the largest gap for a shipped product.
-- **A deactivated user's access token works for up to ~15 minutes.** Rotating the signing key
-  is the only immediate remedy.
-- **`/reports/sales-summary` and `/reports/top-products`** — documented, not built.
-- **Margin cost is not snapshotted.** `SaleLine` records no cost price, so `/reports/margins`
-  restates itself when a supplier's price changes.
-- **The beep** (unverified since 5.2 — eight sessions), **a real thermal printer**, and
-  **whether the audit log answers the question somebody actually asks**.
-- **Nobody who has worked a till has used any of it.** No phase gate clears this, it is still
-  the real bar, and it is now the cheapest thing on this list to fix.
+## Longer-standing gaps this phase did not change
 
-## Still open
-
-- **Pricing/business model.** One-time vs. recurring, given that we host. Blocks nothing until
-  Phase 10, but must be settled before quoting anyone. Phase 8 fixed the cost base it has to
-  cover: **$0/month as deployed**, and the price of one small instance plus a paid Postgres
-  for a shop that cannot tolerate a sleeping till.
+- **No password change or reset flow.** Still the largest gap for a shipped product, still on
+  no phase's list.
+- A deactivated user's access token works for ~15 minutes.
+- `/reports/sales-summary` and `/reports/top-products` documented, not built.
+- Margin cost is not snapshotted.
+- The beep (unverified since 5.2), a real thermal printer, and whether the audit log answers
+  the question somebody actually asks.
+- **Nobody who has worked a till has used any of it.** No phase gate clears this. It was the
+  real bar before Phase 9 and it is the real bar now — and Phase 9 has made it more urgent
+  rather than less, because offline behaviour is exactly the kind of thing that reads fine in a
+  test and wrong at a counter.

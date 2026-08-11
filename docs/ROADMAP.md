@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Current phase** | **Phase 8 complete — the MVP line is crossed.** Deployed, verified end to end, restore drill executed, cross-tenant probe clean. 1393 .NET + 225 Vitest + 60 Playwright green, in CI too |
-| **Next up** | **Phase 9 (offline), or a real shop.** `DECISIONS.md` argues for the latter and now there is a URL to hand somebody. Phase 9 is the hardest correctness work in the project and is much easier to justify once a real user has asked for it. |
+| **Current phase** | **Phase 9 built and green**, with four gaps recorded rather than hidden — see the phase doc's *What is not done*. A till sells with the network off and the sale lands exactly once, dated when the customer paid. 1441 .NET + 321 Vitest + 70 Playwright green |
+| **Next up** | **A real shop.** `DECISIONS.md` has argued for this since Phase 8 and the argument is stronger now: nobody who has worked a till has used any of it, and that is still the only untested claim that matters. The four Phase 9 gaps are the first thing to finish if a shop asks for them. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
 | **Last updated** | 2026-08-11 |
 
@@ -30,7 +30,7 @@
 | 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log, settings | ✅ Done |
 | 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ✅ Done |
 | — | **← MVP line.** Everything above ships as v1. | | |
-| 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ⬜ Not started |
+| 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ✅ Done (4 gaps recorded) |
 | 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, desktop, platform admin (card payments dropped) | ⬜ Not started |
 
 Legend: ⬜ not started · 🔨 in progress · ✅ done · ⏸️ blocked
@@ -140,11 +140,19 @@ Detail: [phases/PHASE-8-deployment.md](phases/PHASE-8-deployment.md)
 
 Deliberately post-MVP per `DECISIONS.md`. Rests on 3.5. Detail: [phases/PHASE-9-offline.md](phases/PHASE-9-offline.md)
 
-- [ ] **9.1 Service worker + app-shell cache** — app loads with no network.
-- [ ] **9.2 Local catalog mirror** — products/barcodes/prices in IndexedDB; scanning and cart-building work offline.
-- [ ] **9.3 Outbox queue** — sales queued with their client GUID, replayed on reconnect, with sync state visible in the UI.
-- [ ] **9.4 Conflict reconciliation** — oversell at sync is flagged for staff review, never silently corrected.
-- [ ] **9.5 Honest limits** — browser storage is evictable; web offline is documented and surfaced as best-effort.
+**Three pieces of server groundwork came first**, because the phase is unbuildable without them and reading the code is what exposed that:
+
+- [x] **9.0a Offline sale timestamps** — `POST /sales` accepts `occurredAt`; `Sale` gains a server-set `RecordedAt`. Without it a sale rung at 22:00 and replayed at 09:00 lands in the wrong trading day, in the wrong Z-report, against a drawer already counted. Bounded by `OfflineSaleRules`; outside the bounds is a permanent `422` so an outbox sends it to a person rather than retrying.
+- [x] **9.0b Pricing conformance corpus + TypeScript port** — the phase doc assumed an offline cart could be tendered; it could not, because every total came from `POST /sales/quote`. `Pos.Core.Pricing` is ported to TS over a faithful `decimal`, and both engines are asserted against one committed 913-cart corpus. **An explicit amendment to invariant 3**, in `DECISIONS.md`. Falsified six ways.
+- [x] **9.0c `GET /catalog/sync` + barcode soft delete** — `GET /products` had no changed-since filter, barcodes were readable one product at a time, and a hard-deleted barcode is invisible to any incremental feed. Two independent cursors; the feed may repeat a row and cannot skip one.
+
+- [x] **9.1 Service worker + app-shell cache** — app loads with no network; `registerType: 'prompt'` and a second gate so an update never applies mid-sale. Asserted against the emitted `sw.js`, not the config.
+- [x] **9.2 Local catalog mirror** — IndexedDB per tenant; mirror-first scanning online as well as off; incremental sync with the watermark committed only after a full walk; mirror age on screen. *Price-change-on-reconnect and a measured 10k catalog are not done.*
+- [x] **9.3 Outbox queue** — written before any network attempt, replayed as ordinary `POST /sales` with the original key, serial and classified. Proved end to end: a sale taken offline lands exactly once, dated when the customer paid. *Offline shift close is not done.*
+- [x] **9.4 Conflict reconciliation** — `/sync` explains each refusal, its consequence for the money, and the one action. A reused idempotency key deliberately offers **no** retry. Re-file carries the original `occurredAt` and a new key.
+- [x] **9.5 Honest limits** — persistence requested and its *answer* surfaced; warnings on refused storage, a long offline window and a large queue; a test rejects the words safe, secure and guaranteed.
+
+**Four gaps are recorded in the phase doc rather than hidden:** offline shift close, price-change-on-reconnect, a measured 10k-product sync, and the oversell case proved through two offline browsers.
 
 ## Beyond MVP
 
