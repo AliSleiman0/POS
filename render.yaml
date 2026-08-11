@@ -94,11 +94,20 @@ services:
     # below are relative to this directory.
     rootDir: src/Pos.Web
 
-    # corepack pins pnpm to the version in package.json's packageManager field, so
-    # the build cannot quietly resolve a different one than CI and a developer do.
-    # --frozen-lockfile fails if package.json and the lockfile disagree rather than
-    # silently resolving a different tree than the one that was tested.
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    # NO `corepack enable`. Render detects pnpm from the lockfile, installs it, and
+    # runs its own install before this command — and corepack's enable step tries to
+    # symlink pnpm into /usr/bin, which is read-only in the build image:
+    #
+    #   Internal Error: EROFS: read-only file system, unlink '/usr/bin/pnpm'
+    #
+    # The version is already pinned by package.json's `packageManager` field, which
+    # is what corepack would have read anyway. Node is 24 by default here, matching CI.
+    #
+    # `install --frozen-lockfile` is kept even though Render has already installed:
+    # it is the assertion that package.json and the lockfile agree, so the build
+    # cannot quietly resolve a different tree than the one that was tested. It is a
+    # cache hit and costs almost nothing.
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     staticPublishPath: ./dist
 
     envVars:
