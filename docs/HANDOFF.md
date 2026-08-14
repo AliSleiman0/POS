@@ -1,7 +1,7 @@
 # Session Handoff
 
-**Written:** 2026-08-11 · **Branch:** `phase-9/offline` (**not pushed, not merged**) ·
-**Phase 9 built and green, with four gaps recorded**
+**Written:** 2026-08-11 · **Updated:** 2026-08-14 · **Branch:** `main` (merged, pushed, CI green) ·
+**Phases 8 and 9 shipped and deployed**
 
 > A till now sells with the network off. The sale is priced locally by an engine pinned to the
 > server's, queued before any network attempt, and lands **exactly once** when the connection
@@ -20,18 +20,50 @@
 
 ## Before anything else
 
-1. **`phase-8/deployment` is still unmerged**, and `phase-9/offline` was branched from it. The
-   Phase 8 handoff's warnings still apply in full and have **not** been actioned:
-   `deploy.yml` fires on the first green CI run on `main` and will fail because none of
-   `DATABASE_OWNER_URL`, `RENDER_API_DEPLOY_HOOK`, `RENDER_WEB_DEPLOY_HOOK`, `API_ORIGIN` or
-   `WEB_ORIGIN` exists as a GitHub secret. Set them before merging either branch.
-2. **Two migrations are new and unapplied anywhere but local dev**: `OfflineSaleTimestamps`
-   and `CatalogSync`. Both are hand-edited — read them before deploying, especially the
-   `FORCE ROW LEVEL SECURITY` note in the first.
-3. **The deployed database was due for deletion on 2026-09-10.** Free plan, 30 days, no
-   automatic backups. Unchanged by this phase.
-4. **`pnpm build` before `pnpm test:e2e`**, or five service-worker specs skip. CI now does this;
+1. **Rotate the deployment credentials.** The database owner URL and both Render deploy hooks
+   were pasted into a chat transcript on 2026-08-14 to complete the deploy. Reset the database
+   password (pos-db → Reset password) and regenerate both deploy hooks, then update the
+   matching GitHub secrets. The app connects as `pos_app`, so resetting the **owner** password
+   does not disturb the running service.
+2. **The deployed database is deleted on 2026-09-10.** Free plan, 30 days, no automatic
+   backups. Unchanged by this phase, and now closer.
+3. **`pnpm build` before `pnpm test:e2e`**, or five service-worker specs skip. CI does this;
    locally it is on you. They throw rather than skip under `CI`.
+
+## Deployment state as of 2026-08-14
+
+Everything the Phase 8 handoff left owing is now done. Recorded here because the next session
+will otherwise re-derive it.
+
+| | |
+|---|---|
+| `main` | Phases 8 + 9 merged, CI green on all four jobs |
+| Migrations on the deployed DB | `OfflineSaleTimestamps` and `CatalogSync` applied and verified |
+| GitHub secrets | All five set (`DATABASE_OWNER_URL`, both deploy hooks, both origins) |
+| Render `pos-api` / `pos-web` | Both switched from `phase-8/deployment` to **`main`**, both **auto-deploy Off** |
+| Deploys | Triggered by hook after the migrations, in that order |
+
+**Two defects were found by shipping, and both are fixed on `main`:**
+
+- **`deploy.yml` had never worked.** Phase 8.3 shipped it with "the pipeline has not run for
+  real", and the first real run died on `NETSDK1004`: it ran `dotnet tool restore` (which
+  installs `dotnet-ef`) but never `dotnet restore` (which restores packages), and
+  `migrations script` builds the startup project. Reproduced against a clean clone and fixed.
+  **Expect more of the same** — the pipeline still has not completed end to end.
+- **`SSH.NET` 2025.1.0 advisory** (GHSA-q939-rpr3-3284) arriving transitively via
+  Testcontainers. `NuGetAudit` is at `low` with warnings-as-errors, so restore failed outright
+  on a branch that was green locally. Testcontainers 4.14.0 resolves SSH.NET 2026.0.0.
+
+**Two traps worth carrying forward**, both of which cost time:
+
+- **Render settings do not save on selection.** Choosing a value from a dropdown does nothing
+  until the **Save changes** button below it is clicked. An auto-deploy change looked applied,
+  read back as "Off", and had not saved — only the browser's "Leave site?" dialog revealed it.
+  Reload and re-read after every change.
+- **`SELECT count(*)` as the owner returns 0 on tenant tables.** `FORCE ROW LEVEL SECURITY`
+  applies to the owner, and with no `app.tenant_id` set the policy matches nothing. It reads
+  as an empty table. Lift `FORCE` for the statement and restore it, exactly as the migration
+  does.
 
 ## What Phase 9 actually does
 
