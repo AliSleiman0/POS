@@ -67,8 +67,15 @@ jobs:
       # host: the script is reviewable before it runs, applies only what is missing,
       # and needs no EF tooling anywhere near the deployed instance. The runtime
       # image has no SDK and no source, deliberately.
+      # `dotnet restore` as well as `dotnet tool restore`, and the difference is the
+      # whole reason this step failed the first time it ever ran for real. The tool
+      # restore installs `dotnet-ef` from .config/dotnet-tools.json; it does not
+      # restore the projects' *packages*, so `migrations script` — which builds the
+      # startup project — died on NETSDK1004, "assets file not found". Nothing caught
+      # it earlier because Phase 8.3 shipped this workflow without it having run.
       - name: Generate the migration script
         run: |
+          dotnet restore
           dotnet tool restore
           dotnet ef migrations script \
             --idempotent \
