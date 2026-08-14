@@ -1,0 +1,65 @@
+# The build context is the repository root (see src/Pos.Api/Dockerfile), so this
+# file decides what the daemon is even shown. Two reasons it matters beyond
+# speed: a `bin/` copied from a Windows host poisons the Linux build with stale
+# platform-specific output, and anything listed here cannot end up in a layer by
+# accident — which is the guarantee wanted for the secret patterns below.
+
+## .NET build output — restored and built inside the image, never copied in
+**/bin/
+**/obj/
+artifacts/
+publish/
+*.user
+*.suo
+
+## Test and coverage output
+**/TestResults/
+coverage*/
+*.trx
+*.coverage
+
+## The web app. Built separately and served by its own static host, never by
+## the API — a frontend deploy must not restart the backend (Phase 8.1).
+src/Pos.Web/
+
+## Test projects and dev-only tools are not part of the API image
+tests/
+tools/
+
+## Docs, CI and local infrastructure
+docs/
+.github/
+docker/
+docker-compose.yml
+*.md
+
+## Version control and editor state.
+##
+## .editorconfig is deliberately NOT here. EnforceCodeStyleInBuild is on and
+## warnings are errors, so that file is part of the build contract rather than
+## editor cosmetics — it is where CA1861 is turned off for generated migrations.
+## Excluding it made the image build apply stricter rules than the host and fail
+## on twelve analyzer errors in committed, unmodified migration files.
+.git/
+.gitignore
+.gitattributes
+.vs/
+.vscode/
+.idea/
+
+## Secrets — nothing matching these may ever reach a layer
+.env
+.env.*
+!.env.example
+appsettings.Development.local.json
+appsettings.Local.json
+secrets.json
+*.pem
+*.key
+*.pfx
+*.p12
+
+## Local data volumes and OS noise
+pgdata/
+.DS_Store
+Thumbs.db

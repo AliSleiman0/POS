@@ -47,6 +47,16 @@ export const ErrorType = {
 
   /** The PIN was right; that member of staff still cannot authorise it. */
   overrideNotPermitted: 'override-not-permitted',
+
+  /**
+   * A queued sale's `occurredAt` is outside what the server will date a row by —
+   * a till whose clock is wrong, or a sale that has sat in the outbox too long.
+   *
+   * **Permanent.** Retrying sends the same body under the same key and gets the
+   * same answer, so the outbox must move it to the review queue on the first
+   * refusal rather than backing off against it for ever.
+   */
+  offlineSaleTimestampInvalid: 'offline-sale-timestamp-invalid',
 } as const
 
 export type ErrorTypeSlug = (typeof ErrorType)[keyof typeof ErrorType]

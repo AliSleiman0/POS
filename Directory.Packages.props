@@ -29,6 +29,17 @@
       because Phase 4.1 generates the web client from the same document.
     -->
     <PackageVersion Include="Scalar.AspNetCore" Version="2.16.17" />
+    <!--
+      Error tracking (Phase 8.4). The only new dependency the observability work took:
+      structured logging is the built-in JSON console formatter, because
+      Microsoft.Extensions.Logging already does structured logging and NuGetAudit runs at
+      level `low`, which makes every package a standing liability.
+
+      What this buys that logs do not: aggregation, so a defect is one issue with a count
+      rather than four hundred lines nobody reads, and a "this error is new" signal. It is
+      inert without Sentry:Dsn — see SentryScrubber for what never leaves the process.
+    -->
+    <PackageVersion Include="Sentry.AspNetCore" Version="6.8.0" />
   </ItemGroup>
 
   <ItemGroup Label="EF Core / Postgres">
@@ -61,7 +72,14 @@
       in-memory provider silently ignores — so a suite built on one would pass
       while proving nothing about the isolation this phase exists to guarantee.
     -->
-    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <!--
+      MetricCollector, for MetricsTests. Test-only, and it subscribes to the real meter in
+      the running host rather than replacing it — so the assertion is about the same path a
+      scraper reads. Needed because an instrument nobody records to and a system with
+      nothing wrong produce the identical flat line on a dashboard.
+    -->
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.8.0" />
   </ItemGroup>
 
 </Project>

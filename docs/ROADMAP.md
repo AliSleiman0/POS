@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current phase** | **Phase 7 complete** — 7.0 to 7.4 done. 1288 .NET + 207 Vitest + 60 Playwright green |
-| **Next up** | Phase 8.1, containerize. **Watch `InvariantGlobalization` when the Dockerfile lands** — it must stay `false`, or every IANA time zone stops resolving on Windows while still working on the runner. |
+| **Current phase** | **Phase 9 built and green**, with four gaps recorded rather than hidden — see the phase doc's *What is not done*. A till sells with the network off and the sale lands exactly once, dated when the customer paid. 1441 .NET + 321 Vitest + 70 Playwright green |
+| **Next up** | **A real shop.** `DECISIONS.md` has argued for this since Phase 8 and the argument is stronger now: nobody who has worked a till has used any of it, and that is still the only untested claim that matters. The four Phase 9 gaps are the first thing to finish if a shop asks for them. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
-| **Last updated** | 2026-08-09 |
+| **Last updated** | 2026-08-11 |
 
 ## Phase overview
 
@@ -28,9 +28,9 @@
 | 5 | [Web: register screen](phases/PHASE-5-web-register.md) | Scan → cart → cash tender → sale | ✅ Done |
 | 6 | [Receipts & reporting](phases/PHASE-6-receipts-reporting.md) | Receipt render/print, Z-report, sale history | ✅ Done |
 | 7 | [Employees, roles & audit](phases/PHASE-7-employees-audit.md) | Employee CRUD UI, audit log, settings | ✅ Done |
-| 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ⬜ Not started |
+| 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ✅ Done |
 | — | **← MVP line.** Everything above ships as v1. | | |
-| 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ⬜ Not started |
+| 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ✅ Done (4 gaps recorded) |
 | 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, desktop, platform admin (card payments dropped) | ⬜ Not started |
 
 Legend: ⬜ not started · 🔨 in progress · ✅ done · ⏸️ blocked
@@ -128,23 +128,31 @@ Detail: [phases/PHASE-7-employees-audit.md](phases/PHASE-7-employees-audit.md)
 
 Detail: [phases/PHASE-8-deployment.md](phases/PHASE-8-deployment.md)
 
-- [ ] **8.1 Containerize** — multi-stage `Dockerfile` for the API; web built to static assets.
-- [ ] **8.2 Hosting** — API container + managed Postgres; web on static host/CDN; HTTPS; CORS locked to the web origin.
-- [ ] **8.3 Migrations in CI/CD** — explicit deploy step. Not `EnsureCreated()`, not migrate-on-startup (races with >1 instance).
-- [ ] **8.4 Observability** — structured logs with `TenantId` on every scope, health checks, error tracking.
-- [ ] **8.5 Backups + restore drill** — automated backups **and an actually-executed restore test**. An untested backup is not a backup.
-- [ ] **8.6 Security pass** — rate limiting, security headers, dependency audit, secrets from env/vault, cross-tenant probe against the deployed instance.
-- [ ] **8.7 Tenant onboarding** — repeatable script to create tenant + Owner. No platform admin UI yet (per `DECISIONS.md`); direct DB inspection is the accepted stopgap.
+- [x] **8.1 Containerize** — `aspnet:10.0-noble-chiseled-extra` (`-extra` is load-bearing: plain chiseled ships no ICU and no tzdata, so every IANA zone breaks *inside the container only*). 168 MB, non-root, no SDK/source/shell, secrets inspected rather than assumed. `Hosting:BehindTlsTerminatingProxy` prevents the redirect loop an edge proxy would otherwise cause. The web client stopped assuming same-origin — including two raw `fetch` calls that bypassed the typed client, one of which would have signed every cashier out at the first token rotation.
+- [x] **8.2 Hosting** — **deployed and verified.** **Render**, not Fly: Fly requires a payment card. CORS locked to exact origins with an empty Production list refusing to boot; RLS role verified by the readiness probe; `render.yaml` defines all three resources; connection strings accepted in URI *or* keyword form. Live at `pos-api-jc43` / `pos-web-lcc5`, `pos_app` created NOBYPASSRLS, 15 migrations applied, `/health/ready` green, CORS verified both ways, OpenAPI/Scalar 404. Two free-plan limitations accepted and recorded: the API sleeps after ~15 min idle, and the database is deleted after 30 days.
+- [x] **8.3 Migrations in CI/CD** — `deploy.yml` gated on CI, idempotent SQL applied as the owner through a proxied `psql`, image deployed by digest so a rollback is a redeploy. `StartupMigrationTests` IL-scans the three shipped assemblies and was falsified. Dependency audits added to CI. Script verified building a schema from nothing. **The pipeline has not run for real.**
+- [x] **8.4 Observability** — JSON logs with `TenantId`/`UserId`/`RegisterId` on every request scope; Sentry behind a scrubber tested as a security boundary; Owner-only `POST /diagnostics/test-error`; four metrics. Two real bugs in the metrics filter were caught by its own tests.
+- [x] **8.5 Backups + restore drill** — **executed 2026-08-11**, and it found a real defect: `FORCE ROW LEVEL SECURITY` makes `pg_dump` exit 1 while still leaving a plausible 89 KB file with the users table missing. Corrected procedure, timings and verification queries in `RUNBOOK.md`. **Free Postgres has no automatic backups and self-deletes after 30 days** — the dump is the backup.
+- [x] **8.6 Security pass** — **done, including the production probe.** Login rate limit (set for a shop behind NAT, not a person), security headers, CSP verified in a browser against the built app, dependency audit in CI. `tools/Pos.Probe` replays the exported isolation manifest over HTTPS against the deployed instance: 33 claims, no violations, by-id routes answering 404 rather than 403. Falsified by pointing it at itself (11 violations, exit 1).
+- [x] **8.7 Tenant onboarding** — `Pos.Seed onboard`: requires an explicit connection, requires `TaxMode` and the business-day offset, generates a password shown once, refuses an existing slug. Verified by onboarding a shop and logging into it. Runbook covers onboarding, a locked-out Owner, a lost device, a disputed total, and what to do when each kind of credential leaks.
 
 ## Phase 9 — Offline (PWA)
 
 Deliberately post-MVP per `DECISIONS.md`. Rests on 3.5. Detail: [phases/PHASE-9-offline.md](phases/PHASE-9-offline.md)
 
-- [ ] **9.1 Service worker + app-shell cache** — app loads with no network.
-- [ ] **9.2 Local catalog mirror** — products/barcodes/prices in IndexedDB; scanning and cart-building work offline.
-- [ ] **9.3 Outbox queue** — sales queued with their client GUID, replayed on reconnect, with sync state visible in the UI.
-- [ ] **9.4 Conflict reconciliation** — oversell at sync is flagged for staff review, never silently corrected.
-- [ ] **9.5 Honest limits** — browser storage is evictable; web offline is documented and surfaced as best-effort.
+**Three pieces of server groundwork came first**, because the phase is unbuildable without them and reading the code is what exposed that:
+
+- [x] **9.0a Offline sale timestamps** — `POST /sales` accepts `occurredAt`; `Sale` gains a server-set `RecordedAt`. Without it a sale rung at 22:00 and replayed at 09:00 lands in the wrong trading day, in the wrong Z-report, against a drawer already counted. Bounded by `OfflineSaleRules`; outside the bounds is a permanent `422` so an outbox sends it to a person rather than retrying.
+- [x] **9.0b Pricing conformance corpus + TypeScript port** — the phase doc assumed an offline cart could be tendered; it could not, because every total came from `POST /sales/quote`. `Pos.Core.Pricing` is ported to TS over a faithful `decimal`, and both engines are asserted against one committed 913-cart corpus. **An explicit amendment to invariant 3**, in `DECISIONS.md`. Falsified six ways.
+- [x] **9.0c `GET /catalog/sync` + barcode soft delete** — `GET /products` had no changed-since filter, barcodes were readable one product at a time, and a hard-deleted barcode is invisible to any incremental feed. Two independent cursors; the feed may repeat a row and cannot skip one.
+
+- [x] **9.1 Service worker + app-shell cache** — app loads with no network; `registerType: 'prompt'` and a second gate so an update never applies mid-sale. Asserted against the emitted `sw.js`, not the config.
+- [x] **9.2 Local catalog mirror** — IndexedDB per tenant; mirror-first scanning online as well as off; incremental sync with the watermark committed only after a full walk; mirror age on screen. *Price-change-on-reconnect and a measured 10k catalog are not done.*
+- [x] **9.3 Outbox queue** — written before any network attempt, replayed as ordinary `POST /sales` with the original key, serial and classified. Proved end to end: a sale taken offline lands exactly once, dated when the customer paid. *Offline shift close is not done.*
+- [x] **9.4 Conflict reconciliation** — `/sync` explains each refusal, its consequence for the money, and the one action. A reused idempotency key deliberately offers **no** retry. Re-file carries the original `occurredAt` and a new key.
+- [x] **9.5 Honest limits** — persistence requested and its *answer* surfaced; warnings on refused storage, a long offline window and a large queue; a test rejects the words safe, secure and guaranteed.
+
+**Four gaps are recorded in the phase doc rather than hidden:** offline shift close, price-change-on-reconnect, a measured 10k-product sync, and the oversell case proved through two offline browsers.
 
 ## Beyond MVP
 

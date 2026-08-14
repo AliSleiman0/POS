@@ -122,6 +122,10 @@ namespace Pos.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("deleted_at");
+
                     b.Property<bool>("IsPrimary")
                         .HasColumnType("boolean")
                         .HasColumnName("is_primary");
@@ -147,7 +151,8 @@ namespace Pos.Data.Migrations
 
                     b.HasIndex("TenantId", "Code")
                         .IsUnique()
-                        .HasDatabaseName("ux_barcode_tenant_code");
+                        .HasDatabaseName("ux_barcode_tenant_code")
+                        .HasFilter("deleted_at IS NULL");
 
                     b.HasIndex("TenantId", "ProductId")
                         .HasDatabaseName("ix_barcode_tenant_product");
@@ -723,6 +728,10 @@ namespace Pos.Data.Migrations
                     b.Property<Guid?>("OriginalSaleId")
                         .HasColumnType("uuid")
                         .HasColumnName("original_sale_id");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("recorded_at");
 
                     b.Property<string>("RefundReason")
                         .HasColumnType("text")

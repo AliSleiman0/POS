@@ -86,9 +86,214 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 
 ### Deferred to the phase that decides them
 
-- **Hosting provider** — Fly.io vs. Azure App Service vs. VPS, all viable. Decided and recorded in [Phase 8.2](docs/phases/PHASE-8-deployment.md).
+- ~~**Hosting provider**~~ → **closed 2026-08-10: Fly.io.** See below.
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
-- **Refresh token in an `httpOnly` cookie** — deferred to [Phase 8.2](docs/phases/PHASE-8-deployment.md) along with hosting, because the right answer depends on the topology that phase picks. See the Phase 4.2 entry below for what ships until then.
+- ~~**Refresh token in an `httpOnly` cookie**~~ → **closed 2026-08-10: it stays in `sessionStorage`.** See below.
+
+### Resolved 2026-08-11 (during Phase 9)
+
+- **A sale rung offline carries its own timestamp.** `POST /sales` accepts an optional
+  `occurredAt`, and `Sale` gains a server-set `RecordedAt` beside `CompletedAt`.
+
+  Without it, a sale queued at 22:00 and replayed at 09:00 is dated when the network came
+  back. Every report in the system groups by `CompletedAt` — the trading-day bounds, the
+  Z-report, a shift's takings — so an evening's trade would appear in the following day's
+  figures and be missing from a drawer that was counted before it arrived. There is no way to
+  reconstruct it afterwards: the information simply is not on the row.
+
+  **It is the only client-supplied value in the system that reaches a stored column**, and it
+  is admitted with two guards. `OfflineSaleRules` bounds it — minutes ahead of the server for
+  clock skew between two machines, days behind it for a bank-holiday weekend offline but not
+  for a till whose battery died — and `RecordedAt` records the server's own clock regardless,
+  so the two can always be told apart. Outside the bounds is `422` with a stable type, because
+  the refusal is permanent and an outbox has to send it to a person rather than retry.
+
+  Deliberately **not** validated against the shift's opening time: reconciliation re-files a
+  refused sale into whatever drawer is open now, carrying its original `occurredAt`, and a rule
+  forbidding that would make the review queue a dead end.
+
+- **CLAUDE.md invariant 3 is amended: the client prices a cart when — and only when — the
+  server cannot be reached.** `src/Pos.Web/src/lib/pricing/` is a TypeScript port of
+  `Pos.Core.Pricing`, including a faithful reimplementation of .NET's `decimal`.
+
+  **This is a real weakening of a rule that was right**, and it is worth being plain about
+  why. The invariant says the server computes every total because two implementations of tax
+  and discount rules will differ eventually, and the place a difference surfaces is a customer
+  disputing a receipt at a counter. That reasoning still holds. What changed is the
+  alternative: offline there is no `POST /sales/quote` to ask, so the choice is not between one
+  engine and two. It is between two engines and a till that cannot take money when the line
+  goes down — which is the failure Phase 9 exists to fix, and the most common reason small
+  businesses reject a POS.
+
+  **What makes it survivable is `tests/fixtures/pricing-conformance.json`**: 913 carts
+  generated from the C# engine's own test corpus — both tax modes, the hand-worked cases and
+  500 seeded random baskets per mode — asserted by `PricingConformanceTests` on one side and
+  `pricing.conformance.test.ts` on the other. Amounts are compared as strings, **scale
+  included**, because `12.97` and `12.9700` are the same number and not the same result. A
+  change to either engine that is not a change to both turns one side red in CI.
+
+  Falsified rather than assumed: six deliberate breaks, five caught by the corpus. The sixth —
+  division rounding half away from zero instead of half to even — leaves all 913 carts
+  identical, because an exact tie at the 28th decimal place needs a quotient that terminates
+  precisely there and a ratio of two four-decimal money amounts never does. It is caught one
+  layer down by `decimal.test.ts`, whose expectations were read off the real .NET type. The
+  corpus proves the engines agree on carts a shop can ring; the unit tests prove the primitives
+  agree everywhere else. **Neither claim covers the other**, and the limit is recorded in both
+  files rather than left to be discovered.
+
+  The online path is unchanged. `POST /sales/quote` stays authoritative whenever it is
+  reachable, and the server still prices the sale that is finally written.
+
+- **The outbox is durable; the cart and the credential are not.** CLAUDE.md invariant 11 says
+  the register survives a reload and credentials do not, and sends both the cart and the
+  refresh token to `sessionStorage` so a shared till hands the next shift nothing. Phase 9's
+  handoff asked for this to be reconciled explicitly rather than quietly widened, so:
+
+  | | Where | Survives a browser close? |
+  |---|---|---|
+  | Cart | `sessionStorage` | **No** — the next shift must not inherit a basket |
+  | Refresh token | `sessionStorage` | **No** — invariant 11, untouched |
+  | Catalog mirror | IndexedDB | Yes — public shop data; rebuilding costs a download |
+  | Outbox | IndexedDB | **Yes** — a queued sale is money that has already changed hands |
+
+  **A queued sale is a third category, and that is the whole argument.** Losing a basket on a
+  tab close is the correct direction to fail — a cashier re-scans. Losing a sale a customer has
+  already paid for is not, and no amount of shared-device hygiene makes it so. Nothing in
+  IndexedDB is a credential, and the database is keyed per tenant, so a tablet signed into a
+  second shop can neither read the first's prices nor replay its queue.
+
+  **The cost is accepted and stated in the app.** A till restarted while offline cannot sign in
+  — the refresh token died with the tab and a PIN is verified by the server — so it cannot
+  trade until the connection returns. Its queue is kept and sent then. Caching PIN hashes
+  locally would fix that and would remove server-side lockout and rate limiting, which is a
+  larger security change than the capability is worth.
+
+### Resolved 2026-08-10 (during Phase 8)
+
+- **Hosting is Render.** Three resources in one `render.yaml`: the API as a Docker web
+  service, the SPA as a static site, and a managed Postgres.
+
+  **Fly.io was chosen first and reversed the same day, for a reason that is about us rather
+  than the technology.** Fly requires a payment card before it will create anything, and the
+  owner is not adding one at this stage. That is a legitimate constraint and it decides the
+  question — Render is the only credible option that starts with no card (Railway now gives a
+  one-off $5 trial and then $1/month, which does not cover an app *and* a database).
+
+  **The two limitations are real and are accepted with open eyes**, not glossed:
+
+  - A **free web service sleeps after ~15 minutes idle** and takes about a minute to wake.
+    For a till with a customer at the counter that is disqualifying — it is precisely the
+    failure this product exists to avoid, and it was why the Fly config pinned a machine
+    running. It is fine for proving a deployment and running Phase 8's verification.
+    **Moving the API to a paid instance is the single change that makes this
+    production-viable**, and it is the first thing to do before a real shop uses it.
+  - A **free Postgres is deleted 30 days after creation** (with a 14-day grace period). The
+    restore drill against it is still real and worth doing, but "backups proven to restore"
+    means less against a database that removes itself next month.
+
+  Almost nothing was provider-specific, which is why the switch cost an hour: the Dockerfile,
+  CORS, the RLS readiness check, the onboarding command, the runbook and every test are
+  unchanged. What moved was `fly.toml` → `render.yaml`, the deploy pipeline's CLI calls →
+  deploy hooks, and the SPA's headers from a Caddyfile into the blueprint.
+
+  **The web app is deliberately not served by the API.** They have different scaling and
+  caching characteristics, and serving the SPA from Kestrel means a CSS change restarts the
+  backend — a cashier mid-sale pays for a frontend deploy. On Render this also means the SPA
+  sits on a CDN that does *not* sleep, so only the first API call pays the cold start. The
+  cost of splitting them is that every call is cross-origin, which is what forced the two
+  decisions below.
+
+- **The Render deployment is a DEVELOPMENT environment, not production.** Decided
+  2026-08-11 after Phase 8 was verified on it. The free plan stays, with all three of its
+  consequences accepted deliberately rather than tolerated silently:
+
+  - The API **sleeps after ~15 minutes** and takes about a minute to wake. Unacceptable for a
+    till with a customer at the counter, fine for a demo and for verification. **Upgrading the
+    API instance is the single change that makes this production-viable** — it is not a
+    rewrite, and that is why the limitation is affordable.
+  - The database is **deleted 30 days after creation** (2026-09-10 for the current one) and
+    has **no automatic backups**. The `pg_dump` procedure in the runbook is the backup.
+  - Credentials on it are treated as development credentials. One `pos_app` password was
+    exposed in a session transcript and rotated; the exposure was judged acceptable on those
+    grounds rather than escalated.
+
+  **What this defers rather than settles:** the moment a real shop's sales are on this, all
+  three become production problems on the same day. The trigger to revisit is a paying client,
+  not a date.
+
+- **`SentryScrubber` does not scrub exception messages, and that is accepted for now.** It
+  strips headers, request bodies, query strings, tags and extras — but an exception *message*
+  travels as-is, and Npgsql puts the whole connection string into one. That is how a password
+  reached a transcript during Phase 8.
+
+  Accepted because no Sentry DSN is configured, so nothing is being sent anywhere: the SDK is
+  inert without one. **The trigger is the DSN.** Wiring real error tracking to this deployment
+  without closing the gap would send a live database credential to a third party on the first
+  connection failure, which is the one failure guaranteed to happen eventually.
+
+- **`pos_app` keeps `DELETE` on `sale`, `sale_line`, `tender` and `stock_movement`.** Invariant
+  4 calls those append-only, and the Phase 7.0 revoke covered `audit_entry` only. Accepted:
+  the rule is enforced by application code and by `No_route_updates_or_deletes_a_sale`, which
+  enumerates the routing table, so there is no path to a delete. The grant is a missing second
+  layer rather than an open door — the same shape of defence-in-depth that RLS provides for
+  tenancy, and worth adding as a deliberate migration rather than a hurried one.
+
+- **A Postgres connection string is accepted in either shape.** Managed hosts hand out
+  `postgres://user:pass@host/db`; Npgsql speaks `Host=…;Database=…`. The two are not
+  interchangeable and the failure is late and misleading — the configuration looks present and
+  correct, the app starts, and the first query throws a parse error about a keyword named
+  "postgres". `PostgresConnectionString.Normalize` converts at the one place every entry point
+  goes through, so the API, the seeder and the onboarding command all take whatever the
+  platform gave rather than each documenting a hand conversion done under time pressure.
+
+- **The refresh token stays in `sessionStorage`; the access token stays in memory.** Deferred
+  from Phase 4.2 to here because the answer depended on the topology, and the topology is now
+  known: the web app is on its own origin, so the `httpOnly` cookie version would need
+  `SameSite=None; Secure`, credentialed CORS with an exact origin, and a CSRF story that
+  same-origin would not have needed.
+
+  That is real work with a real surface, and the thing it protects against — an injected
+  script reading the token — is better addressed at this stage by the CSP the web app now
+  ships: `connect-src` names the API and nothing else, so a script that can read the token
+  cannot send it anywhere. Combined with what was already true (rotation on every use, and
+  reuse of a rotated token revoking the whole family), a stolen refresh token is usable until
+  its owner next refreshes and the theft then logs both parties out loudly.
+
+  Not closed forever — it is the obvious next hardening step if this ever handles more than
+  cash — but it is closed as a Phase 8 question rather than deferred a third time.
+
+- **CORS is an exact allow-list, and an empty one in Production refuses to boot.** A CORS
+  mistake is invisible from the server: the API answers every probe healthily while the
+  browser blocks every call, and the only evidence is a console message on a device in a
+  shop. Same reasoning as `JwtOptions.ValidateOnStart` — fail at boot, where somebody is
+  watching.
+
+- **Error tracking is Sentry, and the request body never leaves the process.** The scrubber
+  drops bodies wholesale rather than filtering fields, because a `POST /sales` body is a
+  customer's basket and what they paid, and no field-level rule survives a schema that changes
+  every phase — the failure mode of the one that does not is silent.
+
+- **Structured logging is the built-in JSON console formatter, not Serilog.**
+  `Microsoft.Extensions.Logging` already does structured logging and `NuGetAudit` runs at
+  level `low`, which makes every package a standing liability. Serilog's main advantage
+  (request timing) is better served by the metrics. Sentry is the only dependency the
+  observability work added.
+
+- **The application-level rate limiter caps credential guessing and nothing else.** There is
+  deliberately no global request limiter. Its number would have to sit above whatever the
+  busiest real shop does at its busiest minute — a figure nobody has measured, because no shop
+  has used this yet — and every estimate that turns out low takes a till down mid-queue.
+  Volumetric protection is the edge's job, where it can be tuned from observed traffic.
+
+  The login limit is partitioned per source address and set for **a shop, not a person**:
+  behind NAT an entire staff shares one address.
+
+- **Row-level security is verified continuously, by the readiness probe.** Managed Postgres
+  hands out a superuser by default, and an application connected as one has every RLS policy
+  inert while `pg_policies` still lists them as enabled. A machine whose connection can bypass
+  RLS reports unhealthy, receives no traffic, and fails the deploy. Chosen over a boot-time
+  assertion because that answers "was the role right when this machine last started", which
+  after six weeks of uptime is a claim about history.
 
 ### Resolved 2026-08-09 (during Phase 7)
 

@@ -112,7 +112,7 @@ A device token is returned once by `POST /registers/{id}/enroll` and is stored o
 | POST | `/products/{id}/activate` | `CanManageCatalog` | The way back. A mis-clicked deactivate is otherwise permanent |
 | GET | `/products/{id}/barcodes` | `CanSell` | A bare array, not paginated |
 | POST | `/products/{id}/barcodes` | `CanManageCatalog` | Many barcodes per product |
-| DELETE | `/products/{id}/barcodes/{barcodeId}` | `CanManageCatalog` | Barcodes *may* be deleted; products may not |
+| DELETE | `/products/{id}/barcodes/{barcodeId}` | `CanManageCatalog` | Barcodes *may* be withdrawn; products may not. A soft delete since Phase 9 — see below |
 
 `GET /products/by-barcode/{code}` returns `404` for an unknown barcode — the register turns that into "unknown item, add it?" rather than an error dialog. A blank or whitespace-only code is also `404`, not `400`: every answer this endpoint gives has to be one of the two a register knows how to render.
 
@@ -123,6 +123,10 @@ A device token is returned once by `POST /registers/{id}/enroll` and is stored o
 `GET /products/{id}/barcodes` is **not paginated**, unlike every other list. It is a bounded sub-resource — a handful of codes on one product — rather than a tenant-wide collection, so the envelope would be ceremony. It exists because `DELETE .../{barcodeId}` is otherwise unaddressable: a client has no other way to learn a barcode's id.
 
 A code already used in that tenant returns `409` with `type: .../duplicate-barcode`, whichever product holds the other one. The same code in a different tenant is accepted — two shops stocking the same manufacturer's item hold the same barcode. A barcode addressed under the wrong product is `404`, not a delete.
+
+**`DELETE .../{barcodeId}` is a soft delete, and the reason is the offline mirror rather than an audit trail.** A till syncs its catalog by asking what changed since it last looked, and a row deleted outright answers nothing at all — so the withdrawal would never reach the till, which would go on scanning a code the shop retired, at a price nobody authorised, until somebody rebuilt the mirror by hand. The row survives as a tombstone and `GET /catalog/sync` reports it under `removedBarcodeIds`.
+
+Three things follow, and they only work together: the code **stops scanning** immediately (`by-barcode` is `404`) and disappears from `GET /products/{id}/barcodes`; the unique index is filtered on `deleted_at IS NULL`, so a withdrawn code **can be added again** — which is the ordinary case, a mis-typed label being corrected; and a second `DELETE` of the same id is `404`, not another `204`, because a tombstone is not a second thing to remove.
 
 **`isPrimary` is advisory and nothing enforces one per product** (decided in 2.3). It is a label/display hint; the register scans whichever code is on the item in the customer's hand. A filtered unique index would make EF treat the foreign-key index as covered and would turn "make this the label code" into a clear-then-set across two saves, in exchange for a rule nothing reads yet. Revisit when a screen needs one.
 
@@ -160,6 +164,35 @@ Editing a `TaxClass.Rate` affects **future** sales only. Historical sale lines h
 **`TaxClass` has no deactivate route and no `IsActive`.** A rate that is legislated out of existence stays in the picker; the intended fix is to edit it or stop referencing it. Revisit if a tenant accumulates enough dead rates to matter.
 
 **At most one tax class per tenant is the default**, enforced by a filtered unique index. `isDefault: true` demotes whichever row held it rather than being refused — "make this the default" is what the caller meant. Two callers racing to do so leaves one with `409` and `type: .../default-tax-class-conflict`. Zero defaults is a legal state, and nothing in Phase 2 reads the flag.
+
+## Catalog sync — `/catalog/sync`
+
+| Method | Route | Auth | Notes |
+|---|---|---|---|
+| GET | `/catalog/sync` | `CanSell` | `?since=`, `?productCursor=`, `?barcodeCursor=`, `?limit=`. The offline mirror's feed |
+
+```json
+→ 200 {
+  "products":   [ { "id": "…", "sku": "…", "unitPrice": 1.20, "isActive": true, "changedAt": "…" } ],
+  "barcodes":   [ { "id": "…", "productId": "…", "code": "…", "changedAt": "…" } ],
+  "removedBarcodeIds": [ "…" ],
+  "taxClasses": [ … ], "categories": [ … ],
+  "settings":   { "currencyCode": "EUR", "taxMode": "Inclusive", … },
+  "watermark": "2026-08-11T09:14:22Z",
+  "nextProductCursor": null, "nextBarcodeCursor": null
+}
+```
+
+**Why this exists rather than a `?updatedSince=` on the CRUD endpoints.** `GET /products` has no such filter; barcodes are readable only one product at a time, so a ten-thousand-product catalog would be ten thousand requests; and a hard-deleted barcode is invisible to *any* incremental feed, which is why Phase 9 made that removal a soft delete. One call also means **one watermark** — a client stitching three feeds together has to reconcile three, and the window between them is where a product arrives whose tax class has not, which prices a cart at zero rather than failing.
+
+- **`?since=` omitted is a full download.** `removedBarcodeIds` is then empty by construction: a mirror being built from nothing has nothing to remove.
+- **The `watermark` is the server's clock, read before the queries.** Never the client's: a till whose clock is fast would skip everything changed in the gap. Read first so it can only ever be conservative.
+- **Re-ask from `watermark` minus ~30 seconds.** A row's `changedAt` is stamped when the write executes but becomes visible when its transaction commits, so a write that started before the watermark can appear after it carrying an earlier timestamp. The overlap costs nothing because the mirror's writes are upserts.
+- **Two cursors, walked independently.** Products and barcodes are different tables with different row counts; one position cannot mean "after here" in both. Commit the watermark only when **both** are null — committing early skips everything on the pages not yet fetched, permanently.
+- **The feed may repeat a row; it cannot skip one.** The sort key is `COALESCE(updated_at, created_at)`, which moves when a row is edited — so a product edited mid-walk is served twice. It can only move *ahead* of the cursor, because `updatedAt` increases monotonically, so a duplicate is the only way this fails and it costs one redundant put.
+- **Inactive products are included**, unlike `GET /products`. The deactivation is precisely the change the mirror needs; filtering it out leaves the till selling a withdrawn product for ever.
+- **No `costPrice`, in any shape of this response.** The feed is `CanSell` and reaches a Cashier's till, and margin is a reporting question — reports are online-only. Not omitted per caller: simply not part of the contract.
+- `settings` is sent on the **first page only** and is `null` on continuations. It is not incremental, and repeating it on every page of a large catalog is noise.
 
 ## Stock — `/stock`
 
@@ -241,7 +274,8 @@ The endpoint that must not get this wrong.
       "unitPriceOverride": null, "discountAmount": 0 }
   ],
   "cartDiscountAmount": 0,
-  "tenders": [ { "method": "Cash", "amount": 20.00 } ]
+  "tenders": [ { "method": "Cash", "amount": 20.00 } ],
+  "occurredAt": null                  // offline only — see below
 }
 ```
 
@@ -251,7 +285,9 @@ The endpoint that must not get this wrong.
   "subtotal": 17.50, "discountTotal": 0, "taxTotal": 1.50,
   "roundingAdjustment": 0, "total": 19.00,
   "tenders": [ { "method": "Cash", "amount": 20.00, "changeGiven": 1.00 } ],
-  "lines": [ … ]
+  "lines": [ … ],
+  "completedAt": "2026-08-11T17:40:12Z",   // when the trade happened
+  "recordedAt":  "2026-08-11T17:40:12Z"    // when the server wrote it
 }
 ```
 
@@ -267,6 +303,16 @@ Semantics:
 - Tenders are validated against the methods the MVP accepts: **`Cash` only**. A `Card` tender no processor ever saw would sit in the takings reconciling against nothing.
 - Under-tender is `409` `.../under-tender`; over-tender is ordinary and the excess comes back as `changeGiven`.
 - Replaying the same `Idempotency-Key` returns the **original** sale, byte for byte, not a second one.
+
+#### `occurredAt` — dating a sale that was rung offline
+
+Omit it online and the server uses its own clock for both timestamps. A sale queued by the offline outbox sends the moment the customer actually paid, because **every report groups by `completedAt`** — a sale rung at 22:00 and replayed at 09:00 would otherwise land in the wrong trading day, in the wrong Z-report, against a drawer that was counted hours before.
+
+- `completedAt` is `occurredAt` when one is sent, and the server's clock otherwise. `recordedAt` is **always** the server's clock. Online they are equal; the gap between them is how a client tells an offline sale from an ordinary one without a flag it would have to be trusted to set.
+- Bounded in both directions by `OfflineSaleRules`: at most a few minutes ahead of the server (clock skew between two machines, not early trading) and at most a few days behind it (long enough for a bank-holiday weekend offline, short enough to catch a till whose battery died and whose clock reads years out). Outside that → `422` `.../offline-sale-timestamp-invalid`, carrying `occurredAt` and `serverTime` so the review queue can show a person what the till claimed.
+- **That refusal is permanent.** The same body under the same key gets the same answer, so a client must move it to a review queue on the first refusal rather than retrying against it.
+- **It is deliberately not checked against the shift's opening time.** Reconciliation re-files a refused sale into whatever drawer is open now, carrying its original `occurredAt` — which is correctly earlier than that shift. A rule forbidding it would turn the review queue into a dead end.
+- **Mint it once, when the sale completes, and send that same value on every attempt.** It is part of the body, so it is part of the fingerprint `IdempotencyFilter` takes: a client that re-reads its clock on each retry sends a different body under the same key and is answered `409 idempotency-key-reused` for ever, which at a till reads as a sale that simply will not go through.
 
 ### `POST /sales/{id}/void` and `/refund`
 
@@ -407,6 +453,23 @@ Each changed key writes its own `SettingsChanged` audit entry. Saving with nothi
 
 **`Tenant` is not tenant-owned** — it is the list of tenants, and login resolves a row in it before any tenant is known. So this route has no query filter, no RLS policy and no interceptor check behind it, which makes it the only write in the API where the `Where` on the caller's own id is the entire control. No id is accepted from the route or the body.
 
+## Diagnostics — `/diagnostics`
+
+| Method | Route | Policy |
+|---|---|---|
+| POST | `/diagnostics/test-error` | `CanManageEmployees` |
+
+**Throws on purpose.** Answers `500` with the same bare `problem+json` any unhandled
+exception produces, and sends a report to error tracking carrying the caller's `tenant_id`.
+Its only job is to answer "is error tracking still receiving?" — a question whose other two
+answers are assuming yes (a DSN rotated six months ago fails silently) and finding out
+during a real incident.
+
+Owner-only rather than anonymous for two reasons: an open error trigger lets anyone exhaust
+a shop's error-tracking quota and bury the report that mattered, and every endpoint in this
+API states a policy because a test fails the build on one that does not. It reads and writes
+nothing, so it has no tenant boundary to cross — see its `IsolationManifest` exemption.
+
 ## Health — unversioned
 
 | Method | Route | Auth |
@@ -414,7 +477,18 @@ Each changed key writes its own `SettingsChanged` audit entry. Saving with nothi
 | GET | `/health/live` | anonymous |
 | GET | `/health/ready` | anonymous |
 
-`ready` checks database connectivity. Neither leaks version numbers or configuration.
+`live` is the process. It deliberately does **not** touch the database: if Postgres blips we
+want the proxy to stop sending traffic, not the orchestrator to kill and restart the process,
+which cannot fix a database and discards the connection pool trying.
+
+`ready` gates traffic and checks two things. The first is database connectivity. The second is
+that the connection's role is **`NOBYPASSRLS`** — because managed Postgres hands out a
+superuser by default, and an application connected as one has every row-level security policy
+silently inert while `pg_policies` still lists them as enabled. A machine that fails this
+receives no traffic and the deploy rolls back.
+
+Neither leaks version numbers or configuration: a failure is the word `Unhealthy` and nothing
+else. The reason goes to the logs, where somebody debugging a failed deploy is already looking.
 
 ---
 

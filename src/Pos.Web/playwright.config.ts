@@ -83,6 +83,16 @@ export default defineConfig({
         // normally ignores it.
         ASPNETCORE_URLS: 'http://localhost:5013',
         ConnectionStrings__Postgres: APP_CONNECTION,
+        // A test suite is not a shop. Sixty specs sign in over about two minutes,
+        // where a real shop's staff sign in a handful of times a day — tills use
+        // /auth/pin and a live session uses /auth/refresh, neither of which is
+        // this endpoint. Every spec also comes from 127.0.0.1, so they share one
+        // rate-limit partition the way a shop behind NAT does.
+        //
+        // Stated here rather than by loosening the real limit, which exists to
+        // cap credential stuffing and is set for a shop rather than for a suite.
+        // SecurityHardeningTests covers the limit itself with its own address.
+        RateLimits__LoginAttemptsPerWindow: '10000',
         // Supplied rather than taken from user-secrets: CI has none, and a
         // deploy with no usable signing key must refuse to start
         // (ValidateOnStart). Generated per run rather than written down — no

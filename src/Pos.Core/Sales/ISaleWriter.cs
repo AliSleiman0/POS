@@ -45,6 +45,18 @@ public sealed record TenderInstruction(TenderMethod Method, Money Amount, string
 /// themselves, and the cashier is recorded.
 /// </para>
 /// </param>
+/// <param name="OccurredAt">
+/// When the customer actually stood at the counter, for a sale rung offline and replayed
+/// later. Null — the ordinary online case — means "now".
+/// <para>
+/// <b>The one client-supplied value in this record that reaches a stored column</b>, and it is
+/// admitted because the alternative is worse: without it a queued sale is dated when the
+/// network came back, which puts it in the wrong trading day and the wrong Z-report. It is
+/// bounded by <see cref="OfflineSaleRules"/> at the edge, it never becomes an amount, and
+/// <see cref="Entities.Sale.RecordedAt"/> keeps the server's own clock beside it so the two
+/// can always be told apart.
+/// </para>
+/// </param>
 public sealed record SaleCommitRequest(
     Guid ClientTransactionId,
     Guid RegisterId,
@@ -53,12 +65,22 @@ public sealed record SaleCommitRequest(
     PricedSale Priced,
     IReadOnlyList<TenderInstruction> Tenders,
     IReadOnlySet<Guid> StockTrackedProductIds,
-    Guid? AuthorizedBy = null);
+    Guid? AuthorizedBy = null,
+    DateTimeOffset? OccurredAt = null);
 
 /// <summary>What was committed.</summary>
 /// <param name="SaleId">The new sale.</param>
 /// <param name="SaleNumber">The per-tenant sequential reference a person quotes.</param>
-/// <param name="CompletedAt">Server-set, from <c>TimeProvider</c>.</param>
+/// <param name="CompletedAt">
+/// When the trade happened: the request's <c>OccurredAt</c> if it carried one, otherwise the
+/// server's clock. What the receipt prints and what every report groups by.
+/// </param>
+/// <param name="RecordedAt">
+/// When the server wrote it, from <c>TimeProvider</c>, always. Later than
+/// <paramref name="CompletedAt"/> only for a replayed offline sale — and it is what the
+/// idempotency record is stamped with, because that record describes the <i>attempt</i>
+/// rather than the trade.
+/// </param>
 /// <param name="ChangeGiven">The excess over the total, handed back.</param>
 /// <param name="LineIds">The persisted line ids, in cart order.</param>
 /// <param name="Discrepancies">Products whose on-hand went negative, flagged for review.</param>
@@ -66,6 +88,7 @@ public sealed record SaleCommitResult(
     Guid SaleId,
     long SaleNumber,
     DateTimeOffset CompletedAt,
+    DateTimeOffset RecordedAt,
     Money ChangeGiven,
     IReadOnlyList<Guid> LineIds,
     IReadOnlyList<Guid> Discrepancies);

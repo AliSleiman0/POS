@@ -1,9 +1,12 @@
-import { type RefObject } from 'react'
+import { useEffect, useState, type RefObject } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EmptyState, ErrorState, LoadingState } from '@/components/states'
 import { formatMoney } from '@/lib/money'
 import { useProducts } from '@/features/catalog/queries'
+import { useOffline } from '@/features/offline/offlineContext'
+import { searchProducts } from '@/lib/offline/catalog'
+import type { MirroredProduct } from '@/lib/offline/db'
 import type { CartProduct } from './cart'
 
 /**
@@ -17,6 +20,15 @@ import type { CartProduct } from './cart'
  * Tiles rather than a table: this is tapped with a finger on a counter tablet,
  * and a row in a dense list is a mis-tap.
  */
+/** A row the grid can render, from either source. */
+interface DisplayProduct {
+  id: string
+  name: string
+  sku: string
+  unit: CartProduct['unit']
+  unitPrice: string | number
+}
+
 export function ProductGrid({
   search,
   onSearchChange,
@@ -30,8 +42,52 @@ export function ProductGrid({
   currency: string
   onPick: (product: CartProduct) => void
 }) {
-  const products = useProducts({ q: search, categoryId: '', activeOnly: true })
-  const rows = products.data?.pages.flatMap((page) => page.items) ?? []
+  const offline = useOffline()
+  const isOffline = offline.connectivity === 'offline'
+
+  /*
+   * The server's list while online, the mirror's while not.
+   *
+   * Not mirror-first, unlike a scan — and the asymmetry is deliberate. A scan
+   * resolves one known code, where the mirror is both faster and no less
+   * correct. This is a *browse*: the catalog admin screen may have added a
+   * product a minute ago, and a grid that preferred the mirror would keep it
+   * invisible until the next sync for no benefit at all.
+   *
+   * The query is disabled while offline so TanStack Query does not spend the
+   * page's retries on a server nobody can reach.
+   */
+  const products = useProducts({ q: search, categoryId: '', activeOnly: true }, !isOffline)
+  const [mirrored, setMirrored] = useState<MirroredProduct[] | null>(null)
+
+  useEffect(() => {
+    if (!isOffline || offline.db === null) {
+      setMirrored(null)
+      return
+    }
+
+    let cancelled = false
+
+    void searchProducts(offline.db, search).then((found) => {
+      if (!cancelled) {
+        setMirrored(found)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOffline, offline.db, search])
+
+  const rows: DisplayProduct[] = isOffline
+    ? (mirrored ?? []).map((product) => ({
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        unit: product.unit as CartProduct['unit'],
+        unitPrice: product.unitPrice,
+      }))
+    : (products.data?.pages.flatMap((page) => page.items) ?? [])
 
   return (
     <section
@@ -51,9 +107,11 @@ export function ProductGrid({
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {products.isPending ? (
+        {isOffline && mirrored === null ? (
+          <LoadingState label="Reading this till's catalog…" />
+        ) : !isOffline && products.isPending ? (
           <LoadingState label="Loading products…" />
-        ) : products.isError ? (
+        ) : !isOffline && products.isError ? (
           <ErrorState
             error={products.error}
             title="Could not load the products."
@@ -65,9 +123,11 @@ export function ProductGrid({
           <EmptyState
             title={search === '' ? 'No products yet.' : 'Nothing matched.'}
             description={
-              search === ''
-                ? 'Add products in the catalog and they appear here.'
-                : 'Try a shorter search.'
+              isOffline
+                ? 'This till is offline and searching its own copy of the catalog, which may be incomplete.'
+                : search === ''
+                  ? 'Add products in the catalog and they appear here.'
+                  : 'Try a shorter search.'
             }
           />
         ) : (
@@ -103,7 +163,7 @@ export function ProductGrid({
         )}
       </div>
 
-      {products.hasNextPage ? (
+      {!isOffline && products.hasNextPage ? (
         <Button
           variant="outline"
           className="self-center"

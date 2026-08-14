@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Pos.Probe</RootNamespace>
+    <!-- An operational tool. Built by CI so it cannot rot, but never shipped. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    Deliberately NO project reference to Pos.Api, Pos.Data or the test projects.
+
+    The probe attacks a deployed instance over HTTPS and must share nothing with it. If it
+    referenced the application's own types it could pass by agreeing with a bug — the whole
+    value here is that it knows only what a hostile client knows: a URL, two logins, and the
+    manifest's claims about what must not be visible.
+  -->
+
+</Project>

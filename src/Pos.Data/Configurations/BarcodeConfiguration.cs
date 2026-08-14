@@ -33,13 +33,29 @@ internal sealed class BarcodeConfiguration : IEntityTypeConfiguration<Barcode>
             .HasConstraintName("fk_barcode_product");
 
         // The hottest read in the system: every scan at every till.
+        //
+        // FILTERED on deleted_at IS NULL since Phase 9 made removal a soft delete. Without the
+        // filter a withdrawn code could never be re-added — mis-scan a label, remove it, scan
+        // the right one, and a 23505 comes back for a code the shop cannot see anywhere. The
+        // uniqueness that matters is among the codes that still scan.
         builder.HasIndex(b => new { b.TenantId, b.Code })
             .IsUnique()
+            .HasFilter("deleted_at IS NULL")
             .HasDatabaseName("ux_barcode_tenant_code");
 
         // "The barcodes of this product", and the index the RESTRICT above needs when a
         // product deletion is attempted.
         builder.HasIndex(b => new { b.TenantId, b.ProductId })
             .HasDatabaseName("ix_barcode_tenant_product");
+
+        // The catalog sync feed's keyset — "every barcode changed since <watermark>" — is
+        // served by an EXPRESSION index on (tenant_id, COALESCE(updated_at, created_at), id),
+        // created in the CatalogSync migration rather than here.
+        //
+        // Not expressible through HasIndex: EF has no expression-index API, and a composite
+        // index on the two columns would not serve an ORDER BY over their COALESCE. It has to
+        // be COALESCE because UpdatedAt is null until a row is first edited — ordering on
+        // updated_at alone would sort every never-edited barcode into one undifferentiated
+        // null bucket, and a keyset cannot page through that.
     }
 }

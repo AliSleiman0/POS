@@ -9,10 +9,24 @@
          auth pipeline are both things a mocked host would not exercise at all. -->
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Testcontainers.PostgreSql" />
+    <!-- IL inspection, for StartupMigrationTests. Reflection cannot see a method call:
+         `db.Database.Migrate()` leaves no trace in metadata, because EF Core is referenced
+         either way. The instruction stream is the only place the evidence exists. Same
+         technique and same reasoning as ArchitectureTests in Pos.Core.Tests. -->
+    <PackageReference Include="Mono.Cecil" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Pos.Api\Pos.Api.csproj" />
+    <!--
+      Referenced so StartupMigrationTests can scan it, and so it is guaranteed to be
+      built before the suite runs rather than scanned only when somebody happened to
+      build the whole solution first. A guard that silently skips an assembly is not a
+      guard. Phase 8.7 hardens this tool into the onboarding command and will test it
+      directly through this same reference.
+    -->
+    <ProjectReference Include="..\..\tools\Pos.Seed\Pos.Seed.csproj" />
   </ItemGroup>
 
   <ItemGroup>

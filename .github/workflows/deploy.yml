@@ -1,0 +1,138 @@
+name: Deploy
+
+# build → test → MIGRATE → deploy API → deploy web
+#
+# Triggered by CI succeeding on main rather than by the push itself, so the gate is
+# real: nothing deploys from a commit whose tests have not passed. `workflow_run`
+# always executes the copy of this file on the default branch, which is what stops a
+# branch from editing its own deploy gate.
+#
+# Migrations are a SEPARATE, explicit step here and are applied by nothing else.
+# Not EnsureCreated, not migrate-on-startup: with more than one API instance, two
+# processes starting together apply the same migration and leave the schema in a
+# state neither expected. StartupMigrationTests fails the build if that is ever
+# added back.
+#
+# ── Render specifics ────────────────────────────────────────────────────────────
+#
+# Render auto-deploys on push by default, which would race this workflow and deploy
+# the API before the schema was ready. TURN AUTO-DEPLOY OFF for both services in the
+# dashboard (Settings → Build & Deploy → Auto-Deploy: No) and let this file drive it.
+# That is not optional — with auto-deploy on, the migration step below is decorative.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+  # For a redeploy that is not a new commit — rolling forward after fixing a secret,
+  # for instance. Same steps, same order.
+  workflow_dispatch:
+
+# One deploy at a time, and never cancelled half-way. A cancelled run that has
+# applied migrations but not deployed the API leaves the old image against a new
+# schema, which is the one combination the rollback plan cannot undo cheaply.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy (production)
+    runs-on: ubuntu-latest
+
+    # workflow_dispatch has no triggering run, so `conclusion` is empty there.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      # The commit CI actually tested, not whatever main points at now. Without the
+      # explicit ref a workflow_run checkout takes the branch head, which may already
+      # be a newer, untested commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # ─────────────────────────────────────────────────────────── migrate
+      #
+      # An idempotent script rather than `dotnet ef database update` against a remote
+      # host: the script is reviewable before it runs, applies only what is missing,
+      # and needs no EF tooling anywhere near the deployed instance. The runtime
+      # image has no SDK and no source, deliberately.
+      - name: Generate the migration script
+        run: |
+          dotnet tool restore
+          dotnet ef migrations script \
+            --idempotent \
+            --project src/Pos.Data \
+            --startup-project src/Pos.Api \
+            --output migrate.sql
+          echo "--- statements to be applied ---"
+          grep -c ';' migrate.sql || true
+
+      # As the OWNER, using Render's external connection string. pos_app is
+      # NOBYPASSRLS with no CREATE on the schema — which is exactly what makes it
+      # safe for the application to run as, and exactly why it cannot migrate.
+      #
+      # No tunnel needed: Render exposes an external URL for the database, which is
+      # simpler than the proxy this step needed on other platforms. It is also why
+      # DATABASE_OWNER_URL must be treated as a live credential.
+      - name: Apply migrations
+        env:
+          DATABASE_OWNER_URL: ${{ secrets.DATABASE_OWNER_URL }}
+        run: |
+          if [ -z "$DATABASE_OWNER_URL" ]; then
+            echo "::error::DATABASE_OWNER_URL is not set. See docs/RUNBOOK.md."
+            exit 1
+          fi
+
+          # ON_ERROR_STOP so a failed statement fails the deploy. Without it psql
+          # reports success having skipped everything after the first error, and the
+          # API deploys against a half-migrated schema.
+          psql -v ON_ERROR_STOP=1 "$DATABASE_OWNER_URL" -f migrate.sql
+
+      # ──────────────────────────────────────────────────────── deploy API
+      #
+      # After the schema, never before. An additive migration is compatible with the
+      # previously deployed build, so this ordering also means a failure here can be
+      # rolled back from the dashboard without touching the database.
+      #
+      # Render builds from the repository, so the deploy hook is the trigger and the
+      # commit is whatever main points at. That is a real difference from deploying a
+      # pinned image digest: the rollback is Render's "redeploy previous", not a
+      # digest we chose. Recorded in docs/RUNBOOK.md § Rolling back a deploy.
+      - name: Deploy the API
+        env:
+          HOOK: ${{ secrets.RENDER_API_DEPLOY_HOOK }}
+        run: curl --fail --silent --show-error "$HOOK"
+
+      # Last, and a separate service: static assets and a stateful API scale and
+      # cache differently, and a frontend deploy must not restart the backend.
+      - name: Deploy the web app
+        env:
+          HOOK: ${{ secrets.RENDER_WEB_DEPLOY_HOOK }}
+        run: curl --fail --silent --show-error "$HOOK"
+
+      # A deploy that reports success while the API is unreachable is worse than one
+      # that fails, because nobody looks. The retries are generous on purpose: a free
+      # Render instance takes about a minute to wake, so a fast check here would fail
+      # on cold start rather than on anything real.
+      - name: Verify the deployment answers
+        env:
+          API_ORIGIN: ${{ secrets.API_ORIGIN }}
+          WEB_ORIGIN: ${{ secrets.WEB_ORIGIN }}
+        run: |
+          curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors \
+            "$API_ORIGIN/health/ready"
+          echo
+          curl --fail --silent --show-error --retry 10 --retry-delay 5 --retry-all-errors \
+            -o /dev/null "$WEB_ORIGIN/"
+          echo "API and web both answered."

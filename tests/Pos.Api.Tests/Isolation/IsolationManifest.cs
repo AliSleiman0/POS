@@ -827,6 +827,24 @@ public static class IsolationManifest
         },
         new()
         {
+            Key = "GET api/v1/catalog/sync",
+            Kind = IsolationKind.Exempt,
+
+            // CanSell: the caller is a till building the mirror it sells from.
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "Answers FIVE collections in one object, so the Collection shape — "
+                      + "which unwraps one `items` array — cannot express it. Exempt here "
+                      + "rather than weakened there: teaching the manifest to check an "
+                      + "arbitrary path would make every other row's assertion vaguer to "
+                      + "accommodate one endpoint. Covered by "
+                      + "CatalogSyncTests.Every_collection_is_scoped_to_the_calling_tenant, "
+                      + "which asserts all five at once — products, barcodes, tax classes, "
+                      + "categories and the withdrawn-barcode tombstones — plus "
+                      + "The_settings_block_is_the_calling_tenants_own, since Tenant is not "
+                      + "tenant-owned and carries no query filter of its own.",
+        },
+        new()
+        {
             Key = "PUT api/v1/settings",
             Kind = IsolationKind.Exempt,
             Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
@@ -835,6 +853,17 @@ public static class IsolationManifest
                       + "no interceptor behind it, because Tenant is deliberately not "
                       + "tenant-owned. Covered by "
                       + "SettingsTests.A_put_only_ever_touches_the_calling_tenants_row.",
+        },
+        new()
+        {
+            Key = "POST api/v1/diagnostics/test-error",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "Reads nothing, writes nothing and takes no id — it throws. There is no "
+                      + "tenant boundary for it to cross because it never reaches data. What "
+                      + "does matter about it is who may call it, which is the Refused list "
+                      + "above and DiagnosticsTests: an anonymous caller could otherwise fill a "
+                      + "shop's error-tracking quota and bury a real report under noise.",
         },
         new()
         {

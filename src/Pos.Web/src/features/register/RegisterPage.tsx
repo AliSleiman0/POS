@@ -8,6 +8,13 @@ import { Button } from '@/components/ui/button'
 import { ErrorState } from '@/components/states'
 import { useToast } from '@/components/toastContext'
 import { isStorableAmount } from '@/features/catalog/validation'
+import { useOffline } from '@/features/offline/offlineContext'
+import { buildOfflineSale, resolveOfflineLines } from '@/features/offline/offlineSale'
+import { QueuedSalePanel } from '@/features/offline/QueuedSalePanel'
+import { useOfflineQuote } from '@/features/offline/useOfflineQuote'
+import { lookupBarcode, readSettings } from '@/lib/offline/catalog'
+import { enqueue } from '@/lib/offline/outbox'
+import type { OutboxDisplay } from '@/lib/offline/db'
 import { beep, isScanSoundMuted, setScanSoundMuted } from '@/lib/beep'
 import { formatMoney, parseServerDecimal, type ServerDecimal } from '@/lib/money'
 import {
@@ -79,9 +86,22 @@ export function RegisterPage() {
   const toast = useToast()
 
   const { cart, dispatch } = useCart()
+  const offline = useOffline()
   const override = useOverride()
   const shift = useCurrentShift()
   const quote = useQuote(cart, override.authorization?.grant ?? null)
+
+  /*
+   * The same total, from the mirror, when the server cannot be reached.
+   *
+   * Without it the tender step stays disabled offline — it is gated on a quote
+   * having returned — and the till can fill a basket it cannot sell, which is
+   * precisely the failure this phase exists to remove.
+   */
+  const offlineQuote = useOfflineQuote(offline.db, cart, offline.connectivity === 'offline')
+
+  /** Whichever number is authoritative right now. The panels cannot tell. */
+  const priced = offline.connectivity === 'offline' ? offlineQuote.quote : quote.data
 
   const [pending, setPending] = useState('')
   const [unknownCode, setUnknownCode] = useState<string | null>(null)
@@ -103,6 +123,9 @@ export function RegisterPage() {
   const [tendering, setTendering] = useState(false)
   const [tenders, setTenders] = useState<Tender[]>([])
   const [completed, setCompleted] = useState<CompletedSale | null>(null)
+
+  /** A sale taken with no server to send it to. Shown instead of `completed`. */
+  const [queued, setQueued] = useState<{ saleKey: string; display: OutboxDisplay } | null>(null)
 
   const completeSale = useCompleteSale()
 
@@ -177,6 +200,7 @@ export function RegisterPage() {
       // off the screen — no dismiss button, because a queue does not wait for
       // one.
       setCompleted(null)
+      setQueued(null)
       dispatch({ type: 'add', product })
       beep('ok')
       // The flash is a one-shot: cleared straight after so the next scan of the
@@ -199,6 +223,45 @@ export function RegisterPage() {
   const onScan = useCallback(
     async (code: string) => {
       try {
+        /*
+         * The mirror first, always — online as well as offline.
+         *
+         * Not only a fallback for a dropped connection. A scan is the hottest
+         * read in the application, and a till that pays a round trip per item
+         * is slow on exactly the connection a shop has. The server is the
+         * fallback for a code the mirror has not seen, which is also how a
+         * mirror that is behind heals itself.
+         */
+        const mirrored = offline.db === null ? null : await lookupBarcode(offline.db, code)
+
+        if (mirrored !== null) {
+          if (!mirrored.product.isActive) {
+            beep('miss')
+            toast.show(`${mirrored.product.name} is not for sale.`, {
+              tone: 'error',
+              detail: 'It has been deactivated in the catalog.',
+            })
+            return
+          }
+
+          addProduct({
+            productId: mirrored.product.id,
+            name: mirrored.product.name,
+            sku: mirrored.product.sku,
+            unit: mirrored.product.unit as CartProduct['unit'],
+            unitPrice: mirrored.product.unitPrice,
+          })
+          return
+        }
+
+        if (offline.connectivity === 'offline') {
+          // No mirror hit and no server to ask. Said plainly rather than as a
+          // failed lookup: the cashier's next move is different.
+          beep('miss')
+          setUnknownCode(code)
+          return
+        }
+
         const product = await queryClient.fetchQuery({
           queryKey: registerKeys.barcode(code),
           queryFn: () =>
@@ -237,7 +300,7 @@ export function RegisterPage() {
         toast.showError(caught, 'Could not look that code up.')
       }
     },
-    [addProduct, queryClient, toast],
+    [addProduct, offline.connectivity, offline.db, queryClient, toast],
   )
 
   /** Enter on something a person typed: a quantity, or a cash amount. */
@@ -399,6 +462,86 @@ export function RegisterPage() {
    * with a customer waiting, and — worse — would lose the key that makes the
    * retry safe.
    */
+  /**
+   * Takes the sale onto the till itself.
+   *
+   * **Priced locally**, by the engine `lib/pricing` ports from `Pos.Core` and
+   * that CI pins to the server's over 913 baskets. **Written to the outbox
+   * before anything else**, which is the same ordering `writeSaleInFlight`
+   * follows below and for the same reason: if this page dies a moment later,
+   * the record is what lets the money be accounted for.
+   */
+  const completeOffline = useCallback(
+    async (saleKey: string, registerId: string, shiftId: string) => {
+      if (offline.db === null || tenant === null) {
+        return
+      }
+
+      try {
+        const settings = await readSettings(offline.db)
+        const lines = await resolveOfflineLines(offline.db, cart)
+
+        /*
+         * The mirror cannot price this basket.
+         *
+         * A product or a tax class it has not got — a till that has never
+         * synced, or an item added to the catalog since. Refused rather than
+         * guessed: inventing a rate would charge a customer tax nobody
+         * legislated, and neither they nor the cashier would ever know.
+         */
+        if (settings === null || lines === null) {
+          beep('miss')
+          toast.show('This till cannot price that offline.', {
+            tone: 'error',
+            detail:
+              'Its copy of the catalog is missing something. Nothing was charged — wait for the connection to come back.',
+          })
+          return
+        }
+
+        const built = buildOfflineSale({
+          cart,
+          registerId,
+          shiftId,
+          tenders,
+          settings,
+          lines,
+        })
+
+        await enqueue(offline.db, {
+          saleKey,
+          tenantKey: tenant.slug,
+          registerId,
+          shiftId,
+          occurredAt: built.occurredAt,
+          body: built.body,
+          display: built.display,
+        })
+
+        await offline.refresh()
+
+        setQueued({ saleKey, display: built.display })
+        setCompleted(null)
+        setTendering(false)
+        setTenders([])
+        setPending('')
+
+        // The sale is finished as far as this till is concerned: its identity
+        // is spent and the basket is gone. What is outstanding is the sending,
+        // which the queue owns and the status chip counts.
+        dispatch({ type: 'clear' })
+
+        beep('ok')
+      } catch (caught) {
+        // Storage refused — quota, or a private-mode browser. The cart and the
+        // key are untouched, so nothing is lost and nothing was charged.
+        beep('miss')
+        toast.showError(caught, 'This till could not save that sale. Do not take the money.')
+      }
+    },
+    [cart, dispatch, offline, tenant, tenders, toast],
+  )
+
   const onCompleteSale = useCallback(() => {
     const saleKey = cart.saleKey
 
@@ -414,6 +557,21 @@ export function RegisterPage() {
      * ask what the key bought instead of guessing. Written after the response
      * it would exist only in the cases that do not need it.
      */
+    /*
+     * No server to send it to: the queue *is* the completion.
+     *
+     * Reached only when the connectivity probe says offline — a *failed*
+     * attempt while online is left exactly as it was, keeping the cart, the
+     * tenders and the in-flight record so the cashier can press Complete again
+     * and `useSaleRecovery` can resolve it after a reload. That flow is proven
+     * and this does not disturb it; what it adds is the case where there was
+     * never going to be an answer.
+     */
+    if (offline.connectivity === 'offline' && offline.db !== null) {
+      void completeOffline(saleKey, shift.registerId, shift.data.id)
+      return
+    }
+
     writeSaleInFlight({
       saleKey,
       tenders,
@@ -523,8 +681,11 @@ export function RegisterPage() {
     )
   }, [
     cart,
+    completeOffline,
     completeSale,
     dispatch,
+    offline.connectivity,
+    offline.db,
     override,
     resolveSpentKey,
     shift.data,
@@ -579,7 +740,7 @@ export function RegisterPage() {
         case 'F7':
           // A function key, like F2/F3/F4 — a barcode cannot contain one, so
           // reserving it cannot delete a character from the middle of a scan.
-          if (!tendering && !isEmpty(cart) && quote.data !== undefined) {
+          if (!tendering && !isEmpty(cart) && priced !== undefined) {
             event.preventDefault()
             beginTender()
           }
@@ -607,16 +768,7 @@ export function RegisterPage() {
           break
       }
     },
-    [
-      beginAdjustment,
-      beginTender,
-      cancelTender,
-      cart,
-      dispatch,
-      quote.data,
-      selectedLine,
-      tendering,
-    ],
+    [beginAdjustment, beginTender, cancelTender, cart, dispatch, priced, selectedLine, tendering],
   )
 
   useScanner(status === 'authenticated', {
@@ -677,6 +829,19 @@ export function RegisterPage() {
         <UnresolvedPaymentBanner onRetry={retryRecovery} />
       ) : null}
 
+      {/* The honest-limits warning, in the page and where the selling happens.
+          Null most of the time by design — a banner that is always there is one
+          nobody reads, and this one has to be read. */}
+      {offline.risk !== null ? (
+        <div
+          role="alert"
+          data-testid="offline-risk"
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2.5"
+        >
+          <p className="flex-1 text-sm text-foreground">{offline.risk}</p>
+        </div>
+      ) : null}
+
       {unknownCode !== null ? (
         <UnknownCodeBanner
           code={unknownCode}
@@ -705,9 +870,9 @@ export function RegisterPage() {
           {shift.isPending ? null : !shift.isSuccess ? (
             // A 404 from `/shifts/current` is the answer "no drawer is open".
             <OpenShiftPanel registerId={shift.registerId} currency={currency} />
-          ) : tendering && quote.data !== undefined ? (
+          ) : tendering && priced !== undefined ? (
             <TenderPanel
-              quote={quote.data}
+              quote={priced}
               currency={currency}
               tenders={tenders}
               pending={pending}
@@ -724,7 +889,9 @@ export function RegisterPage() {
               {/* The last sale's change, until the next item is scanned. It sits
                   above the total so the number being read out is the top of the
                   column, not something the eye has to hunt for. */}
-              {completed !== null ? (
+              {queued !== null ? (
+                <QueuedSalePanel saleKey={queued.saleKey} display={queued.display} />
+              ) : completed !== null ? (
                 <SaleCompletePanel
                   sale={completed.sale}
                   currency={currency}
@@ -745,19 +912,21 @@ export function RegisterPage() {
                  * A stale total that looks authoritative is the worst failure
                  * this screen has.
                  */
-                quote={isEmpty(cart) ? undefined : quote.data}
+                quote={isEmpty(cart) ? undefined : priced}
                 currency={currency}
                 provisionalMinor={provisionalMinor}
-                isQuoting={quote.isFetching}
-                quoteFailed={quote.isError}
+                isQuoting={offline.connectivity === 'offline' ? false : quote.isFetching}
+                quoteFailed={
+                  offline.connectivity === 'offline' ? offlineQuote.unpriceable : quote.isError
+                }
                 pending={pending}
-                canTender={!isEmpty(cart) && quote.data !== undefined && !quote.isError}
+                canTender={!isEmpty(cart) && priced !== undefined}
                 onTender={beginTender}
               />
             </>
           )}
 
-          {quote.isError ? (
+          {quote.isError && offline.connectivity !== 'offline' ? (
             <ErrorState
               error={quote.error}
               title="The server could not price this cart."

@@ -34,6 +34,12 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        // Managed hosts hand out `postgres://user:pass@host/db`; Npgsql speaks keyword form.
+        // Accepting both here means every entry point — the API, the seeder, the onboarding
+        // command, a maintenance job — takes whatever the platform gave, rather than each
+        // one documenting a conversion an operator does by hand under time pressure.
+        connectionString = PostgresConnectionString.Normalize(connectionString);
+
         // Time enters through TimeProvider, never DateTimeOffset.UtcNow, so audit stamps
         // and business-day arithmetic can be tested at a fixed instant.
         services.TryAddSingleton(TimeProvider.System);

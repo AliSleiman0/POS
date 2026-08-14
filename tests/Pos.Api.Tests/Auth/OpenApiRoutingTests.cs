@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Pos.Api.Auth;
 using Pos.Api.Tests.Infrastructure;
 
 namespace Pos.Api.Tests.Auth;
@@ -85,6 +86,12 @@ public sealed class OpenApiRoutingTests
             builder.UseSetting("Jwt:SigningKey", new string('k', 64));
             builder.UseSetting("Jwt:Issuer", "pos-tests");
             builder.UseSetting("Jwt:Audience", "pos-tests");
+
+            // And for CORS, on the same terms: PosCors refuses to start a Production host
+            // with no allowed origin, because that is a deployment whose web app cannot
+            // call it while the API reports perfectly healthy. This theory builds a
+            // Production host on purpose, so it has to satisfy that rule like a real one.
+            builder.UseSetting($"{CorsOptions.Keys.AllowedOrigins}:0", "https://pos-tests.invalid");
         }
     }
 }

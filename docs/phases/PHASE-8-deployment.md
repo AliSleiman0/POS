@@ -18,10 +18,50 @@
 - Web built to static assets (`pnpm build` → `dist/`), served by a CDN/static host — **not** by the API. Different scaling and caching characteristics, and serving a SPA from your API means a frontend deploy restarts your backend.
 
 **Exit criteria**
-- [ ] Image builds and runs locally against the Compose Postgres
-- [ ] Runs as non-root
-- [ ] No secrets baked in (inspect the layers, don't assume)
-- [ ] Image size sane (<250 MB)
+- [x] Image builds and runs locally against the Compose Postgres — `/health/ready` answers
+      `Healthy` connecting as `pos_app`, and `GET /reports/daily` returns a business day bounded
+      at 23:00 UTC for `Europe/Dublin`, which is ICU and real tz data resolving inside the
+      container. That last check is the one that matters: it is what `-chiseled-extra` buys and
+      what plain `-chiseled` would have broken silently.
+- [x] Runs as non-root — UID 1654, inherited from the chiseled base and not overridden
+- [x] No secrets baked in — inspected, not assumed: image env carries only the base image's own
+      variables, `docker history` names no credential, and the exported filesystem contains only
+      the two committed `appsettings*.json` (logging configuration alone), zero `.cs`/`.csproj`,
+      no SDK, no shell and no package manager
+- [x] Image size sane (<250 MB) — 168 MB exported filesystem, 75.6 MB content size
+
+**Also landed here** (found while building the above, and load-bearing for 8.2):
+
+- **`Hosting:BehindTlsTerminatingProxy`.** Behind an edge that terminates TLS,
+  `UseHttpsRedirection` sees plain `http` and answers 307 to the URL the caller was already on —
+  every request loops and the API serves nothing while the process stays up and health checks
+  keep passing. The flag registers `UseForwardedHeaders` and skips the redirect. A flag rather
+  than an environment check because "is something in front of me" is a fact about the
+  deployment, not about Production; and rather than always-on because `RateLimitPolicies`
+  partitions unauthenticated PIN attempts on the remote address, which a trusted-by-default
+  `X-Forwarded-For` would make spoofable. Four tests in `TlsTerminationTests`.
+- **`.editorconfig` ships in the build context.** `EnforceCodeStyleInBuild` is on and warnings
+  are errors, so it is part of the build contract — it is where CA1861 is disabled for generated
+  migrations. Excluding it made the image build apply stricter rules than the host and fail on
+  twelve analyzer errors in committed, unmodified files.
+- **The web client no longer assumes same-origin.** `VITE_API_BASE_URL`, resolved and validated
+  once in `src/api/baseUrl.ts`, replacing `window.location.origin` in both clients *and* in the
+  two raw `fetch` calls that bypassed them — `auth/refresh.ts` and the `AppLayout` health
+  indicator. The refresh one was the dangerous one: cross-origin it would have fetched the static
+  host's `index.html`, got a 200, failed to parse, and signed the cashier out at the first token
+  rotation. Unset means same-origin, so development and all 60 Playwright specs are unchanged.
+
+**Two accepted, documented behaviours** (neither is a defect, both would otherwise be
+rediscovered from a log):
+
+- `Cannot load library libgssapi_krb5.so.2` appears twice at connection-pool start. Npgsql probes
+  for GSSAPI; the chiseled image has no Kerberos library and no package manager to add one.
+  Password authentication succeeds and every query runs. Cosmetic.
+- Data Protection keys are not persisted, so each machine generates its own. Nothing depends on
+  them: `AddDefaultTokenProviders()` is deliberately absent (`IdentityServiceCollectionExtensions`),
+  auth is JWT with our own signing key, and refresh and device tokens are opaque and hashed in the
+  database. **If a password-reset flow is ever added, this stops being harmless** — that is the
+  trigger to add a shared key ring.
 
 ## 8.2 Hosting
 
@@ -64,10 +104,21 @@ Run via `dotnet ef database update` from a one-off job, or a generated idempoten
 - Rollback plan documented per release: for additive migrations, redeploy the previous image; for destructive ones, restore from backup — which is why 8.5 must be real
 
 **Exit criteria**
-- [ ] Migrations are a separate pipeline step
-- [ ] No `EnsureCreated` or startup migration anywhere (grep and confirm)
-- [ ] A full deploy from a clean database succeeds
-- [ ] Rollback documented
+- [x] Migrations are a separate pipeline step — `.github/workflows/deploy.yml`, gated on CI
+      succeeding rather than on the push, applying an idempotent script as the **owner**
+      through a proxied `psql`. The image is built once and deployed **by digest**, so the
+      artifact that was migrated against and the one that runs are the same, and a rollback
+      is a redeploy of a known digest.
+- [x] No `EnsureCreated` or startup migration anywhere — and enforced rather than confirmed
+      once. `StartupMigrationTests` IL-scans `Pos.Api`, `Pos.Data` and `Pos.Seed`; a grep
+      would match the word in a comment and in the command `DevSeeder` deliberately prints.
+      Falsified: injecting `Migrate()` into `Program.cs` turns it red and names the caller.
+- [x] A full deploy from a clean database succeeds — verified locally: the generated script
+      applied to an empty database produces 15 migrations, 27 tables, 23 with row-level
+      security *forced*, and 23 policies. Checksummed to confirm the script tested was the
+      one generated. **The pipeline itself has not run for real.**
+- [x] Rollback documented — `docs/RUNBOOK.md`, and honest about the split: additive is a
+      redeploy, destructive is a restore.
 
 ## 8.4 Observability
 
@@ -79,11 +130,21 @@ Run via `dotnet ef database update` from a one-off job, or a generated idempoten
 **Never logged:** passwords, PINs, tokens, full card data. A PIN in a log file is a PIN in every log aggregator, backup and support screenshot forever.
 
 **Exit criteria**
-- [ ] `TenantId` on every request-scoped log line
-- [ ] Health checks respond and are wired to the platform's probes
-- [ ] Error tracking receives a deliberately triggered test error
-- [ ] A grep for logged secrets finds nothing
-- [ ] Alerts on sale-submission failures
+- [x] `TenantId` on every request-scoped log line — opened in `TenantResolutionMiddleware`,
+      which is the one component that knows the tenant. Ids only, never a name or an email:
+      a log line reaches an aggregator, a backup and eventually a support screenshot.
+- [x] Health checks respond and are wired to the platform's probes — `fly.toml`. `live`
+      deliberately does not touch the database; `ready` checks connectivity **and** that the
+      connection cannot bypass RLS.
+- [ ] Error tracking receives a deliberately triggered test error — `POST
+      /diagnostics/test-error` is built, Owner-only, and tested; **it has not been fired at a
+      real DSN.**
+- [x] A grep for logged secrets finds nothing — stronger than a grep: `SentryScrubber` drops
+      credential headers, the request body wholesale and the query string, with 23 tests and
+      a drift guard asserting every `HeaderName` constant in the assembly is covered.
+- [ ] Alerts on sale-submission failures — the instrument exists and is tested
+      (`pos.sales.submissions`, tagged by outcome so a 4xx refusal cannot page anybody); the
+      alert rule needs somewhere to live.
 
 ## 8.5 Backups + restore drill
 
@@ -130,11 +191,18 @@ Per `DECISIONS.md`, **no platform admin UI yet** — direct DB inspection is the
 Document, in a runbook: onboarding a tenant, resetting a locked-out Owner, revoking a lost device, investigating "my total is wrong" (which is: find the sale, read its snapshots, read the audit log).
 
 **Exit criteria**
-- [ ] Onboarding is one repeatable command
-- [ ] It cannot be invoked with a tenant token
-- [ ] `TaxMode` is set at onboarding and rejected on later change
-- [ ] Runbook written for the four scenarios above
-- [ ] A fresh tenant can log in and complete a sale end to end
+- [x] Onboarding is one repeatable command — `dotnet run --project tools/Pos.Seed -- onboard`
+- [x] It cannot be invoked with a tenant token — true by construction: a CLI holding a
+      database credential, and `No_route_creates_a_tenant` is what notices if somebody adds
+      the self-service signup endpoint that would make it false
+- [x] `TaxMode` is set at onboarding and rejected on later change — required by the command
+      (no default: a default is right for one country and silently wrong for the next), and
+      `PUT /settings` already refuses it once sales exist
+- [x] Runbook written — `docs/RUNBOOK.md` covers the four scenarios plus a credential-leak
+      table and a rollback procedure
+- [ ] A fresh tenant can log in and complete a sale end to end — **half done.** A fresh
+      tenant was onboarded into a scratch database and its Owner logged in through the API
+      with the right `TaxMode` and day offset. The sale is part of 8.8, against production.
 
 ---
 

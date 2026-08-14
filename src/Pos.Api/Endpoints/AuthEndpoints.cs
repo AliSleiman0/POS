@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Pos.Api.Auth;
+using Pos.Api.Observability;
 using Pos.Core.Entities;
 using Pos.Core.Tenancy;
 using Pos.Data;
@@ -77,6 +78,11 @@ public static class AuthEndpoints
 
         auth.MapPost("/login", LoginAsync)
             .AllowAnonymous()
+            // Anonymous and password-checking, which makes it the one endpoint an attacker
+            // can hammer for free. Identity's per-account lockout caps guessing against one
+            // account; this caps it across all of them from one source, which is the attack
+            // that actually works.
+            .RequireRateLimiting(RateLimitPolicies.LoginAttempts)
             .WithSummary("Exchange tenant slug, email and password for a token pair");
 
         auth.MapPost("/pin", PinLoginAsync)
@@ -277,14 +283,22 @@ public static class AuthEndpoints
     private static async Task<Results<Ok<AuthResponse>, ProblemHttpResult>> RefreshAsync(
         RefreshRequest request,
         TokenService tokens,
+        PosMetrics metrics,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(metrics);
 
         var result = await tokens.RotateAsync(request.RefreshToken, cancellationToken);
 
         if (!result.Succeeded)
         {
+            // Worth counting rather than merely logging. One rejection is a tab left open
+            // overnight; a spike is either every till being signed out mid-shift or a
+            // token family being replayed — and those need opposite responses. The
+            // response to the caller is deliberately the same either way.
+            metrics.RefreshRejected();
+
             return InvalidCredentials();
         }
 

@@ -11,8 +11,10 @@ namespace Pos.Core.Entities;
 /// retail catalog modelling mistake</b>, and it is discovered only once there is data,
 /// when the fix is a migration and a re-label rather than a schema decision.
 /// <para>
-/// Unlike products, barcodes <i>may</i> be deleted: a mis-scanned label is data entry, not
-/// history. Nothing financial points at a barcode — a sale line points at the product.
+/// Unlike products, barcodes <i>may</i> be removed: a mis-scanned label is data entry, not
+/// history. Nothing financial points at a barcode — a sale line points at the product. Since
+/// Phase 9 the removal is a <see cref="DeletedAt"/> stamp rather than a <c>DELETE</c>; see
+/// that property for why.
 /// </para>
 /// </remarks>
 public sealed class Barcode : TenantEntity
@@ -41,6 +43,26 @@ public sealed class Barcode : TenantEntity
     /// eventually shows a label code picks one and the decision can be revisited then.
     /// </remarks>
     public bool IsPrimary { get; set; }
+
+    /// <summary>
+    /// When this code was removed from the catalog, or <see langword="null"/> while it scans.
+    /// </summary>
+    /// <remarks>
+    /// <b>A soft delete, and the reason is the offline mirror rather than an audit trail.</b>
+    /// A till syncs its catalog incrementally, asking "what changed since?" — and a row that
+    /// has been deleted outright answers nothing at all. The removal would never reach the
+    /// till, which would go on scanning a code the shop had withdrawn, at a price nobody
+    /// authorised, until the next full re-download. A tombstone is the only way a
+    /// <c>?since=</c> feed can carry a removal.
+    /// <para>
+    /// It has three consequences that have to hold together, because any one of them alone is
+    /// a bug: the unique index on <c>(tenant_id, code)</c> is filtered on
+    /// <c>deleted_at IS NULL</c>, so a withdrawn code can be re-added rather than colliding;
+    /// the scan lookup and the per-product listing both exclude deleted rows; and
+    /// <c>GET /catalog/sync</c> reports them as <c>removedBarcodeIds</c>.
+    /// </para>
+    /// </remarks>
+    public DateTimeOffset? DeletedAt { get; set; }
 
     /// <summary>
     /// Canonicalises a scanned or typed code into the stored form.

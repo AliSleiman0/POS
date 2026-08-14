@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Pos.Api.Auth;
 using Pos.Api.Common;
 using Pos.Api.Errors;
+using Pos.Api.Observability;
 using Pos.Core.Catalog;
 using Pos.Core.Entities;
 using Pos.Core.Exceptions;
@@ -161,6 +162,9 @@ public static class ProductEndpoints
         // guid constraint would refuse a barcode anyway.
         products.MapGet("/by-barcode/{code}", ByBarcodeAsync)
             .RequireAuthorization(Policies.CanSell)
+            // Scan-to-line latency, which is what a cashier experiences as "the system is
+            // slow" and the first thing to degrade as a catalog grows.
+            .AddEndpointFilter<BarcodeLookupMetricsFilter>()
             .WithSummary("Scan a barcode");
 
         products.MapGet("/{id:guid}/barcodes", ListBarcodesAsync)
@@ -309,7 +313,7 @@ public static class ProductEndpoints
     {
         var barcodes = await db.Barcodes
             .AsNoTracking()
-            .Where(b => b.ProductId == id)
+            .Where(b => b.ProductId == id && b.DeletedAt == null)
             .OrderBy(b => b.Code)
             .Select(b => new BarcodeResponse(b.Id, b.ProductId, b.Code, b.IsPrimary, b.CreatedAt))
             .ToListAsync(cancellationToken);
@@ -375,21 +379,41 @@ public static class ProductEndpoints
         Guid id,
         Guid barcodeId,
         AppDbContext db,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
-        // Matched on both ids. A code addressed under the wrong product is a 404 rather than
-        // a delete of somebody else's barcode that happened to be named correctly.
-        var barcode = await db.Barcodes
-            .FirstOrDefaultAsync(b => b.Id == barcodeId && b.ProductId == id, cancellationToken);
+        ArgumentNullException.ThrowIfNull(timeProvider);
 
-        // 404 on a second delete rather than 204-always. Deleting a code that is not there
+        // Matched on both ids, and on the code not already being withdrawn. A code addressed
+        // under the wrong product is a 404 rather than a delete of somebody else's barcode
+        // that happened to be named correctly.
+        var barcode = await db.Barcodes
+            .FirstOrDefaultAsync(
+                b => b.Id == barcodeId && b.ProductId == id && b.DeletedAt == null,
+                cancellationToken);
+
+        // 404 on a second delete rather than 204-always. Removing a code that is not there
         // means the client is working from a stale list, which is worth it seeing.
         if (barcode is null)
         {
             return TypedResults.NotFound();
         }
 
-        db.Barcodes.Remove(barcode);
+        /*
+         * Stamped, not deleted — since Phase 9, and for the offline mirror rather than for an
+         * audit trail.
+         *
+         * A till syncs its catalog by asking what changed since it last looked. A row that has
+         * been removed outright answers nothing at all, so the withdrawal would never reach the
+         * till and it would go on scanning a code the shop had retired, at a price nobody
+         * authorised, until somebody thought to rebuild the mirror. A tombstone is the only
+         * thing a `?since=` feed can carry a removal as.
+         *
+         * The unique index is filtered on `deleted_at IS NULL`, so the code can be added again
+         * afterwards — which is the ordinary case: a label was mis-typed and is being corrected.
+         */
+        barcode.DeletedAt = timeProvider.GetUtcNow();
+
         await db.SaveChangesAsync(cancellationToken);
 
         return TypedResults.NoContent();
@@ -614,7 +638,9 @@ public static class ProductEndpoints
         from barcode in db.Barcodes.AsNoTracking()
         join product in db.Products on barcode.ProductId equals product.Id
         join taxClass in db.TaxClasses on product.TaxClassId equals taxClass.Id
-        where barcode.Code == code
+        // A withdrawn code must not scan. The row survives as a tombstone so the offline
+        // mirror learns the code is gone; it is not a code the shop still sells against.
+        where barcode.Code == code && barcode.DeletedAt == null
         select new BarcodeLookupResponse(
             barcode.Id,
             barcode.Code,
@@ -638,7 +664,9 @@ public static class ProductEndpoints
         from barcode in db.Barcodes.AsNoTracking()
         join product in db.Products on barcode.ProductId equals product.Id
         join taxClass in db.TaxClasses on product.TaxClassId equals taxClass.Id
-        where barcode.Code == code
+        // A withdrawn code must not scan. The row survives as a tombstone so the offline
+        // mirror learns the code is gone; it is not a code the shop still sells against.
+        where barcode.Code == code && barcode.DeletedAt == null
         select new BarcodeLookupResponse(
             barcode.Id,
             barcode.Code,

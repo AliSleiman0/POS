@@ -1,139 +1,140 @@
 # Session Handoff
 
-**Written:** 2026-08-10 · **Branch:** `main` at `6e198f3` · **Phase 7 merged — start 8.1**
+**Written:** 2026-08-11 · **Branch:** `phase-9/offline` (**not pushed, not merged**) ·
+**Phase 9 built and green, with four gaps recorded**
 
-> Phases 0–7 are done. **Phase 8 completes the MVP**: containerize, host, migrate in CI/CD, make
-> it observable, prove the backups restore, harden it, and be able to onboard a tenant. After
-> that it is a product you can put in front of a paying shop.
+> A till now sells with the network off. The sale is priced locally by an engine pinned to the
+> server's, queued before any network attempt, and lands **exactly once** when the connection
+> returns — dated when the customer paid rather than when it synced. That is asserted end to
+> end against a real API and a real Postgres, not described.
+>
+> **Four things are not done.** They are listed in
+> [`PHASE-9-offline.md` § What is not done](phases/PHASE-9-offline.md#what-is-not-done) and
+> repeated below. None is a stub; each is absent.
 
-> This file is session state, not durable truth. Overwrite it when you finish. Durable decisions
-> belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md).
+> This file is session state, not durable truth. Overwrite it when you finish. Durable
+> decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in
+> [`ROADMAP.md`](ROADMAP.md), operational procedure in [`RUNBOOK.md`](RUNBOOK.md).
 
 ---
 
 ## Before anything else
 
-**Read CI for `8d964d3` and `6e198f3`.** `gh run list --branch main --limit 2`.
+1. **`phase-8/deployment` is still unmerged**, and `phase-9/offline` was branched from it. The
+   Phase 8 handoff's warnings still apply in full and have **not** been actioned:
+   `deploy.yml` fires on the first green CI run on `main` and will fail because none of
+   `DATABASE_OWNER_URL`, `RENDER_API_DEPLOY_HOOK`, `RENDER_WEB_DEPLOY_HOOK`, `API_ORIGIN` or
+   `WEB_ORIGIN` exists as a GitHub secret. Set them before merging either branch.
+2. **Two migrations are new and unapplied anywhere but local dev**: `OfflineSaleTimestamps`
+   and `CatalogSync`. Both are hand-edited — read them before deploying, especially the
+   `FORCE ROW LEVEL SECURITY` note in the first.
+3. **The deployed database was due for deletion on 2026-09-10.** Free plan, 30 days, no
+   automatic backups. Unchanged by this phase.
+4. **`pnpm build` before `pnpm test:e2e`**, or five service-worker specs skip. CI now does this;
+   locally it is on you. They throw rather than skip under `CI`.
 
-[PR #16](https://github.com/AliSleiman0/POS/pull/16) was merged **at the owner's explicit
-instruction with two checks still pending**. At merge time *API contract*, *frontend (web)* and
-*GitGuardian* had passed; **backend (.NET) and e2e (Playwright) had not reported**, and both runs
-were still in progress when this file was written. Both suites were green locally on the same
-commit — 1288 .NET, 207 Vitest, 60 Playwright — so this is very likely fine, but that is not the
-same claim.
+## What Phase 9 actually does
 
-**If either job is red, fixing it comes before any Phase 8 work.** Branch protection does not
-gate on these checks, which is why the discipline has to come from reading them.
+- **Sells offline.** Scan from the mirror, price with the ported engine, tender, take cash. The
+  panel says *"Saved on this till"* and shows a local reference — there is no sale number,
+  because `SaleSequence` is assigned inside the server's transaction.
+- **Lands exactly once.** The queued sale replays as an ordinary `POST /sales` with its
+  original `Idempotency-Key`. No bulk endpoint, no sync API, no second server write path.
+- **Keeps the right date.** `occurredAt` is minted once when the sale completes and replayed
+  unchanged; `Sale.RecordedAt` records the server's clock beside it.
+- **Explains itself.** Header chip: online/offline, *n* to send, *n* needing review, and the
+  mirror's age. `/sync` explains every refusal and what it means for the money.
+- **Does not overpromise.** The limits panel is written to be unflattering, and a test rejects
+  the words *safe*, *secure* and *guaranteed* in every warning the app can produce.
 
-**Migrate before running anything.** Phase 7 added `20260808212506_AuditLog`.
+## What is NOT done
 
-```powershell
-dotnet tool restore
-docker compose up -d
-dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
-  --connection "Host=localhost;Port=5432;Database=pos_dev;Username=pos;Password=dev_only_not_a_secret"
-dotnet run --project tools/Pos.Seed
-```
+1. **Offline shift close.** A drawer cannot be closed while the till is offline. The design is
+   settled and small (`CloseShiftRequest` carries only a typed `countedCash`, so it queues like
+   any other write) — it is simply not built.
+2. **Price-change-on-reconnect for an open cart.** The mirror updates; nothing tells the
+   cashier the shelf price moved under a product already in the basket. The *charge* is
+   correct — the customer pays what they were told — but the phase doc asks for it to be
+   surfaced.
+3. **A measured 10k-product sync.** The design answers it (cursor pages, a yield between them,
+   bounded index-backed search). Nobody has run it. A design is not a measurement.
+4. **Oversell through two offline browsers.** The server behaviour is genuinely covered by
+   `SaleCommitTests`; nobody has driven two clients offline and sold the same last unit in
+   both. Step 6 of the phase doc's manual script is how.
 
-## Read first
+Also deliberate, not a gap: **no offline PIN login**. See `DECISIONS.md`.
 
-1. [`docs/phases/PHASE-8-deployment.md`](phases/PHASE-8-deployment.md) — all seven milestones.
-   **Read 8.3 and 8.5 before writing the Dockerfile in 8.1**: they constrain it. 8.3 forbids
-   migrate-on-startup, so the image must not be tempted to do it; 8.5 is the milestone most
-   likely to be skipped and the one that matters most.
-2. [`DECISIONS.md`](../DECISIONS.md) → the two open items at the top, and the Phase 7 block.
-3. [`docs/ARCHITECTURE.md`](ARCHITECTURE.md#authorization) → the policy table, which 8.6's
-   production cross-tenant probe re-tests against a deployed instance.
+## The three decisions this phase made
 
-## What 8.1 inherits, and what it has to build
+All three are in [`DECISIONS.md`](../DECISIONS.md) under *Resolved 2026-08-11*. Read them
+before changing any of this.
 
-**Nothing exists yet.** No `src/Pos.Api/Dockerfile`, no `.dockerignore`. Both are new files.
-
-What is already true and should stay true:
-
-| Precondition | State |
-|---|---|
-| `InvariantGlobalization` | `false` in `Directory.Build.props:45` — **see the trap below** |
-| Migrate-on-startup | **Absent from `src/` and `tools/`.** Only the two test fixtures call `MigrateAsync`, which is correct. 8.3's "grep and confirm" already passes — keep it that way |
-| `/health/live`, `/health/ready` | Built, `Program.cs:214` and `:219`. 8.4 wires them to platform probes |
-| JWT signing key | `ValidateOnStart` refuses to boot without a usable one (`Program.cs:54-59`). A container with no key fails loudly, which is what you want |
-| Rate limiting | `UseRateLimiter` at `Program.cs:189`. 8.6 tightens and verifies it |
-| OpenAPI / Scalar | Development-only (`Program.cs:147-159`), so 8.6's "Swagger not public" holds by construction — verify against the deployed instance anyway |
-| `pos_app` role | `NOBYPASSRLS`, no `CREATE` on schema. 8.2 must confirm production connects as it, **not** as the owner |
-| CORS | **Not configured at all.** 8.2 adds it, locked to the web origin |
+1. **`occurredAt` on `POST /sales`.** The only client-supplied value in the system that reaches
+   a stored column, bounded in both directions, with `RecordedAt` beside it.
+2. **Invariant 3 amended.** Two pricing engines, pinned by
+   `tests/fixtures/pricing-conformance.json` — 913 carts, asserted from C# *and* TypeScript,
+   compared **as strings so the decimal scale is pinned too**. A change to either engine that
+   is not a change to both turns one side red.
+3. **Invariant 11 reconciled.** Cart and credential stay in `sessionStorage`; the outbox is
+   durable in IndexedDB, because a queued sale is money that already changed hands.
 
 ## Things that will bite you
 
-1. **`InvariantGlobalization` must stay `false`, and 8.1 is the milestone most likely to break
-   it.** A new `Dockerfile` or a `csproj` edit that sets it back — or an Alpine base image
-   without ICU — makes every IANA time zone unresolvable. The failure is asymmetric and nasty:
-   **Linux containers keep working while Windows developer machines fail**, or vice versa
-   depending on how it breaks, so it can pass CI and break everyone locally. `Tenant.TimeZoneId`,
-   every receipt timestamp and every business-day boundary depend on it. If you pick
-   `aspnet:10.0-alpine`, you need `icu-libs` installed explicitly.
-2. **`pnpm format:check` is its own CI step**, not part of `build` or `test`. A completely green
-   local run tells you nothing about it. Run `pnpm --dir src/Pos.Web format` before pushing.
-3. **The e2e database accumulates and is never dropped.** It has now broken four things. The
-   newest: `admin.spec.ts` edits the shop's **receipt footer**, which is tenant-wide, and
-   `receipt.spec.ts` asserts the seeded one — one worker, alphabetical file order. There is an
-   `afterEach` in `admin.spec.ts` that restores it, and getting that right took three attempts
-   (it must wait for the form to render *and* to seed itself, or it silently no-ops). **Any spec
-   that edits tenant-wide settings must restore them.**
-4. **Signing in twice without signing out does nothing.** `/login` bounces an authenticated
-   visitor to `/`, so the form never renders and a `fill` hangs until the hook times out. Use
-   `switchTo` from `e2e/reports.spec.ts`.
-5. **Port 5173.** `playwright.config.ts` has `reuseExistingServer: !CI`, so anything else serving
-   on 5173 gets tested instead of this app — silently, with every spec failing at
-   `getByLabel('Shop')`. That happened this session and cost a full debugging cycle.
-6. **Running `dotnet test` and Playwright at once kills Docker.** With ~3 GB free, every
-   container was dropped mid-run and four API tests failed with `Failed to connect to
-   127.0.0.1`, which looks exactly like a code failure. Run them serially; check
-   `docker compose ps` before believing a red run.
-7. **A leftover `dotnet run` locks the build** (`Get-Process Pos.Api | Stop-Process -Force`) and
-   holds :5013, which also breaks `pnpm generate:api`.
-8. **EF's `SqlQuery<T>` maps by snake_case, not by your alias.** `AS "OwnerId"` looks up
-   `owner_id` and fails; single-word aliases like `AS "Value"` work.
+1. **`node_modules/.vite` goes stale when a dependency is added**, and the symptom is every
+   component dying with *"Invalid hook call"* in code you did not touch — `ToastProvider`, in
+   this case. It looks exactly like a duplicate-React bug and it is not. `rm -rf
+   node_modules/.vite`. CI never sees it. Recorded in `vite.config.ts`.
+2. **`occurredAt` is part of the idempotency fingerprint.** Anything that rebuilds a queued
+   request instead of replaying the stored body will re-read the clock, send a different body
+   under the same key, and be answered `409 idempotency-key-reused` **for ever** — which at a
+   till reads as a sale that will not go through. There is a test whose entire point is that
+   two builds of the same cart differ.
+3. **The pricing port's rounding is asymmetric on purpose.** Division rounds **half to even**
+   (that is what .NET's `decimal` does when it runs out of room); the pipeline rounds **half
+   away from zero**. Both were read off the real type by probing it. Do not "tidy" them into
+   agreement.
+4. **A decimal's *scale* is part of the result.** `12.97` and `12.9700` are the same number and
+   not the same result — scale propagates through the multiplication that follows, and the
+   pipeline rounds only at the end. The corpus compares strings for this reason.
+5. **The catalog feed may repeat a row and cannot skip one.** Its sort key is
+   `COALESCE(updated_at, created_at)`, which moves when a row is edited. The mirror's writes
+   must stay upserts.
+6. **A migration's `UPDATE` matches zero rows under `FORCE ROW LEVEL SECURITY`** when it runs
+   as the owner with no `app.tenant_id` set — silently. Invisible locally, because `pos` is a
+   superuser with `BYPASSRLS`. Verified against a `NOSUPERUSER NOBYPASSRLS` owner: `UPDATE 0`
+   versus `UPDATE 2`.
+7. **The pending-sales badge is hidden before the provider has counted.** A test that waits for
+   it to disappear passes instantly on a fresh page. Poll the server instead — three e2e drafts
+   died on this.
+8. **Still true from before:** `pnpm format:check` is its own CI step; never run `dotnet test`
+   and Playwright at once; a leftover `dotnet run` holds :5013; `InvariantGlobalization` must
+   stay `false`; origin values are a matched set.
 
-## What Phase 7 left owing
+## Where the offline code lives
 
-- **A deactivated user's access token still works for up to ~15 minutes.** Refresh tokens are
-  revoked and `IsActive` is checked at login, PIN entry and `/auth/me` — but not while validating
-  a JWT. Closing it needs a per-request liveness read or a token-version claim. Documented under
-  the deactivate route in `docs/API.md`. **8.4's observability makes this more visible, not less**
-  — worth deciding during 8.6 whether to close it before a real client.
-- **No password change or reset flow.** An owner sets an initial password and reads it out; the
-  person cannot change it afterwards. This is a real gap for a shipped product and it is not on
-  any phase's list. 8.7's runbook has to say what to do when somebody's password leaks.
-- **`AuthorizationRefused` covers sale adjustments only**, not every `403`.
-- **`GET /employees` is unpaginated.** Right for tens of staff; a chain with hundreds would want
-  the cursor, which needs `CursorPaging` to stop requiring `TenantEntity`.
-- **Two simultaneous receipt requests can both call themselves the first copy.**
+| | |
+|---|---|
+| `src/Pos.Web/src/lib/pricing/` | The ported engine. `decimal.ts` is the load-bearing file |
+| `src/Pos.Web/src/lib/offline/` | `db`, `catalog`, `sync`, `outbox`, `replay`, `connectivity`, `persist` |
+| `src/Pos.Web/src/features/offline/` | Provider, status chip, queued-sale panel, review page, limits |
+| `tests/fixtures/pricing-conformance.json` | The oracle. Regenerate with `POS_REGENERATE_PRICING_CORPUS=1` — it rewrites and then **fails**, deliberately |
+| `src/Pos.Web/e2e/offline.spec.ts` | The five specs that prove the phase |
 
-## Outstanding from earlier phases
+## Test counts
 
-- **`/reports/sales-summary` and `/reports/top-products`** — documented, *"Not built —
-  deferred"*, no screen.
-- **Margin cost is not snapshotted.** `SaleLine` records no cost price, so `/reports/margins`
-  restates itself when a supplier's price changes. A schema change and a decision, not a query.
-- **The tender pad has no "clear all"** for a mis-keyed split.
+1441 .NET · 321 Vitest · 70 Playwright. All green locally. **Not yet run in CI** — the branch
+is unpushed.
 
-## Not verified, and Phase 8 will not change most of it
+## Longer-standing gaps this phase did not change
 
-- **The beep.** Outstanding since 5.2, now seven sessions. Headless has no audio device; it needs
-  a person with speakers on, and it fires in two places.
-- **A real printer.** Print output has only ever been checked under Chromium's print emulation,
-  which honours the stylesheet but not a thermal printer's unprintable margins.
-- **The audit log has never been read by an owner looking for something.** It is tested and it
-  renders; whether it answers the question somebody actually asks is unknown.
-- **Nobody who has worked a till has used any of it.** Still the real bar, and no phase gate
-  clears it. Phase 8 ends with an MVP — `DECISIONS.md` argues for getting a real client on it
-  before Phase 9, and that argument gets stronger the more phases go by.
-
-## Two decisions Phase 8 has to make
-
-- **Hosting provider (8.2).** Fly.io, Azure App Service, or a VPS — all three are written up in
-  the phase doc with what each is good for. **Record the choice in `DECISIONS.md`**, not just in
-  the deploy config.
-- **Pricing/business model.** One-time purchase vs. recurring, given that we host. Still open.
-  Blocks nothing until Phase 10, but it must be settled before quoting a price to anyone — and
-  8.2 picks the cost base it has to cover.
+- **No password change or reset flow.** Still the largest gap for a shipped product, still on
+  no phase's list.
+- A deactivated user's access token works for ~15 minutes.
+- `/reports/sales-summary` and `/reports/top-products` documented, not built.
+- Margin cost is not snapshotted.
+- The beep (unverified since 5.2), a real thermal printer, and whether the audit log answers
+  the question somebody actually asks.
+- **Nobody who has worked a till has used any of it.** No phase gate clears this. It was the
+  real bar before Phase 9 and it is the real bar now — and Phase 9 has made it more urgent
+  rather than less, because offline behaviour is exactly the kind of thing that reads fine in a
+  test and wrong at a counter.

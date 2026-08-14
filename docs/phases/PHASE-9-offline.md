@@ -18,11 +18,11 @@
 - Never cache API responses by default — stale prices are wrong prices. Data caching is 9.2's job, deliberately and per-resource.
 
 **Exit criteria**
-- [ ] App loads with the network disabled
-- [ ] Installable; runs full-screen
-- [ ] Update prompts rather than swapping silently
-- [ ] Updates never apply mid-sale
-- [ ] No accidental API response caching (verify in devtools)
+- [x] App loads with the network disabled — shell precached; asserted against the built `sw.js` in `pwa.spec.ts`
+- [x] Installable; runs full-screen — manifest asserted in `pwa.spec.ts`
+- [x] Update prompts rather than swapping silently — `registerType: 'prompt'`, `skipWaiting` only in the message handler
+- [x] Updates never apply mid-sale — `isTillIdle` gates on empty cart **and** no minted sale key **and** no unresolved payment
+- [x] No accidental API response caching — asserted on the emitted worker, and falsified by adding a `StaleWhileRevalidate` over `/api/v1/products`
 
 ## 9.2 Local catalog mirror
 
@@ -35,11 +35,11 @@ IndexedDB (via `idb`) in `src/lib/offline/`.
 - On reconnect, refresh and surface changed prices for items sat in an open cart
 
 **Exit criteria**
-- [ ] Scanning works fully offline
-- [ ] Incremental sync, not full re-download
-- [ ] Mirror age visible
-- [ ] Price changes on reconnect are surfaced, not silently applied to a cart mid-sale
-- [ ] A large catalog (10k+ products) syncs and searches without stalling the UI
+- [x] Scanning works fully offline — mirror-first always, server only as the fallback
+- [x] Incremental sync, not full re-download — `GET /catalog/sync?since=`, watermark committed only after a full walk
+- [x] Mirror age visible — "Prices as of 14 min ago" in the header chip
+- [ ] **Not done.** Price changes on reconnect are not surfaced for a product sitting in an open cart. The mirror updates; nothing tells the cashier. See *What is not done*.
+- [~] A large catalog syncs in cursor-sized pages yielding between them, and search is bounded and index-backed — but **10k products has not actually been tried**. The design is right; the measurement is missing.
 
 ## 9.3 Outbox queue
 
@@ -55,12 +55,12 @@ IndexedDB (via `idb`) in `src/lib/offline/`.
 **This is why 3.5 exists.** Because idempotency is already the contract, the outbox needs no bulk-upload endpoint, no separate sync API and no second server-side code path — it replays ordinary requests. A second write path would be a second place for the pricing rules to be wrong.
 
 **Exit criteria**
-- [ ] Sales complete offline and persist locally
-- [ ] Replay on reconnect creates each sale exactly once — verified by replaying a queue that partially succeeded before the connection dropped again
-- [ ] Queue survives reload, restart and browser close
-- [ ] Sync state always visible
-- [ ] Permanent failures reach a review queue, not an infinite retry
-- [ ] Shift close works offline
+- [x] Sales complete offline and persist locally
+- [x] Replay creates each sale exactly once — asserted end to end in `offline.spec.ts`. The *partial* replay case is covered by idempotency rather than by its own test; see *What is not done*.
+- [x] Queue survives reload and restart (IndexedDB, keyed per tenant). A browser **close** also keeps the queue — but the session dies with it, so the till cannot send until somebody signs in again
+- [x] Sync state always visible — online/offline, N to send, N needing review, mirror age
+- [x] Permanent failures reach a review queue — the classifier's two exceptions (408/429 transient, 409 reused key permanent) are tested
+- [ ] **Not done.** Closing a drawer offline is not implemented. See *What is not done*.
 
 ## 9.4 Conflict reconciliation
 
@@ -74,11 +74,11 @@ The genuinely hard part, and the one `DECISIONS.md` flagged.
 - Reconciliation surfaces through the existing `GET /stock/discrepancies` plus a review UI: what happened, when, which registers, what the counts imply.
 
 **Exit criteria**
-- [ ] Concurrent offline oversell → both sales land, stock negative, discrepancy raised
-- [ ] Review UI explains the discrepancy well enough to act on
-- [ ] Queued sales keep their snapshotted prices
-- [ ] Sales of a since-deactivated product still land
-- [ ] Each of the above has an integration test simulating the offline window
+- [x] Oversell needs no new code — `SaleWriter` already raises a `StockDiscrepancy`; covered by `SaleCommitTests`. Not re-proved through two offline browsers; see *What is not done*.
+- [x] Review UI explains each refusal, its consequence for the money, and the one thing to do about it
+- [x] Queued sales keep their prices — the stored body is replayed byte for byte, and `SaleLine` snapshots server-side
+- [x] Sales of a since-deactivated product still land — history references products permanently
+- [~] `offline.spec.ts` covers the offline window for the sale path. The oversell case is covered server-side rather than through two offline clients.
 
 ## 9.5 Honest limits
 
@@ -92,10 +92,10 @@ Documented in `README`/`docs`, **and surfaced in the app**:
 **Overstating this would be the most damaging thing in the project.** A shop that believes offline is bulletproof, trades all day on it, and loses the data will not come back — and will tell people. Underpromising costs a feature bullet; overpromising costs the business.
 
 **Exit criteria**
-- [ ] Persistent storage requested; grant status visible
-- [ ] Limits documented in user-facing help, not only in code comments
-- [ ] Warning when the queue is large or the offline window is long
-- [ ] No marketing or UI copy claims guaranteed offline durability on web
+- [x] Persistent storage requested on sign-in; the **answer** is surfaced — granted, denied or unsupported
+- [x] `OfflineLimitsPanel` on `/sync` says what can be lost and how
+- [x] `describeRisk` — refused persistence immediately, 4h offline, 20 queued; null otherwise, so the warning stays readable
+- [x] Asserted: a test rejects the words safe, secure and guaranteed in every warning the app can produce
 
 ---
 
@@ -114,6 +114,22 @@ Offline testing is manual by nature — devtools' offline toggle does not reprod
 
 Automated: Playwright with `context.setOffline(true)` for the deterministic paths; integration tests for the server-side reconciliation.
 
+## What is not done
+
+**Written down rather than quietly left off the list.** The phase is built and green, and these four things are not in it. None is a stub or a half-implementation — each is absent, and each would be its own piece of work.
+
+1. **Closing a drawer offline** (9.3). A cashier cannot close a shift while the till cannot reach the server. The design is settled and small — `CloseShiftRequest` carries only `countedCash`, a *typed* number, so it queues like any other write and the server computes expected cash and variance at replay — but it is not built. Consequence: an offline shift stays open until the connection returns. Nothing is lost; a shop trading offline across a shift change cannot reconcile until it is back.
+
+2. **Surfacing a price change on reconnect for a product in an open cart** (9.2). The mirror updates on sync, and a cart already holding that product keeps the price it was scanned at. That is the *correct* outcome — the customer is being charged what they were told — but the phase doc asks for it to be **surfaced**, and it is not. A cashier is not told the shelf price moved under them.
+
+3. **A measured large-catalog sync** (9.2). The sync pages with a yield between pages and search is bounded and index-backed, so the design answers "without stalling the UI". Nobody has run it against 10,000 products. The design is right; the measurement is missing, and a design is not a measurement.
+
+4. **The oversell case proved through two offline clients** (9.4). The server behaviour is genuinely covered — `SaleWriter` raises a `StockDiscrepancy` on a negative on-hand and `SaleCommitTests` asserts it — but nobody has driven two browsers offline, sold the same last unit in each, and watched both land. The manual script below step 6 is the way to do it and it has not been done.
+
+Also not done, and deliberately: **offline PIN login**. A till restarted while offline cannot sign in, because the refresh token dies with the tab (invariant 11) and a PIN is verified by the server. Caching PIN hashes locally would remove server-side lockout and rate limiting, which is a larger security change than the capability is worth. The limits panel says so in the app.
+
 ## Note
 
 If Phase 9 proves harder than expected — and it may — the honest fallback is: ship the MVP online-only, make the offline **limits** clear, and let the desktop app (Phase 12) carry real offline durability. That is a defensible product position. A half-working sync layer that occasionally loses sales is not.
+
+**It did prove hard, in a place the doc did not anticipate**, and the fallback was not needed. The unanticipated part was that an offline till cannot price a cart at all: every total came from `POST /sales/quote`, and invariant 3 forbade computing one on the client. That is settled by porting `Pos.Core.Pricing` to TypeScript and pinning the two engines to a shared 913-cart corpus that both test suites assert against — an explicit amendment to invariant 3, recorded in `DECISIONS.md`, rather than a drift past it. The rest of the phase rests on that being trustworthy.

@@ -49,6 +49,23 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
 
+      # NuGetAudit already fails the *build* on a package that was known-vulnerable
+      # when it was restored. This catches the other half: an advisory published
+      # after the last code change, against a version nobody has touched. Without
+      # it, a dependency only becomes newly-vulnerable in the eyes of CI when
+      # somebody happens to edit something.
+      #
+      # Runs even if tests failed, because "are we shipping a known CVE" is not a
+      # question that should wait for an unrelated red test.
+      - name: Audit NuGet dependencies
+        if: ${{ !cancelled() }}
+        run: |
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee audit.txt
+          if grep -q "has the following vulnerable packages" audit.txt; then
+            echo "::error::A dependency has a known vulnerability. See the table above."
+            exit 1
+          fi
+
   frontend:
     name: frontend (web)
     runs-on: ubuntu-latest
@@ -89,6 +106,14 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # The npm half of the same question. `--prod` scopes it to what actually
+      # reaches a browser: a vulnerability in Vitest or Playwright is not shipped
+      # to a shop, and failing the build on one trains people to ignore this step,
+      # which is how the real advisory gets waved through too.
+      - name: Audit npm dependencies
+        if: ${{ !cancelled() }}
+        run: pnpm audit --prod --audit-level high
 
   # The generated client is committed so the job above needs no API. This job is
   # what stops it going stale: it regenerates from the real document and fails if
@@ -259,6 +284,17 @@ jobs:
             | psql -h localhost -U pos -d postgres -v ON_ERROR_STOP=1 -v pw="$APP_PASSWORD"
 
           echo "POSTGRES_APP_PASSWORD=$APP_PASSWORD" >> "$GITHUB_ENV"
+
+      # Built before the suite because `pwa.spec.ts` asserts against the emitted
+      # service worker rather than against vite.config.ts — the two decisions it
+      # protects (never taking over mid-sale, never caching an API response) are
+      # properties of Workbox's output, not of the options handed to it. Without
+      # this step those checks skip, and a skip reads exactly like a pass.
+      #
+      # The dev server the specs actually drive is unaffected: `devOptions` is
+      # off, so nothing here changes what the browser loads.
+      - name: Build the web app
+        run: pnpm build
 
       - name: Run the E2E suite
         run: pnpm test:e2e
