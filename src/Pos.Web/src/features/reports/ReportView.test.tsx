@@ -113,6 +113,7 @@ function report(
       refundTotal: refundTotal ?? 0,
       refundCount: refundCount ?? 0,
       averageBasket: 40,
+      tips: 0,
     },
     taxByRate: [
       { rate: 0, net: 10, tax: 0 },

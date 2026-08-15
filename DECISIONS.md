@@ -168,6 +168,81 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
   locally would fix that and would remove server-side lockout and rate limiting, which is a
   larger security change than the capability is worth.
 
+### Resolved 2026-08-15 (during Phase 10)
+
+- **An order is pre-checkout working state; a bill becomes an ordinary `Sale`.** The restaurant
+  model is `Order` → `OrderLine` → `OrderBill`, all mutable, and none of it is financial. Paying
+  a bill prices it through `Pos.Core.Pricing` and commits it through `ISaleWriter`, exactly as the
+  retail till does. `OrderBill.SaleId` is the link and it points **from** the restaurant model
+  **to** `Sale`; `Sale` gains no `OrderId` and never learns what an order is.
+
+  This is how two rules hold at once. `DECISIONS.md` said restaurant is *"a genuinely different
+  data model — do not force one schema for both"*, and that is honoured: an order is a different
+  shape with a different lifetime, courses, seats and modifiers, and it is edited freely for an
+  hour. But a second *money* path would be a second place the pricing rules can be wrong, and
+  two implementations disagree about a customer's total eventually — the same argument Phase 9
+  used to refuse a bulk sync endpoint. The dividing line is that **an order is not financial
+  until it is paid**, so invariant 4 (a completed sale is never mutated) is untouched rather than
+  weakened.
+
+  The corollary: **stock moves at payment, not at fire.** `IStockLedger` stays the single writer,
+  inside the sale's transaction. A fired-then-voided item is a `Waste` movement if the shop
+  records one; it is not an automatic reversal, because inventing compensating movements for food
+  that may or may not have been cooked is worse data than none.
+
+- **A modifier is a product.** "Extra cheese" is a catalog row with a price, a tax class and
+  optionally tracked stock, flagged `IsModifier` so it stays out of the register grid, the product
+  list and barcode search. A selected modifier becomes a child `OrderLine` carrying its own
+  snapshots.
+
+  The alternative was folding modifier deltas into the parent line's unit price. That produces a
+  receipt a customer cannot read, no tax class of its own for an item that may be rated
+  differently, and a second little pricing rule living outside the engine. Making it a product
+  means it prices through the same engine as everything else, and the phase adds no arithmetic.
+
+- **Splitting a bill evenly is a tender split, not a bill split.** `Tender` has been a collection
+  since Phase 3 and 5.4 ships split tender with a running balance, so "four people paying a
+  quarter each" is four cash tenders against one sale.
+
+  Not merely simpler — **correct**. Splitting by allocating a quarter of every line to four bills
+  would put fractional quantities through four independent pricings, and four independently
+  rounded parts do not sum to the whole. That is the penny-off bug `DiscountApportionment` exists
+  to prevent, reintroduced one level up. Splitting *by item or seat* does need bills, and there
+  the allocated quantities are validated to sum exactly to the order line's quantity: a residue is
+  refused rather than absorbed.
+
+- **A tip is an amount on the `Sale`, and DATA-MODEL invariant 2 is amended to
+  `sum(Tender.Amount) >= Sale.Total + TipAmount`.** `ChangeGiven` becomes
+  `tendered − total − tip`.
+
+  The product is cash-only, so a tip is physically cash left in the drawer. Without a column for
+  it the money still arrives — `ExpectedCash` sums tendered less change given, so it is already
+  counted — but nothing on any row says why the drawer holds more than the takings, and every
+  tipped shift reads as an unexplained surplus. That is the same class of failure as absorbing a
+  cash-rounding adjustment instead of recording it. The Z-report gains a Tips line so the
+  reconciliation is *legible*, which is the actual requirement.
+
+  Not gated on service mode: a tip jar at a counter is the same fact.
+
+- **Restaurant mode has no offline order-taking, and the app says so.** An order lives on the
+  server because a table has to be visible from a second tablet and has to survive the one it was
+  taken on — which is precisely what invariant 11 denies the retail cart, deliberately. Phase 9's
+  outbox queues *sales*; it knows nothing about orders, and teaching it would mean replicating
+  mutable shared state across tills, which is a different and much harder problem than an
+  append-only queue.
+
+  So a restaurant tenant loses the capability Phase 9 bought. That is a real regression for those
+  shops and it is stated in `OfflineLimitsPanel` in the same unflattering register as the rest of
+  9.5, because a shop discovering it mid-service is the failure mode that costs a customer.
+
+- **`ServiceMode` is changeable; `TaxMode` is not.** Both are tenant-level enums that change how
+  the product behaves, and it is worth being explicit about why only one is locked after trading.
+  A tax mode decides what every stored price *means*, so flipping it reinterprets history. A
+  service mode decides which screens a shop sees and which endpoints answer; a `Sale` written in
+  one mode reads identically in the other, because it is the same row. What it is guarded against
+  instead is stranding work in progress — switching back to `Retail` with orders still open would
+  leave tables nobody has a screen to reach.
+
 ### Resolved 2026-08-10 (during Phase 8)
 
 - **Hosting is Render.** Three resources in one `render.yaml`: the API as a Docker web

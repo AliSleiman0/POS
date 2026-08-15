@@ -152,6 +152,31 @@ public sealed partial class DomainExceptionHandler(
         // obstacle, because pretending otherwise sends somebody looking for the override.
         TaxModeLockedException => (StatusCodes.Status409Conflict, "Tax mode is fixed once trading starts"),
 
+        // 409 and not 403: the caller is not forbidden — an owner holds every policy there is —
+        // and the route exists, so a 404 would send a client hunting for a typo it will not
+        // find. What is wrong is the shop's state, and it is one the caller can change.
+        RestaurantModeRequiredException => (StatusCodes.Status409Conflict, "Restaurant mode is not turned on"),
+
+        // Two staff raced to seat one table and this one lost the filtered unique index —
+        // ShiftAlreadyOpenException's situation exactly. Re-reading is meaningful: GET /orders
+        // returns the order that is already on the table.
+        TableAlreadyOccupiedException => (StatusCodes.Status409Conflict, "Table already has an open order"),
+
+        // 409 on ShiftClosedException's reasoning: the body is well-formed and names real
+        // things, and would have been accepted a moment earlier. What changed is that somebody
+        // settled or abandoned the order, and the caller's move is to look at what it became.
+        OrderNotOpenException => (StatusCodes.Status409Conflict, "Order is no longer open"),
+
+        // 409 with a real next move, unlike a locked tax mode: settle or abandon the tables and
+        // the same request succeeds.
+        OrdersStillOpenException => (StatusCodes.Status409Conflict, "Orders are still open"),
+
+        // Also 409 with a next move, and the message names the products rather than the field —
+        // because there is no field. The body asked to fire an order and the order is fine; what
+        // is wrong is that the menu routes something nowhere, which a manager fixes on the
+        // product or its category and then fires the same request again.
+        ProductNotRoutedException => (StatusCodes.Status409Conflict, "Something has no station to be cooked at"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }

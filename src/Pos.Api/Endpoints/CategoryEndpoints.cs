@@ -10,13 +10,26 @@ using Pos.Data;
 
 namespace Pos.Api.Endpoints;
 
-public sealed record CreateCategoryRequest(string? Name, Guid? ParentCategoryId, int? SortOrder);
+/// <summary>
+/// <c>stationId</c> is where a restaurant configures kitchen routing, and it is inherited by
+/// sub-categories and by the products in them. Null on every retail category.
+/// </summary>
+public sealed record CreateCategoryRequest(
+    string? Name,
+    Guid? ParentCategoryId,
+    int? SortOrder,
+    Guid? StationId);
 
 /// <summary>
 /// A full replacement. <c>parentCategoryId</c> omitted moves the category to the top level,
-/// which is what "replace" means — there is no PATCH.
+/// which is what "replace" means — there is no PATCH. <c>stationId</c> omitted un-routes it, on
+/// the same reasoning, and the products under it then fall back to whatever their own parents say.
 /// </summary>
-public sealed record UpdateCategoryRequest(string? Name, Guid? ParentCategoryId, int? SortOrder);
+public sealed record UpdateCategoryRequest(
+    string? Name,
+    Guid? ParentCategoryId,
+    int? SortOrder,
+    Guid? StationId);
 
 public sealed record CategoryResponse(
     Guid Id,
@@ -24,6 +37,7 @@ public sealed record CategoryResponse(
     Guid? ParentCategoryId,
     int SortOrder,
     bool IsActive,
+    Guid? StationId,
     DateTimeOffset CreatedAt,
     DateTimeOffset? UpdatedAt);
 
@@ -110,6 +124,8 @@ public static class CategoryEndpoints
             errors["parentCategoryId"] = ["No category with that id exists in this tenant."];
         }
 
+        await ValidateStationAsync(request.StationId, db, errors, cancellationToken);
+
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
@@ -120,6 +136,7 @@ public static class CategoryEndpoints
             Name = name,
             ParentCategoryId = request.ParentCategoryId,
             SortOrder = request.SortOrder ?? 0,
+            StationId = request.StationId,
         };
 
         db.Categories.Add(category);
@@ -164,6 +181,8 @@ public static class CategoryEndpoints
             }
         }
 
+        await ValidateStationAsync(request.StationId, db, errors, cancellationToken);
+
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
@@ -176,6 +195,11 @@ public static class CategoryEndpoints
         // send the parent flattens its own tree.
         category.ParentCategoryId = request.ParentCategoryId;
         category.SortOrder = request.SortOrder ?? 0;
+
+        // Omitted un-routes it, for the same reason the parent above does. A shop that meant to
+        // keep the routing sends it back; a client that forgets is a client that would also have
+        // flattened its own tree, and one rule for PUT is easier to hold than two.
+        category.StationId = request.StationId;
 
         await db.SaveChangesAsync(cancellationToken);
 
@@ -257,9 +281,35 @@ public static class CategoryEndpoints
         return (trimmed, errors);
     }
 
+    /// <summary>
+    /// Refuses a station that is not this shop's.
+    /// </summary>
+    /// <remarks>
+    /// 400 on the field rather than 404, and identical whether the station is unknown or another
+    /// tenant's — so it is not an existence oracle. The same shape as <c>parentCategoryId</c>
+    /// above and a shift's <c>registerId</c>.
+    /// <para>
+    /// A retired station is deliberately still accepted. Routing at a shop that has taken the
+    /// fryer out for the winter is a menu waiting to be turned back on, and refusing it here
+    /// would make somebody re-point forty categories in March.
+    /// </para>
+    /// </remarks>
+    private static async Task ValidateStationAsync(
+        Guid? stationId,
+        AppDbContext db,
+        Dictionary<string, string[]> errors,
+        CancellationToken cancellationToken)
+    {
+        if (stationId is { } id && !await db.Stations.AnyAsync(s => s.Id == id, cancellationToken))
+        {
+            errors["stationId"] = ["No station with that id exists in this shop."];
+        }
+    }
+
     private static Expression<Func<Category, CategoryResponse>> Project =>
         c => new CategoryResponse(
-            c.Id, c.Name, c.ParentCategoryId, c.SortOrder, c.IsActive, c.CreatedAt, c.UpdatedAt);
+            c.Id, c.Name, c.ParentCategoryId, c.SortOrder, c.IsActive, c.StationId,
+            c.CreatedAt, c.UpdatedAt);
 
     private static CategoryResponse Map(Category category) => new(
         category.Id,
@@ -267,6 +317,7 @@ public static class CategoryEndpoints
         category.ParentCategoryId,
         category.SortOrder,
         category.IsActive,
+        category.StationId,
         category.CreatedAt,
         category.UpdatedAt);
 }

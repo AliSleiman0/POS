@@ -171,6 +171,12 @@ Roles `Cashier` / `Manager` / `Owner` exist, but endpoints do **not** test role 
 | `CanViewMargins` | ❌ | ❌ | ✅ |
 | `CanManageEmployees` | ❌ | ❌ | ✅ |
 | `CanCloseShift` | ❌ | ✅ | ✅ |
+| `CanTakeOrders` | ✅ | ✅ | ✅ |
+| `CanWorkKitchen` | ✅ | ✅ | ✅ |
+| `CanVoidFiredLine` | ❌ | ✅ | ✅ |
+| `CanManageFloor` | ❌ | ✅ | ✅ |
+
+The four restaurant policies (Phase 10) split along one line: **taking an order costs the shop nothing, cancelling food that is already cooking costs it a plate.** `CanTakeOrders` and `CanWorkKitchen` are everyone's, because the people doing both are the people on the floor and a till that needed a manager to seat a table would not be used. `CanVoidFiredLine` is a supervisor's for the same reason `CanVoidSale` is — it is the moment stock leaves without money arriving, and it is where theft hides. `CanManageFloor` is a supervisor's because renaming a table changes what every historical report about it says — and it covers the **stations** too, because changing what those are re-routes the whole menu. Reading them is `CanWorkKitchen`: everybody cooking has to be able to pick which screen they are standing at.
 
 Indirection through policies means a customer asking "can my supervisors do refunds?" is a mapping change in one place, not an audit of every controller. The same policy names are exported to the frontend so UI gating and API enforcement cannot disagree — **and the frontend gate is never the only gate.**
 

@@ -23,6 +23,7 @@ public sealed record SettingsResponse(
     string TimeZoneId,
     TaxMode TaxMode,
     bool TaxModeLocked,
+    ServiceMode ServiceMode,
     decimal CashRoundingIncrement,
     TimeSpan BusinessDayStartOffset,
     string? AddressLine,
@@ -39,10 +40,31 @@ public sealed record SettingsResponse(
 /// reported on, so yesterday's Z-report stops matching yesterday. Changing a currency code
 /// relabels every amount ever stored. Those are migrations with a decision behind them, not
 /// fields on a settings form; see docs/API.md.
+/// <para>
+/// <b><see cref="ServiceMode"/> is here, unlike <see cref="TaxMode"/>, and the difference is
+/// what each one reinterprets.</b> A tax mode decides what every stored price <i>means</i>, so
+/// changing it after trading rewrites history. A service mode decides which screens a shop sees
+/// and which endpoints answer it; a <c>Sale</c> written in one mode reads identically in the
+/// other, because it is the same row. What it is guarded against instead is stranding work in
+/// progress — switching to <see cref="Entities.ServiceMode.Retail"/> with orders still open
+/// would leave tables nobody has a screen to reach.
+/// </para>
 /// </remarks>
 public sealed record UpdateSettingsRequest(
     string Name,
     TaxMode TaxMode,
+
+    /// <summary>
+    /// Which front-of-house model to run. <b>Required, not defaulted.</b>
+    /// </summary>
+    /// <remarks>
+    /// Nullable for the same reason <c>CloseShiftRequest.CountedCash</c> is: an omitted enum
+    /// binds to its zero member, which here is <see cref="Entities.ServiceMode.Retail"/> — so a
+    /// client that had never heard of this field would post a body that silently turned a
+    /// restaurant back into a counter, closing its floor screen with tables still open. An
+    /// absent value is refused instead.
+    /// </remarks>
+    ServiceMode? ServiceMode,
     decimal CashRoundingIncrement,
     string? AddressLine,
     string? TaxNumber,
@@ -113,12 +135,29 @@ public static class SettingsEndpoints
             throw new TaxModeLockedException();
         }
 
+        // Switching back to a counter with tables still open would strand them: the floor
+        // screen is the only way to reach an order, and every order route answers
+        // 409 restaurant-mode-required the moment this is saved. The bills would still be
+        // owed and there would be no way in the product to settle them.
+        if (request.ServiceMode!.Value != ServiceMode.Restaurant
+            && shop.ServiceMode == ServiceMode.Restaurant
+            && await db.Orders.AnyAsync(o => o.Status == OrderStatus.Open, cancellationToken))
+        {
+            throw new OrdersStillOpenException();
+        }
+
         // One entry per changed key, matching the phase table's "key, before, after". A single
         // entry carrying the whole object would make a reader diff two blobs to find out that
         // the footer changed — and would file a row every time somebody pressed Save with
         // nothing edited.
         Record(audit, shop.Id, "name", shop.Name, request.Name.Trim());
         Record(audit, shop.Id, "taxMode", shop.TaxMode.ToString(), request.TaxMode.ToString());
+        Record(
+            audit,
+            shop.Id,
+            "serviceMode",
+            shop.ServiceMode.ToString(),
+            request.ServiceMode!.Value.ToString());
         Record(audit, shop.Id, "cashRoundingIncrement", shop.CashRoundingIncrement, request.CashRoundingIncrement);
         Record(audit, shop.Id, "addressLine", shop.AddressLine, Trimmed(request.AddressLine));
         Record(audit, shop.Id, "taxNumber", shop.TaxNumber, Trimmed(request.TaxNumber));
@@ -127,6 +166,8 @@ public static class SettingsEndpoints
 
         shop.Name = request.Name.Trim();
         shop.TaxMode = request.TaxMode;
+        // Non-null past Validate, which refuses an absent value rather than defaulting it.
+        shop.ServiceMode = request.ServiceMode!.Value;
         shop.CashRoundingIncrement = request.CashRoundingIncrement;
         shop.AddressLine = Trimmed(request.AddressLine);
         shop.TaxNumber = Trimmed(request.TaxNumber);
@@ -199,6 +240,7 @@ public static class SettingsEndpoints
             // Sent rather than left for the client to work out, so a screen can render the
             // control as read-only with a reason instead of offering one that 409s.
             TaxModeLocked: hasTraded,
+            shop.ServiceMode,
             shop.CashRoundingIncrement,
             shop.BusinessDayStartOffset,
             shop.AddressLine,
@@ -221,6 +263,12 @@ public static class SettingsEndpoints
         if (!Enum.IsDefined(request.TaxMode))
         {
             errors["taxMode"] = [$"One of {string.Join(", ", Enum.GetNames<TaxMode>())} is required."];
+        }
+
+        if (request.ServiceMode is not { } serviceMode || !Enum.IsDefined(serviceMode))
+        {
+            errors["serviceMode"] =
+                [$"One of {string.Join(", ", Enum.GetNames<ServiceMode>())} is required."];
         }
 
         // Non-negative and storable, and additionally not more than a whole currency unit: an

@@ -32,9 +32,19 @@ public sealed class MeEndpointTests(PosApiFactory factory)
         var policies = body.GetProperty("user").GetProperty("policies")
             .EnumerateArray().Select(p => p.GetString() ?? string.Empty).ToArray();
 
-        // A cashier sells and nothing else. The UI uses this list to grey out controls;
-        // the server re-checks every call, because a disabled button is a suggestion.
-        Assert.Equal(["CanSell"], policies);
+        /*
+         * A cashier serves customers and nothing else. The UI uses this list to grey out
+         * controls; the server re-checks every call, because a disabled button is a suggestion.
+         *
+         * Three since Phase 10, and the shape of the list is the point rather than its length:
+         * everything a cashier holds is "do the job in front of you". Taking an order costs the
+         * shop nothing and a till that needed a manager to seat a table would be worked around
+         * within a day; the same goes for bumping a ticket the kitchen has cooked. What is
+         * absent is every policy that decides money — discounts, overrides, voids, refunds — and
+         * CanVoidFiredLine sits with those, because cancelling food already cooking is the
+         * moment stock leaves without money arriving.
+         */
+        Assert.Equal(["CanSell", "CanTakeOrders", "CanWorkKitchen"], policies);
 
         var tenantSettings = body.GetProperty("tenant");
         Assert.Equal("Corner Shop", tenantSettings.GetProperty("name").GetString());

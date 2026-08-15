@@ -69,7 +69,7 @@ A `Money` value object in `Pos.Core` owns this. Raw `decimal` arithmetic on pric
 
 ### Catalog
 
-**`Category`** — `Name`, `ParentCategoryId?`, `SortOrder`, `IsActive`.
+**`Category`** — `Name`, `ParentCategoryId?`, `SortOrder`, `IsActive`, `StationId?` (Phase 10 — where a restaurant configures kitchen routing, inherited down the hierarchy).
 
 **`TaxClass`** — `Name`, `Rate` (`numeric(6,4)` — 0.2000 = 20%), `IsDefault`.
 A class, not a bare rate on the product: rates change by law, and a rate change must not require touching every product. Historical sales keep their snapshotted rate regardless.
@@ -79,6 +79,7 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 - **Never hard-deleted.** Sale lines reference products forever; a delete either orphans history or cascades away a customer's sales records.
 - `CostPrice` drives margin reporting and is gated behind `CanViewMargins`.
 - `TrackStock = false` for services and open-price items.
+- **`IsModifier`** and **`StationId?`** arrive in Phase 10 and are `false`/`null` on every retail product — see *Restaurant* below. A modifier is an ordinary product that the flag keeps out of the register grid, the product list and the offline mirror; the station is the override on kitchen routing, which is normally configured on the category.
 
 **`Barcode`** — `ProductId`, `Code`, `IsPrimary`.
 
@@ -109,7 +110,7 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 
 **`Sale`** — the financial record. **Append-only: once `Completed`, never updated or deleted.**
 
-`SaleNumber` (per-tenant sequential, unique), `ClientTransactionId` (GUID, unique per tenant), `RegisterId`, `ShiftId`, `CashierId`, `Type` (`Sale`|`Refund`), `Status` (`Completed`|`Voided`), `OriginalSaleId?`, `Subtotal`, `DiscountTotal`, `TaxTotal`, `RoundingAdjustment`, `Total`, `CompletedAt`, `RecordedAt`, `VoidedAt?`, `VoidedBy?`, `VoidReason?`.
+`SaleNumber` (per-tenant sequential, unique), `ClientTransactionId` (GUID, unique per tenant), `RegisterId`, `ShiftId`, `CashierId`, `Type` (`Sale`|`Refund`), `Status` (`Completed`|`Voided`), `OriginalSaleId?`, `Subtotal`, `DiscountTotal`, `TaxTotal`, `RoundingAdjustment`, `Total`, `TipAmount`, `CompletedAt`, `RecordedAt`, `VoidedAt?`, `VoidedBy?`, `VoidReason?`.
 
 - **A refund is a new `Sale` with `Type = Refund`** and negative amounts, linked by `OriginalSaleId`. Never an edit of the original.
 - **A void is a status flag plus compensating stock movements**, not a delete.
@@ -134,6 +135,56 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 **`CashMovement`** — `ShiftId`, `Type` (`Drop`|`Payout`|`PettyCash`|`Correction`), `Amount`, `Reason`, `PerformedBy`, `OccurredAt`.
 
 Without shifts, "the drawer is £12 short" is unanswerable. `Variance = CountedCash - ExpectedCash`, where expected = float + cash sales − cash refunds − drops/payouts. This is the backbone of the Z-report and the thing an owner actually checks daily.
+
+### Restaurant (Phase 10)
+
+**A separate model, not a bolt-on to `Sale`.** Every entity here is `TenantEntity`, and the link to money runs one way only: `OrderBill.SaleId` points at a `Sale`, and `Sale` gains no `OrderId`. The retail path compiles, queries and reports exactly as it did, unaware any of this exists.
+
+**`Tenant.ServiceMode`** — `Retail` | `Restaurant`, defaulted in the column so every pre-existing shop is a counter. **Changeable, unlike `TaxMode`**: a tax mode decides what every stored price *means*; a service mode decides which screens a shop sees, and a `Sale` written in one reads identically in the other. Switching **to** `Retail` with orders still open is refused.
+
+**`ServiceArea`** — `Name`, `SortOrder`, `IsActive`. A grouping, not a floor plan: no coordinates, no canvas.
+
+**`DiningTable`** — `ServiceAreaId`, `Name`, `Seats`, `SortOrder`, `IsActive`. Table `dining_table`, because `TABLE` is a reserved word and this codebase writes raw SQL in the money paths. **It holds no "occupied" flag** — "is table 4 free?" is answered by asking whether an open `Order` points at it, which is one question with one answer; a boolean would be a second copy that disagrees the first time a request fails between updating one and the other. `Seats` is advisory and never enforced: six people sit at a four-top constantly.
+
+**`Station`** — `Name` (unique per tenant), `SortOrder`, `IsActive`. A place in the kitchen that cooks things. A screen, not a person and not a printer — there is no printer support. A shop with one screen creates one station and every ticket lands on it, which is the correct degenerate case rather than a special one.
+
+**Routing lives on `Category.StationId`**, inherited by sub-categories and by the products in them, with `Product.StationId` as the override. Both nullable, and `null` means "ask the level above", not "nowhere". `Pos.Core.Menus.StationRouting` owns the walk, is pure, and returns `null` for an item nothing routes — which the fire endpoint refuses by name rather than defaulting to a station.
+
+**`Order`** — `OrderNumber`, `Type` (`Table`|`Tab`|`Takeaway`), `Status` (`Open`|`Closed`|`Abandoned`), `DiningTableId?`, `TabName?`, `RegisterId?`, `OpenedBy`, `OpenedAt`, `CoverCount?`, `Note?`, `ClosedAt?`, `ClosedBy?`, `AbandonReason?`. Table `customer_order`, for the reason above.
+
+- **Working state, not a financial record.** Mutable for as long as it is open — lines added over an hour, quantities changed, items voided, the whole thing moved to another table. None of that is allowed of a `Sale` and none of it needs to be, so invariant 4 is untouched rather than weakened.
+- **`OrderNumber` has its own per-tenant counter**, `OrderSequence`, separate from `SaleSequence`. One order can settle as three sales and an abandoned one settles as none, so sharing would scatter unexplained gaps through the financial series — the one thing that counter exists to avoid.
+- **At most one open order per table**, enforced by a **filtered** unique index `ux_customer_order_tenant_table_open` on `(tenant_id, dining_table_id) WHERE status = 'Open' AND dining_table_id IS NOT NULL`. Not a pre-check: two staff seating one table in the same second both pass "is anything open here?".
+- **`RegisterId` is informational** and deliberately not what the eventual sale is booked to. The money goes through whichever register takes the payment, because that is where the cash physically is.
+
+**`OrderLine`** — `OrderId`, `ProductId`, `LineNumber`, `ParentOrderLineId?`, `Description`, `Quantity`, `UnitPrice`, `TaxRate`, `DiscountAmount`, `IsPriceOverridden`, `OverriddenBy?`, `Course`, `SeatNumber?`, `Note?`, `Status` (`Pending`|`Fired`|`Voided`), `FiredAt?`, `VoidedAt?`, `VoidedBy?`, `VoidReason?`.
+
+- **It stores inputs, not amounts.** There is no `LineTotal`, unlike `SaleLine`, and the absence is deliberate: the money comes from `PricingEngine` whenever a bill is quoted or settled, from exactly these fields. A stored total is a second set of numbers to keep in step through every edit, void and re-split.
+- **Snapshots are taken when the item is ordered**, not when the bill is paid — invariant 5, one entity earlier.
+- `LineNumber` is allocated under a `FOR UPDATE` on the order row, from `MAX` rather than a count, so a void never hands its number to the next item.
+- `ParentOrderLineId` is what makes a modifier one level deep and what makes "remove the burger" take its modifiers with it. A modifier's own `Course` and `SeatNumber` are not consulted anywhere: firing and billing both group by the parent.
+
+**`ModifierGroup`** — `Name`, `MinSelections`, `MaxSelections?`, `SortOrder`, `IsActive`. **`ModifierOption`** — `ModifierGroupId`, `ProductId`, `SortOrder`, `IsDefault`. **`ProductModifierGroup`** — the many-to-many, with its own `SortOrder` because the ordering is a property of the pairing.
+
+- **A modifier *is* a product** (`Product.IsModifier`), so it gets a price, a tax class and optional stock tracking for free and prices through the same engine. The flag keeps it out of the register grid, the product list and the offline mirror.
+- **`ModifierOption` holds no price.** The price is the product's, because the product is what ends up on the order line and on the bill. "Free" is a product priced at zero.
+
+**`KitchenTicket`** — append-only. `OrderId`, `StationId`, `Course`, `OrderNumber`, `OrderLabel`, `FiredAt`, `FiredBy`, `Status` (`Active`|`Bumped`), `BumpedAt?`, `BumpedBy?`. **`KitchenTicketLine`** — `KitchenTicketId`, `OrderLineId`, `LineNumber`, `Description`, `Quantity`, `SeatNumber?`, `ModifierText?`, `Note?`.
+
+- **A record of an instruction, not a view over the order.** Everything a kitchen reads is snapshotted and none of it is refreshed. A line voided after firing is food that was already cooked; a ticket that re-read the order would quietly erase the evidence that the shop lost a steak. The void is shown *against* the ticket — the API's `isVoided`, read from the order line's current status — never edited into it.
+- **One ticket per station per course per fire.** A single ticket holding the whole table is useless to a kitchen; a ticket spanning two courses is a queue the pass cannot pace.
+- **`OrderNumber` and `OrderLabel` are snapshots**, so a display that polls every few seconds does not join per ticket per poll, and a table renamed at midnight does not rewrite what the grill was told at eight.
+- **`ModifierText` is composed at firing** rather than stored as child rows. On a ticket a modifier is a phrase under the item, not a thing with a price, and rows would be a second parent/child tree to keep in step with the first for a reader that immediately flattens it.
+- **There is no `Voided` status**, and `ck_kitchen_ticket_bumped_consistent` enforces that a ticket is either cleared with a name and a time against it or not cleared at all — the display's elapsed timer reads the pair.
+- **Nothing here is money**: no prices, no totals, no tax. A kitchen does not charge anybody.
+
+**`OrderBill`** — `OrderId`, `BillNumber`, `ClientTransactionId`, `SaleId?`, `PaidAt?`. **`OrderBillLine`** — `OrderBillId`, `OrderLineId`, `Quantity`.
+
+- **Allocation is by quantity**, because a bottle is shared. Each order line's allocated quantities are validated to sum **exactly** to its quantity — a residue is refused, not absorbed.
+- **The bill's `ClientTransactionId` and `Idempotency-Key` are minted with the bill, not with the payment.** Invariant 6: a key per attempt makes the header decorative and charges the table twice on a retry.
+- **Splitting evenly is a tender split**, not a bill split: N cash tenders against one sale. Bills exist for splitting by item or by seat.
+
+**`Sale.TipAmount`** — `ChangeGiven` becomes `tendered − total − tip`. **DATA-MODEL invariant 2 is amended** to `sum(Tender.Amount) >= Sale.Total + TipAmount`. The tip comes out of the change and never into the total: folding it in would inflate revenue, inflate the tax owed on revenue nobody was charged tax for, and make a refund of a meal offer to hand the gratuity back. `ShiftArithmetic` needs no change, because a tip reduces change given and is therefore already inside net cash tendered.
 
 ### Audit
 
@@ -222,7 +273,7 @@ accept it, RLS notwithstanding. The tenant has to be *inside* the key. Deletes a
 These hold in every phase. A change request that breaks one is a design discussion, not a patch.
 
 1. `Sale.Total == Subtotal - DiscountTotal + TaxTotal + RoundingAdjustment` (with `TaxMode = Inclusive`, tax is extracted from rather than added to the line prices, and this identity still holds).
-2. `sum(Tender.Amount) >= Sale.Total` for a cash sale; the excess is `ChangeGiven`.
+2. `sum(Tender.Amount) >= Sale.Total + Sale.TipAmount` for a cash sale; the excess is `ChangeGiven`. **Amended in Phase 10.6, and the amendment is the point rather than a detail.** The product takes cash only, so a tip is physically cash left in the drawer: €25 against a €20 bill with a €5 tip is nothing back, not €5 of change. Taking the tip out of the change instead of adding it to the total is what leaves the money inside `ExpectedCash` — which sums tendered less change given — so `ShiftArithmetic` needs no change at all. The tip is deliberately **not** part of `Total`: folding it in would inflate revenue, inflate the tax owed on revenue nobody was charged tax for, and make a refund of a meal offer to hand the gratuity back too.
 3. `StockItem.OnHand == sum(StockMovement.Quantity)` for that product. Any drift is a bug, and is detectable precisely because the ledger exists.
 4. A `Completed` sale is never mutated. Corrections are new linked rows.
 5. Every row in a tenant table has a non-empty `TenantId`. No nulls, no sentinel "shared" tenant.

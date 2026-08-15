@@ -14,6 +14,10 @@ public static class Policies
     public const string CanViewMargins = "CanViewMargins";
     public const string CanManageEmployees = "CanManageEmployees";
     public const string CanCloseShift = "CanCloseShift";
+    public const string CanTakeOrders = "CanTakeOrders";
+    public const string CanWorkKitchen = "CanWorkKitchen";
+    public const string CanVoidFiredLine = "CanVoidFiredLine";
+    public const string CanManageFloor = "CanManageFloor";
 }
 
 /// <summary>
@@ -50,6 +54,20 @@ public static class PolicyCatalog
             [Policies.CanRefund] = Supervisors,
             [Policies.CanManageCatalog] = Supervisors,
             [Policies.CanCloseShift] = Supervisors,
+
+            // Taking an order costs the shop nothing, so it is everyone's — a till that needed
+            // a manager to seat a table would be worked around within a day. Same for the
+            // kitchen display: the people bumping tickets are the people cooking.
+            [Policies.CanTakeOrders] = Everyone,
+            [Policies.CanWorkKitchen] = Everyone,
+
+            // Cancelling food that is already cooking costs a plate, which makes this the
+            // restaurant's CanVoidSale: the moment stock leaves without money arriving, and
+            // where theft hides.
+            [Policies.CanVoidFiredLine] = Supervisors,
+
+            // Renaming or retiring a table changes what every historical report about it says.
+            [Policies.CanManageFloor] = Supervisors,
 
             // Margin data is the owner's commercial position. A manager who can see cost
             // prices can price-shop the shop's suppliers.

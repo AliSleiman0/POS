@@ -56,10 +56,17 @@ dotnet ef database update --project src/Pos.Data --startup-project src/Pos.Api `
 # Dev data. There is no onboarding endpoint by decision, so a migrated database has no
 # tenant and nothing can be exercised by hand. Safe to re-run: existing rows are left alone.
 # Prints the credentials and the register's device token — the token is shown ONCE.
-# --help for slug/password/PIN options. --cash-rounding is the one option that changes an
-# EXISTING tenant; since Phase 7.4 an owner can also reach it (and the receipt fields) through
-# PUT /settings at /admin/settings, so the seeder is no longer the only way in.
+# --help for slug/password/PIN options. --cash-rounding, --receipt-footer and --restaurant are
+# the options that change an EXISTING tenant; since Phase 7.4 an owner can also reach the first
+# two (and the receipt fields) through PUT /settings at /admin/settings, so the seeder is no
+# longer the only way in.
 dotnet run --project tools/Pos.Seed
+
+# Restaurant mode with somewhere to work: three stations, two areas with eight tables, a menu
+# routed through its categories, and a required modifier group so the refusal can be seen. This
+# is what makes Phase 10 clickable by hand — there is still no screen for any of it. Needs a
+# catalog to hang the menu on, so it refuses to combine with --no-catalog.
+dotnet run --project tools/Pos.Seed -- --restaurant
 
 pnpm --dir src/Pos.Web dev
 pnpm --dir src/Pos.Web build

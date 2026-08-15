@@ -110,7 +110,20 @@ public sealed class OfflineSaleTests(PosApiFactory factory)
 
         await SellAsync(client, tenant, occurredAt: yesterday);
 
-        var day = yesterday.UtcDateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        /*
+         * The day is resolved in the **tenant's** zone, not in UTC, and that is the whole
+         * point of invariant 8 rather than a detail of this test.
+         *
+         * `?from=`/`?to=` are trading days in the shop's own calendar. Formatting the UTC date
+         * instead worked for twenty-three hours a day and failed in the window where the two
+         * calendars disagree — in summer, between 23:00 and midnight UTC, a sale at 23:51Z is
+         * already tomorrow in Dublin. The test then asked for the wrong day and reported the
+         * feature broken. Found at 23:51Z, which is the only reason it was found at all.
+         */
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
+
+        var day = TimeZoneInfo.ConvertTime(yesterday, zone)
+            .ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
         using var response = await client.GetAsync(
             new Uri($"{Route}?from={day}&to={day}", UriKind.Relative));

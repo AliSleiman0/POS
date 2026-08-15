@@ -27,8 +27,22 @@ internal sealed class CategoryConfiguration : IEntityTypeConfiguration<Category>
             .OnDelete(DeleteBehavior.Restrict)
             .HasConstraintName("fk_category_parent");
 
+        // Where a restaurant actually configures kitchen routing. Optional for the same reason
+        // the parent above is: Postgres does not check a foreign key whose columns include a
+        // NULL, so a category that routes nowhere passes.
+        builder.HasOne<Station>()
+            .WithMany()
+            .HasPrincipalKey(s => new { s.TenantId, s.Id })
+            .HasForeignKey(c => new { c.TenantId, c.StationId })
+            .OnDelete(DeleteBehavior.Restrict)
+            .HasConstraintName("fk_category_station");
+
         builder.HasIndex(c => new { c.TenantId, c.ParentCategoryId })
             .HasDatabaseName("ix_category_tenant_parent");
+
+        // Without it, retiring a station scans every category to evaluate the RESTRICT.
+        builder.HasIndex(c => new { c.TenantId, c.StationId })
+            .HasDatabaseName("ix_category_tenant_station");
 
         // GET /categories orders by (name, id) and pages by keyset. SortOrder is what the
         // client arranges its picker by, but it is neither unique nor indexed, so it cannot

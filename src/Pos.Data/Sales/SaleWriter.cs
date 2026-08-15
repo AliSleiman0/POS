@@ -54,9 +54,13 @@ internal sealed class SaleWriter(
             ?? throw new InvalidOperationException(
                 "A sale needs a cashier, and no user is attached to this request.");
 
+        // The tip comes out of the over-tender rather than being added to the total: it is
+        // cash that stays in the drawer, so a smaller change figure is what leaves it there for
+        // the shift's expected-cash sum to find.
         var change = TenderRules.ChangeFor(
             request.Priced.Total,
-            [.. request.Tenders.Select(t => t.Amount)]);
+            [.. request.Tenders.Select(t => t.Amount)],
+            request.Tip);
 
         SaleCommitResult? result = null;
 
@@ -95,6 +99,7 @@ internal sealed class SaleWriter(
                 TaxTotal = request.Priced.TaxTotal,
                 RoundingAdjustment = request.Priced.RoundingAdjustment,
                 Total = request.Priced.Total,
+                TipAmount = request.Tip,
                 CompletedAt = completedAt,
                 RecordedAt = recordedAt,
             };

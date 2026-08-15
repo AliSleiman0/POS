@@ -77,6 +77,12 @@ public static class ActorExtensions
             "POST" => client.PostAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
             "PUT" => client.PutAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
 
+            // PATCH arrived with Phase 10: amending an order line is a partial update by
+            // nature — a waiter changes a quantity, not the whole line — and the route is a
+            // PATCH because a PUT would have to carry fields the caller has no business
+            // restating, like the snapshotted price.
+            "PATCH" => client.PatchAsJsonAsync(url, testCase.Body?.Invoke(world) ?? new { }),
+
             // No body, deliberately: a DELETE that carried one would be describing a request
             // the endpoints do not accept, and none of them reads one.
             "DELETE" => client.DeleteAsync(new Uri(url, UriKind.Relative)),

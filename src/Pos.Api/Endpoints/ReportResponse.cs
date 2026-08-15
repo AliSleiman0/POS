@@ -35,7 +35,18 @@ public sealed record ReportSalesResponse(
     decimal Total,
     decimal RefundTotal,
     int RefundCount,
-    decimal AverageBasket);
+    decimal AverageBasket,
+
+    /// <summary>
+    /// Cash left for the staff, on its own line and <b>not inside <see cref="Total"/></b>.
+    /// </summary>
+    /// <remarks>
+    /// The reconciliation has to be <i>legible</i>, which is the actual requirement rather than
+    /// merely balancing. Expected cash already contains the tips — it sums tendered less change
+    /// given, and a tip is over-tender that stayed in the drawer — so a shop that took €40 in
+    /// tips and did not see this line would read as €40 over with nothing to explain it.
+    /// </remarks>
+    decimal Tips = 0m);
 
 public sealed record ReportTaxLineResponse(decimal Rate, decimal Net, decimal Tax);
 
@@ -190,7 +201,12 @@ public sealed record ReportResponse(
                 total,
                 returns.Total,
                 returns.Count,
-                ZReportArithmetic.AverageBasket((Money)total, count).ToDecimal()),
+                ZReportArithmetic.AverageBasket((Money)total, count).ToDecimal(),
+
+                // Sales only. A refund carries no tip — a shop does not take one for handing
+                // money back — so summing both would be adding a column that is always zero
+                // and inviting somebody to wonder whether it should be.
+                sales.Tips),
             [.. data.TaxByRate.Select((t, index) => new ReportTaxLineResponse(
                 t.Rate, netParts[index].ToDecimal(), taxParts[index].ToDecimal()))],
             [.. data.Tenders.Select(t => new ReportTenderResponse(

@@ -71,4 +71,39 @@ public enum AuditAction
     /// what an owner wants to see, and it leaves no other trace.
     /// </summary>
     AuthorizationRefused,
+
+    /// <summary>
+    /// A table was seated or a tab started.
+    /// </summary>
+    /// <remarks>
+    /// Recorded because it is the start of the only trail that explains an abandoned order or a
+    /// table that was open for four hours, and because <c>Order.OpenedBy</c> alone says who but
+    /// not that anything happened at a particular moment.
+    /// </remarks>
+    OrderOpened,
+
+    /// <summary>
+    /// An item already sent to the kitchen was taken off an order.
+    /// </summary>
+    /// <remarks>
+    /// The restaurant's <see cref="SaleVoided"/>: the moment food leaves without money arriving.
+    /// A <i>pending</i> line coming off is not recorded — nobody cooked it, and filing an entry
+    /// every time a customer changes their mind is how a log stops being read.
+    /// </remarks>
+    OrderLineVoided,
+
+    /// <summary>An order moved to another table or became a tab.</summary>
+    OrderTransferred,
+
+    /// <summary>One order's items were absorbed into another.</summary>
+    OrderMerged,
+
+    /// <summary>
+    /// An order was written off unpaid — a walk-out, or a mistake.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately distinct from a close. Whatever was fired was cooked and is gone, and a shop
+    /// needs that visible as a loss rather than folded into a day's takings.
+    /// </remarks>
+    OrderAbandoned,
 }

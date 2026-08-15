@@ -30,6 +30,12 @@ export function CategoriesPage() {
             name: name.trim(),
             parentCategoryId: parentCategoryId === '' ? null : parentCategoryId,
             sortOrder: null,
+
+            // A new category routes nowhere until somebody says where. Null is the
+            // honest answer rather than a guess — see StationRouting: an unrouted
+            // item is refused at the pass by name, which a manager can fix, and a
+            // default station would send it somewhere silently instead.
+            stationId: null,
           },
         }),
       ),

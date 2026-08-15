@@ -38,6 +38,21 @@ public sealed class Product : TenantEntity
     public Guid? CategoryId { get; set; }
 
     /// <summary>
+    /// Which station cooks it, overriding whatever its category says.
+    /// </summary>
+    /// <remarks>
+    /// <b>The exception, not the rule.</b> Routing is normally set on a category — see
+    /// <c>Pos.Core.Menus.StationRouting</c> — because a restaurant will configure eight categories
+    /// and will not configure four hundred products. This column is for the one item that does not
+    /// follow its neighbours: the bottled cocktail in "Drinks" that is finished at the pass.
+    /// <para>
+    /// Null on every retail product and on most restaurant ones, and it means "ask the category",
+    /// not "nowhere".
+    /// </para>
+    /// </remarks>
+    public Guid? StationId { get; set; }
+
+    /// <summary>
     /// Required. A product with no tax class cannot be priced, so this is not nullable
     /// even though it means onboarding must create a tax class first.
     /// </summary>
@@ -65,6 +80,29 @@ public sealed class Product : TenantEntity
     /// negative on-hand.
     /// </summary>
     public bool TrackStock { get; set; } = true;
+
+    /// <summary>
+    /// Whether this is a modifier — "extra cheese", "no ice" — rather than something sold on
+    /// its own.
+    /// </summary>
+    /// <remarks>
+    /// <b>A modifier <i>is</i> a product, and that is the Phase 10 decision this flag exists to
+    /// serve.</b> Making it one gives it a price, a tax class and optional stock tracking for
+    /// free, and — the part that matters — it prices through the same engine as everything else.
+    /// The alternative, folding a delta into the parent line's unit price, produces a receipt a
+    /// customer cannot read, denies the modifier a tax rate of its own, and puts a second little
+    /// pricing rule outside <c>Pos.Core.Pricing</c>.
+    /// <para>
+    /// What the flag does is keep it out of the places a modifier is not an answer: the register
+    /// grid, the product list's default view, and barcode search. Nobody scans "extra cheese",
+    /// and a till offering it as a line item is a till that will sell one on its own.
+    /// </para>
+    /// <para>
+    /// It rides <c>GET /catalog/sync</c> so the offline mirror excludes them too. Retail shops
+    /// have none, and the column defaults to false, so nothing about a counter changes.
+    /// </para>
+    /// </remarks>
+    public bool IsModifier { get; set; }
 
     /// <summary>
     /// Canonicalises staff input into the stored SKU form, so <c>"abc-1 "</c> and

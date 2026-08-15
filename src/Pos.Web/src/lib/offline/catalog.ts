@@ -189,7 +189,7 @@ export async function searchProducts(
   const prefix = IDBKeyRange.bound(needle, `${needle}￿`)
 
   for await (const cursor of db.transaction('products').store.index('search').iterate(prefix)) {
-    if (cursor.value.isActive) {
+    if (cursor.value.isActive && !cursor.value.isModifier) {
       found.set(cursor.value.id, cursor.value)
     }
 
@@ -205,6 +205,7 @@ export async function searchProducts(
 
     if (
       product.isActive &&
+      !product.isModifier &&
       !found.has(product.id) &&
       (product.search.includes(needle) || product.sku.toLowerCase() === needle)
     ) {
@@ -223,7 +224,7 @@ async function activeProducts(db: OfflineDb, limit: number): Promise<MirroredPro
   const found: MirroredProduct[] = []
 
   for await (const cursor of db.transaction('products').store.index('search').iterate()) {
-    if (cursor.value.isActive) {
+    if (cursor.value.isActive && !cursor.value.isModifier) {
       found.push(cursor.value)
     }
 

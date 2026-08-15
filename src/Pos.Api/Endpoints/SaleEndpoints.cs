@@ -66,7 +66,19 @@ public sealed record CreateSaleRequest(
     /// different body under the same key and is answered <c>409 idempotency-key-reused</c>
     /// for ever, which reads exactly like a sale that will not go through.
     /// </remarks>
-    DateTimeOffset? OccurredAt = null);
+    DateTimeOffset? OccurredAt = null,
+
+    /// <summary>
+    /// Cash the customer is leaving for the staff, over and above the total.
+    /// </summary>
+    /// <remarks>
+    /// <b>Never added to the total.</b> It reduces the change given, which is what leaves it in
+    /// the drawer for the shift's expected-cash sum to find — see <c>Sale.TipAmount</c>. Null
+    /// and zero mean the same thing here, unlike <c>countedCash</c> on a shift close: a tip
+    /// nobody mentioned is a tip nobody left, and there is no reading of an absent value that
+    /// costs anybody money.
+    /// </remarks>
+    decimal? Tip = null);
 
 /// <summary>One priced line, as the register displays and the receipt prints it.</summary>
 public sealed record SaleLineResponse(
@@ -149,7 +161,17 @@ public sealed record SaleResponse(
     /// trusted to set — and it is what the reconciliation screen shows when it has to explain
     /// why a drawer counted at 18:00 did not include a sale taken at 17:40.
     /// </remarks>
-    DateTimeOffset? RecordedAt = null);
+    DateTimeOffset? RecordedAt = null,
+
+    /// <summary>
+    /// Cash left for the staff, over and above <c>total</c>. Zero for most sales.
+    /// </summary>
+    /// <remarks>
+    /// Sent so a receipt and a Z-report can show it on its own line. A drawer that is over by
+    /// exactly the evening's tips has to <i>read</i> as that, rather than as an unexplained
+    /// surplus somebody has to reconstruct.
+    /// </remarks>
+    decimal TipAmount = 0m);
 
 /// <summary>Why a sale is being reversed. Required — see the endpoint.</summary>
 public sealed record VoidSaleRequest(string? Reason);
@@ -712,6 +734,14 @@ public static class SaleEndpoints
         var (cart, errors, tracked, catalogPrices) =
             await BuildCartAsync(db, request, quoting: false, cancellationToken);
 
+        // A tip is cash the drawer has to account for, so it obeys the same storable-amount
+        // rule every other amount does. Negative is refused rather than clamped: a negative tip
+        // is a keying slip that would take money out of the drawer with nothing explaining it.
+        if (request.Tip is { } tip && (tip < 0m || !Core.Catalog.CatalogRules.IsStorableAmount(tip)))
+        {
+            errors["tip"] = ["A tip of 0 or more with at most 4 decimal places is required."];
+        }
+
         // Discounts and overrides are separately gated, and a Cashier sending one is refused
         // rather than silently ignored: unlike an unreadable costPrice, this changes what the
         // customer pays, so quietly dropping it would take the shop's money instead of theirs.
@@ -787,14 +817,15 @@ public static class SaleEndpoints
                 tenders,
                 tracked,
                 authorized.Grant?.UserId,
-                request.OccurredAt),
+                request.OccurredAt,
+                (Money)(request.Tip ?? 0m)),
 
             // Runs inside the writer's transaction, once the numbers are known. This is what
             // makes "the key is inserted in the same transaction as the work" true rather than
             // approximately true.
             committed =>
             {
-                response = Project(priced, committed.ChangeGiven, committed, tenders);
+                response = Project(priced, committed.ChangeGiven, committed, tenders, (Money)(request.Tip ?? 0m));
 
                 // RecordedAt, not CompletedAt. The record describes *this attempt* — when the
                 // server answered and what it answered with — and for a replayed offline sale
@@ -1493,11 +1524,18 @@ public static class SaleEndpoints
     }
 
     /// <summary>Projects a priced cart, with or without the identity a committed sale has.</summary>
+    /// <param name="tip">
+    /// What was left for the staff. Carried through because this projection is built from the
+    /// priced cart rather than from the stored row — the tip is not a priced amount, so it has
+    /// nowhere else to come from, and without it the response a till renders its receipt from
+    /// would say the customer tipped nothing.
+    /// </param>
     private static SaleResponse Project(
         PricedSale priced,
         Money change,
         SaleCommitResult? committed = null,
-        IReadOnlyList<TenderInstruction>? tenders = null) =>
+        IReadOnlyList<TenderInstruction>? tenders = null,
+        Money tip = default) =>
         new(
             committed?.SaleId,
             committed?.SaleNumber,
@@ -1527,7 +1565,8 @@ public static class SaleEndpoints
                 t.Method,
                 (decimal)t.Amount,
                 index == 0 && !change.IsZero ? (decimal)change : null))],
-            RecordedAt: committed?.RecordedAt);
+            RecordedAt: committed?.RecordedAt,
+            TipAmount: (decimal)tip);
 
     /// <summary>Reads a stored sale back, from its own rows and never from the catalog.</summary>
     private static async Task<SaleResponse> ReadAsync(
@@ -1635,6 +1674,7 @@ public static class SaleEndpoints
             sale.VoidReason,
             sale.RefundReason,
             refunds,
-            sale.RecordedAt);
+            sale.RecordedAt,
+            (decimal)sale.TipAmount);
     }
 }

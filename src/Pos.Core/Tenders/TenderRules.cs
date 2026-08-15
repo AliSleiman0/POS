@@ -15,26 +15,46 @@ namespace Pos.Core.Tenders;
 public static class TenderRules
 {
     /// <summary>
-    /// Change due on a sale: the excess over <paramref name="total"/>.
+    /// Change due on a sale: the excess over <paramref name="total"/>, less any tip.
     /// </summary>
     /// <param name="total">What the sale came to. Positive.</param>
     /// <param name="tenders">What was handed over.</param>
-    /// <exception cref="UnderTenderException">The tenders do not cover the total.</exception>
-    public static Money ChangeFor(Money total, IReadOnlyList<Money> tenders)
+    /// <param name="tip">
+    /// What the customer is leaving. Zero for a counter sale.
+    /// </param>
+    /// <remarks>
+    /// <b>A tip is the part of the over-tender that stays in the drawer.</b> The product takes
+    /// cash only, so a €25 note against a €20 bill with a €5 tip is not €5 of change — it is
+    /// nothing back, and €25 that the drawer must account for. Subtracting it here is what makes
+    /// <c>ExpectedCash</c> come out right without touching the shift arithmetic at all: expected
+    /// cash sums tendered less change given, so a smaller change figure leaves the tip in.
+    /// <para>
+    /// The alternative — treating the tip as change the customer declined — would balance the
+    /// drawer and lose the fact, and "why is every evening €40 over?" would be unanswerable.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="UnderTenderException">The tenders do not cover the total and the tip.</exception>
+    public static Money ChangeFor(Money total, IReadOnlyList<Money> tenders, Money tip = default)
     {
         ArgumentNullException.ThrowIfNull(tenders);
 
         var offered = Money.Sum(tenders);
+        var owed = total + tip;
 
-        if (offered < total)
+        if (offered < owed)
         {
+            // Named separately, because the two are different mistakes: not enough money for
+            // the food is "I need another note", and not enough for the tip is a keying slip
+            // somebody can correct without the customer producing anything.
             throw new UnderTenderException(
-                $"The sale comes to {total} and {offered} was tendered.");
+                tip.IsZero
+                    ? $"The sale comes to {total} and {offered} was tendered."
+                    : $"The sale comes to {total} with a tip of {tip}, and {offered} was tendered.");
         }
 
         // Over-tender is the normal case, not an exception to handle: a customer pays for
         // 18.45 with a 20 note far more often than they produce exact change.
-        return offered - total;
+        return offered - owed;
     }
 
     /// <summary>Whether <paramref name="tenders"/> cover <paramref name="total"/>.</summary>

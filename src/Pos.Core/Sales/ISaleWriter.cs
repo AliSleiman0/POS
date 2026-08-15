@@ -66,7 +66,18 @@ public sealed record SaleCommitRequest(
     IReadOnlyList<TenderInstruction> Tenders,
     IReadOnlySet<Guid> StockTrackedProductIds,
     Guid? AuthorizedBy = null,
-    DateTimeOffset? OccurredAt = null);
+    DateTimeOffset? OccurredAt = null,
+
+    /// <summary>
+    /// Cash the customer is leaving over and above the total. Zero for an ordinary counter sale.
+    /// </summary>
+    /// <remarks>
+    /// Validated at the edge — non-negative, storable, and refused on a refund — and never
+    /// folded into <see cref="PricedSale.Total"/>. It reduces the change given rather than
+    /// increasing what was charged, which is what leaves it in the drawer for
+    /// <c>ShiftArithmetic.ExpectedCash</c> to find without that arithmetic changing at all.
+    /// </remarks>
+    Money Tip = default);
 
 /// <summary>What was committed.</summary>
 /// <param name="SaleId">The new sale.</param>
