@@ -497,3 +497,106 @@ else. The reason goes to the logs, where somebody debugging a failed deploy is a
 The outbox replays the **same** `POST /sales` calls with their original `Idempotency-Key`. That is the whole design: because idempotency exists from Phase 3, offline sync needs no separate sync API, no bulk-upload endpoint, and no second server-side code path that could disagree with the online one.
 
 Reconciliation surfaces through the existing `GET /stock/discrepancies`.
+
+---
+
+## Restaurant (Phase 10) — `/floor`, `/stations`, `/menu`, `/orders`, `/kitchen`
+
+**Every route in this section answers `409 restaurant-mode-required` unless the tenant's `serviceMode` is `Restaurant`.** A conflict and not a `403` — an owner holds every policy there is — and not a `404`, which would send a client hunting for a typo it will not find. The routes stay mapped in every mode, because the authorization matrix and the isolation manifest are derived from the routes the application maps: routes that appeared and disappeared with a tenant setting would be covered for some shops and not for others, and the gap would look exactly like a passing test suite.
+
+### The room and the kitchen
+
+| Method | Route | Auth |
+|---|---|---|
+| GET | `/floor` | `CanTakeOrders` |
+| POST/PUT | `/floor/areas`, `/floor/areas/{id}` | `CanManageFloor` |
+| POST/PUT | `/floor/tables`, `/floor/tables/{id}` | `CanManageFloor` |
+| GET | `/stations` | `CanWorkKitchen` |
+| POST/PUT | `/stations`, `/stations/{id}` | `CanManageFloor` |
+| GET | `/menu/modifier-groups`, `/menu/products/{productId}/modifier-groups` | `CanTakeOrders` |
+| POST/PUT | `/menu/modifier-groups`, `/menu/products/{productId}/modifier-groups` | `CanManageCatalog` |
+
+Reads are everybody's and writes are supervisors': renaming a table or a station changes what every historical report about it says, and re-points the menu. Neither has a delete — both are retired through `isActive`, because orders and tickets reference what they were served at and stay readable for months. `?includeRetired=` on both `/floor` and `/stations`.
+
+`/floor` is **a list, not a floor plan.** No coordinates, no canvas editor: a stated non-goal, not an omission.
+
+**Kitchen routing is configured on a category** — `category.stationId`, inherited by sub-categories and by the products in them. `product.stationId` is the override for the one item that does not follow its neighbours. Both are `null` on every retail shop, and `null` means "ask the level above", not "nowhere".
+
+### Orders — `/orders`
+
+| Method | Route | Auth | |
+|---|---|---|---|
+| POST | `/orders` | `CanTakeOrders` | 🔒 |
+| GET | `/orders`, `/orders/{id}` | `CanTakeOrders` | |
+| POST | `/orders/{id}/lines` | `CanTakeOrders` | 🔒 |
+| PATCH | `/orders/{id}/lines/{lineId}` | `CanTakeOrders` | |
+| POST | `/orders/{id}/lines/{lineId}/void` | `CanTakeOrders`, plus `CanVoidFiredLine` if fired | |
+| POST | `/orders/{id}/fire` | `CanTakeOrders` | 🔒 |
+| POST | `/orders/{id}/transfer`, `/orders/{id}/merge` | `CanTakeOrders` | 🔒 |
+| POST | `/orders/{id}/abandon` | `CanVoidFiredLine` | 🔒 |
+| GET/POST | `/orders/{id}/bills` | `CanTakeOrders` | 🔒 on POST |
+| DELETE | `/orders/{id}/bills/{billId}` | `CanTakeOrders` | |
+| POST | `/orders/{id}/bills/{billId}/pay` | `CanSell` | 🔒 |
+
+**An order is not a financial record.** It is mutable, editable and voidable for as long as it is open, and it may end up abandoned. Money happens once, when a bill is settled — `POST .../pay` prices through `PricingEngine` and commits an ordinary `Sale` through `ISaleWriter`, and *that* row is append-only. `OrderBill.SaleId` is the only link and it points one way: `Sale` gains no `orderId`, and the retail path is unaware any of this exists.
+
+- **There is no `openedBy` and no `orderNumber` on the request.** Both are the server's to decide — the first from the validated token, the second from a per-tenant counter inside the opening transaction. Its own series, separate from the sale's: one order can settle as three sales and an abandoned one as none, so sharing would scatter unexplained gaps through the financial series.
+- **An order line carries no total.** It stores the snapshots — description, unit price, tax rate, discount — that a bill is later priced from. A second set of numbers would have to be kept in step through every edit, void and re-split, and the first time one drifted the till would show a total the sale would not charge.
+- **Prices snapshot when the item is ordered**, not when the bill is paid. A guest who ordered at 18:00 pays the 18:00 price if the menu changes at 19:00.
+- **Voiding a fired line takes `CanVoidFiredLine`, a reason, and is audited.** Voiding a pending one takes neither and is not: nobody cooked it, and filing an entry every time a customer changes their mind is how a log stops being read.
+- **A modifier is one level deep**, travels with its parent when voided, and cannot carry modifiers of its own. A required modifier group with nothing chosen refuses the line and names the question.
+- **Seating a table that is already served is `409 table-already-occupied`** — lost on a filtered unique index, not on a pre-check. Re-read `GET /orders`.
+- **The register and shift travel in the body on `/pay`**, exactly as they do on `POST /sales`: the money goes into the drawer that is open *now*, not the one the order was opened at.
+- **Splitting evenly is a tender split, not a bill split**: N cash tenders against one sale, no new endpoint and no fractional-quantity rounding. Bills are for splitting *by item or by seat*, and allocated quantities must sum exactly to the order line's quantity — a residue is refused, not absorbed. A paid bill cannot be torn up; that is a refund against the sale.
+
+### `POST /orders/{id}/fire`
+
+```json
+→ { "course": 1 }            // omitted fires everything still pending
+← 200 [ {
+    "id": "…", "orderId": "…", "stationId": "…", "stationName": "Grill",
+    "course": 1, "orderNumber": 42, "orderLabel": "Table 4",
+    "firedAt": "…", "status": "Active", "bumpedAt": null,
+    "lines": [ { "lineNumber": 3, "description": "Beef Burger", "quantity": 1,
+                 "seatNumber": 2, "modifierText": "Medium, extra cheese",
+                 "note": "allergy: nuts", "isVoided": false } ]
+} ]
+```
+
+**One ticket per station per course.** A single ticket holding the whole table is useless to a kitchen — the grill would read past three drinks to find its steak — and a ticket spanning two courses is a queue the pass cannot pace.
+
+**Where an item is cooked comes from the menu, not from the item.** `product.stationId` if set, otherwise the nearest category above it that sets one, walking up. A shop configures eight categories; it will not configure four hundred products, and a menu that is half-routed sends food nowhere.
+
+**Unrouted is refused, not defaulted.** If anything on the round has no station the whole fire answers `409 product-not-routed`, naming the products. Falling back to "the first station" or "the pass" is silent, plausible and wrong: the steak goes to the bar, nobody cooks it, and the first anybody knows is a customer asking after forty minutes. The *whole* round rather than the offending line — firing half of it would put the rest of the table in the kitchen with no record of what was dropped, and the waiter would have no way to tell which items are cooking. Nothing is written, so the retry after the menu is fixed is the same request.
+
+**Firing twice creates nothing, and the guarantee is not the key.** The writer acts on pending lines and marks them fired in the same transaction, under a `FOR UPDATE` on the order row, so a second tap returns `[]` — including a tap from a second handheld carrying its own key, which a stored response would not have covered. The key is still required so a *genuine* network retry replays the original tickets rather than answering "nothing to fire" to a waiter who needs to know what went.
+
+**A modifier rides its parent as text**, not as a ticket line of its own. On an order it is a product with a price, a tax class and its own stock; on a ticket it is a phrase under the item, and the only consumer is a screen.
+
+### Kitchen display — `/kitchen`
+
+| Method | Route | Auth |
+|---|---|---|
+| GET | `/kitchen/tickets` | `CanWorkKitchen` |
+| POST | `/kitchen/tickets/{id}/bump` | `CanWorkKitchen` |
+| POST | `/kitchen/tickets/{id}/recall` | `CanWorkKitchen` |
+
+`?stationId=` and `?includeBumped=`. Oldest first — a screen sorted by anything else is one where the table that has waited longest scrolls off the bottom. Everything here is `CanWorkKitchen`, which is everyone: the people bumping tickets are the people cooking, and a display that needed a manager would be left logged in as one all night.
+
+**The display polls, every 5 seconds.** There is no SSE and no websocket anywhere in this project; adding a transport is its own phase with its own reconnection, authentication and proxy problems. The interval is a stated, tunable number rather than an oversight, and a screen refreshing every few seconds is indistinguishable from a live one at the speed food is cooked.
+
+**A ticket is an append-only record of what the kitchen was told.** Nothing on it is re-read from the order, so a product renamed mid-service does not rewrite what the grill was told at eight. `isVoided` is the single exception and the only field not stored on the ticket — it comes from the order line's *current* status, so a line cancelled after firing is **struck through** on the screen rather than removed from it. A chef may already have plated it, and a line that vanished would erase the evidence that the shop lost one.
+
+**Bump and recall carry no `Idempotency-Key`**, unlike every 🔒 route above. They move no money and no stock and are idempotent by state — bumping a bumped ticket is already a no-op, and answers `200` rather than a conflict, because two chefs reaching for one screen is ordinary and the outcome is what both of them wanted. Requiring a key on something a chef does forty times an hour would be friction that buys nothing, and invariant 6 is a rule about writes that move money.
+
+**Nothing in the kitchen is audited.** `AuditAction` is deliberately a short list of the actions that move money or conceal theft, and firing is neither. What is recorded is the void afterwards, which is where a plate leaves without being paid for.
+
+### Tips
+
+`POST /sales` and `POST /orders/{id}/bills/{billId}/pay` both accept `tipAmount`. **The tip comes out of the change, never into the total**: `changeGiven = tendered − total − tip`. Folding it into the total would inflate revenue, inflate the tax owed on revenue nobody was charged tax for, and make a refund of a meal offer to hand the gratuity back. `ShiftArithmetic` needs no change because a tip reduces change given and is therefore already inside net cash tendered; the Z-report carries an explicit **Tips** line, so a drawer over by exactly the evening's tips reads as that rather than as an unexplained surplus.
+
+A tender covering the bill but not the tip is `409 under-tender` and says which it was short of. A negative tip is a field error. Not gated on service mode: a tip jar at a counter is the same fact.
+
+### No offline orders
+
+An order lives on the server so a second tablet can see the table; the retail cart lives in `sessionStorage` so it can be rung with the line down. Phase 9's outbox queues *sales* and knows nothing about orders, so a restaurant till with no network cannot open or add to one. The app says so in `OfflineLimitsPanel` rather than letting a service discover it mid-round.

@@ -29,6 +29,15 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
             .OnDelete(DeleteBehavior.Restrict)
             .HasConstraintName("fk_product_category");
 
+        // Optional, and the exception rather than the rule — routing is normally set on a
+        // category. See the remarks on Product.StationId.
+        builder.HasOne<Station>()
+            .WithMany()
+            .HasPrincipalKey(s => new { s.TenantId, s.Id })
+            .HasForeignKey(p => new { p.TenantId, p.StationId })
+            .OnDelete(DeleteBehavior.Restrict)
+            .HasConstraintName("fk_product_station");
+
         // Required: a product with no tax class cannot be priced.
         builder.HasOne<TaxClass>()
             .WithMany()
@@ -77,6 +86,10 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
 
         builder.HasIndex(p => new { p.TenantId, p.TaxClassId })
             .HasDatabaseName("ix_product_tenant_tax_class");
+
+        // Same reasoning for the third: retiring a station must not scan the catalog.
+        builder.HasIndex(p => new { p.TenantId, p.StationId })
+            .HasDatabaseName("ix_product_tenant_station");
 
         builder.Property(p => p.IsActive).HasDefaultValue(true);
 

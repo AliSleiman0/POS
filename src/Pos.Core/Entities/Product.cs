@@ -38,6 +38,21 @@ public sealed class Product : TenantEntity
     public Guid? CategoryId { get; set; }
 
     /// <summary>
+    /// Which station cooks it, overriding whatever its category says.
+    /// </summary>
+    /// <remarks>
+    /// <b>The exception, not the rule.</b> Routing is normally set on a category — see
+    /// <c>Pos.Core.Menus.StationRouting</c> — because a restaurant will configure eight categories
+    /// and will not configure four hundred products. This column is for the one item that does not
+    /// follow its neighbours: the bottled cocktail in "Drinks" that is finished at the pass.
+    /// <para>
+    /// Null on every retail product and on most restaurant ones, and it means "ask the category",
+    /// not "nowhere".
+    /// </para>
+    /// </remarks>
+    public Guid? StationId { get; set; }
+
+    /// <summary>
     /// Required. A product with no tax class cannot be priced, so this is not nullable
     /// even though it means onboarding must create a tax class first.
     /// </summary>

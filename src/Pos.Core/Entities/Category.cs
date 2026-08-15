@@ -34,6 +34,23 @@ public sealed class Category : TenantEntity
     public int SortOrder { get; set; }
 
     /// <summary>
+    /// Which station cooks the things in it, inherited by sub-categories and by products.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is where a restaurant actually configures routing</b>, and the hierarchy above is
+    /// what makes that tolerable: "Drinks → Bar" set once covers "Wine", "Beer" and "Soft", and
+    /// the resolution walks up from the product until it finds one. <c>StationRouting</c> owns the
+    /// walk and is pure.
+    /// <para>
+    /// Null means "ask my parent", not "nowhere" — and a product that reaches the top of the chain
+    /// with nothing set is unrouted, which the fire endpoint refuses rather than guessing at.
+    /// Retail shops have no stations and every category here is null, so nothing about a counter
+    /// changes.
+    /// </para>
+    /// </remarks>
+    public Guid? StationId { get; set; }
+
+    /// <summary>
     /// Soft delete. Categories are never removed: products point at them, and so do
     /// historical reports.
     /// </summary>

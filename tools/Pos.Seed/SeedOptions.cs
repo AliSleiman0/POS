@@ -117,6 +117,22 @@ public sealed record SeedOptions
     /// </summary>
     public required bool SkipCatalog { get; init; }
 
+    /// <summary>
+    /// Put the shop into restaurant mode and give it a room, a kitchen and a menu.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, and <b>it changes an existing tenant</b> — the same deliberate-act
+    /// reasoning as <see cref="CashRoundingIncrement"/> and <see cref="RotateDeviceToken"/>. A
+    /// mode that only applied to a shop which did not exist yet would be no use to somebody who
+    /// has been testing against <c>corner-shop</c> all week.
+    /// <para>
+    /// It exists because Phase 10 shipped an entire server side with no screen and no way in:
+    /// without this there is no way to seat a table or fire a round by hand, so the only evidence
+    /// any of it works is its own tests.
+    /// </para>
+    /// </remarks>
+    public required bool Restaurant { get; init; }
+
     public static string Usage => """
         Seeds the local development database with a tenant, three users and two registers.
 
@@ -140,6 +156,10 @@ public sealed record SeedOptions
                                    A token is only shown at enrollment, so a re-run cannot
                                    reprint the previous one.
           --no-catalog             Seed the tenant and its staff but no products.
+          --restaurant             Switch the shop to restaurant mode and add a kitchen: three
+                                   stations, two areas with eight tables, a small menu routed
+                                   through the categories, and two modifier groups. Applies to
+                                   an existing tenant too, like --cash-rounding.
           -h, --help               This text.
 
         Re-running is safe: anything that already exists is left alone.
@@ -158,6 +178,7 @@ public sealed record SeedOptions
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         var rotate = false;
         var skipCatalog = false;
+        var restaurant = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -172,6 +193,12 @@ public sealed record SeedOptions
             if (string.Equals(argument, "--no-catalog", StringComparison.Ordinal))
             {
                 skipCatalog = true;
+                continue;
+            }
+
+            if (string.Equals(argument, "--restaurant", StringComparison.Ordinal))
+            {
+                restaurant = true;
                 continue;
             }
 
@@ -221,6 +248,7 @@ public sealed record SeedOptions
                 : null,
             RotateDeviceToken = rotate,
             SkipCatalog = skipCatalog,
+            Restaurant = restaurant,
         };
     }
 

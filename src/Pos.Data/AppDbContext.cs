@@ -128,6 +128,9 @@ public class AppDbContext : IdentityDbContext<
     /// <summary>Which questions a product asks, and in what order.</summary>
     public DbSet<ProductModifierGroup> ProductModifierGroups => Set<ProductModifierGroup>();
 
+    /// <summary>A place in the kitchen that cooks things — the grill, the bar, the pass.</summary>
+    public DbSet<Station> Stations => Set<Station>();
+
     /// <summary>Where tables are grouped in the room — the bar, the terrace.</summary>
     public DbSet<ServiceArea> ServiceAreas => Set<ServiceArea>();
 
@@ -148,6 +151,15 @@ public class AppDbContext : IdentityDbContext<
     /// sale's — see the entity.
     /// </summary>
     public DbSet<OrderSequence> OrderSequences => Set<OrderSequence>();
+
+    /// <summary>
+    /// What one station was told to cook, in one round. <b>Append-only</b> — a line voided
+    /// afterwards is shown against the ticket, never edited into it.
+    /// </summary>
+    public DbSet<KitchenTicket> KitchenTickets => Set<KitchenTicket>();
+
+    /// <summary>One thing to cook, with its modifiers already composed into a line of text.</summary>
+    public DbSet<KitchenTicketLine> KitchenTicketLines => Set<KitchenTicketLine>();
 
     /// <summary>
     /// A share of an order's lines, settled as an ordinary <see cref="Sale"/>. The link runs

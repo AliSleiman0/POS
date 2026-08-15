@@ -61,6 +61,14 @@ public sealed record AmendOrderLineRequest(
 /// <summary>Why a line is coming off.</summary>
 public sealed record VoidOrderLineRequest(string? Reason);
 
+/// <summary>Which round to send to the kitchen.</summary>
+/// <remarks>
+/// <c>Course</c> omitted means everything still pending, which is what a takeaway and a bar tab
+/// want — they have one round and being made to name it would be ceremony. A dining room names
+/// the course, because that is the entire point of coursing.
+/// </remarks>
+public sealed record FireOrderRequest(int? Course);
+
 /// <summary>Where an order is moving to.</summary>
 public sealed record TransferOrderRequest(Guid? DiningTableId, string? TabName);
 
@@ -162,6 +170,13 @@ public static class OrderEndpoints
         orders.MapPost("/{id:guid}/lines/{lineId:guid}/void", VoidLineAsync)
             .RequireAuthorization(Policies.CanTakeOrders)
             .WithSummary("Take a line off an order");
+
+        // CanTakeOrders: sending a round to the kitchen is the ordinary business of serving a
+        // table. What costs the shop something is taking it back off, and that is the void.
+        orders.MapPost("/{id:guid}/fire", FireAsync)
+            .RequireAuthorization(Policies.CanTakeOrders)
+            .RequireIdempotency()
+            .WithSummary("Send a round to the kitchen");
 
         orders.MapPost("/{id:guid}/transfer", TransferAsync)
             .RequireAuthorization(Policies.CanTakeOrders)
@@ -611,6 +626,73 @@ public static class OrderEndpoints
         await db.SaveChangesAsync(cancellationToken);
 
         return TypedResults.Ok(Project(line));
+    }
+
+    /// <summary>
+    /// Sends a round to the kitchen, one ticket per station.
+    /// </summary>
+    /// <remarks>
+    /// <b>A second tap creates nothing and says so.</b> The writer acts on pending lines and marks
+    /// them fired in the same transaction, so firing twice returns an empty list rather than
+    /// cooking the round twice — and that holds for a double-tap from the second handheld, which
+    /// is carrying a different idempotency key and would defeat a stored response. The key is
+    /// still required, because a genuine network retry should replay the original tickets rather
+    /// than answer "nothing to fire" and leave a waiter wondering.
+    /// <para>
+    /// <b>Nothing on it is audited.</b> Firing moves no money and no stock — see Phase 10's rule 4
+    /// — and <c>AuditAction</c> is deliberately a short list of the actions that do. What is
+    /// recorded is the void afterwards, which is where a plate leaves without being paid for.
+    /// </para>
+    /// </remarks>
+    private static async Task<Results<Ok<IReadOnlyList<KitchenTicketResponse>>, NotFound, ValidationProblem>>
+        FireAsync(
+            Guid id,
+            FireOrderRequest request,
+            AppDbContext db,
+            KitchenTicketWriter writer,
+            IIdempotencyContext idempotency,
+            TimeProvider timeProvider,
+            CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+
+        if (request.Course is { } course && course < 1)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["course"] = ["Courses start at 1."],
+            });
+        }
+
+        // 404 before the writer, so an unknown order reads the same here as everywhere else. The
+        // narrow race — settled between this and the lock — is the writer's OrderNotOpenException.
+        if (!await db.Orders.AnyAsync(o => o.Id == id, cancellationToken))
+        {
+            return TypedResults.NotFound();
+        }
+
+        // Read before the transaction, because the stored idempotent response is composed inside
+        // it and a kitchen has a handful of stations. Naming them on the response is what lets a
+        // till say "away to the grill and the bar" without a second round trip.
+        var stationNames = await db.Stations
+            .AsNoTracking()
+            .ToDictionaryAsync(s => s.Id, s => s.Name, cancellationToken);
+
+        var firedAt = timeProvider.GetUtcNow();
+
+        var tickets = await writer.FireAsync(
+            id,
+            request.Course,
+            fired => idempotency.Record(
+                db,
+                StatusCodes.Status200OK,
+                KitchenEndpoints.ProjectFired(fired, stationNames),
+                firedAt),
+            cancellationToken);
+
+        return TypedResults.Ok(KitchenEndpoints.ProjectFired(tickets, stationNames));
     }
 
     private static async Task<Results<Ok<OrderResponse>, NotFound, ValidationProblem>> TransferAsync(

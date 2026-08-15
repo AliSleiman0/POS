@@ -106,6 +106,11 @@ public static class ServiceCollectionExtensions
         // and not endpoint code.
         services.AddScoped<OrderWriter>();
 
+        // Same again, one milestone along. The rule worth owning here — where an item is cooked —
+        // is StationRouting, which is pure and in Pos.Core; this is the lock, the reads and the
+        // insert around it.
+        services.AddScoped<KitchenTicketWriter>();
+
         // Reads only, and behind no port either: aggregating money has to be raw SQL because
         // EF cannot sum a value-converted property, and a port would exist only to hide a type
         // from a project that already references this one.

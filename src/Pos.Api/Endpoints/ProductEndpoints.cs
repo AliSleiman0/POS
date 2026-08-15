@@ -42,6 +42,16 @@ public sealed record CreateProductRequest(
     bool? TrackStock,
 
     /// <summary>
+    /// Which station cooks it, overriding whatever its category says.
+    /// </summary>
+    /// <remarks>
+    /// The exception rather than the rule — routing is normally set on a category, because a
+    /// restaurant will configure eight of those and will not configure four hundred products.
+    /// Null means "ask the category", not "nowhere".
+    /// </remarks>
+    Guid? StationId,
+
+    /// <summary>
     /// Whether this is a modifier — "extra cheese" — rather than something sold on its own.
     /// </summary>
     /// <remarks>
@@ -71,6 +81,16 @@ public sealed record UpdateProductRequest(
     decimal? CostPrice,
     string? Unit,
     bool? TrackStock,
+
+    /// <summary>
+    /// Which station cooks it, overriding whatever its category says.
+    /// </summary>
+    /// <remarks>
+    /// The exception rather than the rule — routing is normally set on a category, because a
+    /// restaurant will configure eight of those and will not configure four hundred products.
+    /// Null means "ask the category", not "nowhere".
+    /// </remarks>
+    Guid? StationId,
 
     /// <summary>
     /// Whether this is a modifier — "extra cheese" — rather than something sold on its own.
@@ -105,6 +125,7 @@ public sealed record ProductResponse(
     bool IsActive,
     bool TrackStock,
     bool IsModifier,
+    Guid? StationId,
     DateTimeOffset CreatedAt,
     DateTimeOffset? UpdatedAt);
 
@@ -469,6 +490,7 @@ public static class ProductEndpoints
             request.UnitPrice,
             request.CostPrice,
             request.Unit,
+            request.StationId,
             cancellationToken);
 
         if (fields.Errors.Count > 0)
@@ -494,6 +516,7 @@ public static class ProductEndpoints
             Unit = fields.Unit ?? Core.Entities.Unit.Each,
             TrackStock = request.TrackStock ?? true,
             IsModifier = request.IsModifier ?? false,
+            StationId = request.StationId,
         };
 
         db.Products.Add(product);
@@ -523,6 +546,7 @@ public static class ProductEndpoints
             request.UnitPrice,
             request.CostPrice,
             request.Unit,
+            request.StationId,
             cancellationToken);
 
         if (fields.Errors.Count > 0)
@@ -560,6 +584,11 @@ public static class ProductEndpoints
         product.Unit = fields.Unit ?? product.Unit;
         product.TrackStock = request.TrackStock ?? product.TrackStock;
         product.IsModifier = request.IsModifier ?? product.IsModifier;
+
+        // Replaced rather than left alone, unlike the three above: omitting it means "ask the
+        // category", which is a real and common answer rather than the accident an absent bool
+        // would be.
+        product.StationId = request.StationId;
 
         await SaveOrReportDuplicateSkuAsync(db, fields.Sku, cancellationToken);
 
@@ -739,6 +768,7 @@ public static class ProductEndpoints
         decimal? unitPrice,
         decimal? costPrice,
         string? unit,
+        Guid? stationId,
         CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, string[]>();
@@ -814,6 +844,15 @@ public static class ProductEndpoints
             errors["categoryId"] = ["No category with that id exists in this tenant."];
         }
 
+        // Same shape again. A retired station is accepted deliberately — see the equivalent on
+        // a category — because routing a menu at a fryer that is off for the winter is a shop
+        // waiting to turn it back on, not a mistake.
+        if (stationId is { } station
+            && !await db.Stations.AnyAsync(s => s.Id == station, cancellationToken))
+        {
+            errors["stationId"] = ["No station with that id exists in this shop."];
+        }
+
         return new ValidatedFields(
             Product.NormalizeSku(trimmedSku) ?? string.Empty,
             trimmedName,
@@ -884,12 +923,14 @@ public static class ProductEndpoints
     private static Expression<Func<Product, ProductResponse>> ProjectWithCost =>
         p => new ProductResponse(
             p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, (decimal)p.UnitPrice,
-            (decimal?)p.CostPrice, p.Unit, p.IsActive, p.TrackStock, p.IsModifier, p.CreatedAt, p.UpdatedAt);
+            (decimal?)p.CostPrice, p.Unit, p.IsActive, p.TrackStock, p.IsModifier, p.StationId,
+            p.CreatedAt, p.UpdatedAt);
 
     private static Expression<Func<Product, ProductResponse>> ProjectWithoutCost =>
         p => new ProductResponse(
             p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, (decimal)p.UnitPrice,
-            null, p.Unit, p.IsActive, p.TrackStock, p.IsModifier, p.CreatedAt, p.UpdatedAt);
+            null, p.Unit, p.IsActive, p.TrackStock, p.IsModifier, p.StationId,
+            p.CreatedAt, p.UpdatedAt);
 
     private static ProductResponse Map(Product product, bool canViewMargins) => new(
         product.Id,
@@ -904,6 +945,7 @@ public static class ProductEndpoints
         product.IsActive,
         product.TrackStock,
         product.IsModifier,
+        product.StationId,
         product.CreatedAt,
         product.UpdatedAt);
 }

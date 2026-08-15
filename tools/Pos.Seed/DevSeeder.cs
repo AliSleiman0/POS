@@ -41,6 +41,14 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
 {
     public async Task RunAsync()
     {
+        // Checked before anything is written. The menu's products need the tax class the
+        // catalog writes, so the combination cannot work — and finding that out after three
+        // users and two tills exist is a worse way to be told.
+        if (options.Restaurant && options.SkipCatalog)
+        {
+            throw new SeedException("--restaurant needs a catalog to hang a menu on; drop --no-catalog.");
+        }
+
         await EnsureSchemaIsCurrentAsync();
         await EnsureRolesAsync();
 
@@ -64,7 +72,14 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
             ? CatalogSummary.Skipped
             : await new CatalogSeeder(services).RunAsync(tenant.Id);
 
-        Report(tenant, tenantCreated, [owner, manager, cashier], [front, back], catalog);
+        // After the catalog, because the menu's products need the tax class it writes — and
+        // because a shop with no catalog is a legitimate thing to ask for and a restaurant with
+        // no menu is not.
+        var restaurant = options.Restaurant
+            ? await new RestaurantSeeder(services).RunAsync(tenant.Id)
+            : RestaurantSummary.Skipped;
+
+        Report(tenant, tenantCreated, [owner, manager, cashier], [front, back], catalog, restaurant);
     }
 
     /// <summary>
@@ -288,7 +303,8 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
         bool tenantCreated,
         IReadOnlyList<SeededUser> users,
         IReadOnlyList<SeededRegister> registers,
-        CatalogSummary catalog)
+        CatalogSummary catalog,
+        RestaurantSummary restaurant)
     {
         var writer = Console.Out;
 
@@ -326,6 +342,20 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
                 $"{catalog.TaxClasses} tax classes");
             writer.WriteLine("                  SKU-1001 has two barcodes; SKU-1003 is sold by the kilogram;");
             writer.WriteLine("                  SKU-1005 costs 0.1650; SKU-1006 has no category and no stock.");
+        }
+
+        if (restaurant != RestaurantSummary.Skipped)
+        {
+            writer.WriteLine();
+            writer.WriteLine(
+                $"  Restaurant     {restaurant.Stations} stations, {restaurant.Areas} areas, " +
+                $"{restaurant.Tables} tables, {restaurant.MenuItems} menu items, " +
+                $"{restaurant.ModifierGroups} modifier groups");
+            writer.WriteLine("                  Service mode is now Restaurant. Routing is on the categories:");
+            writer.WriteLine("                  Drinks -> Bar, Mains -> Grill, and Starters and Desserts reach");
+            writer.WriteLine("                  the Pass by inheriting it from Food.");
+            writer.WriteLine("                  MENU-201 Beef Burger asks a required question, so a line that");
+            writer.WriteLine("                  does not answer it is refused.");
         }
 
         writer.WriteLine();
@@ -367,6 +397,22 @@ internal sealed class DevSeeder(IServiceProvider services, SeedOptions options)
             writer.WriteLine();
             writer.WriteLine("That connects as the schema owner, which bypasses row-level security and sees");
             writer.WriteLine("every tenant — not how the application ever connects.");
+        }
+
+        if (restaurant != RestaurantSummary.Skipped)
+        {
+            writer.WriteLine();
+            writer.WriteLine("To work the room by hand, in order:");
+            writer.WriteLine();
+            writer.WriteLine("  GET  /api/v1/floor                     the areas and their tables");
+            writer.WriteLine("  POST /api/v1/orders                    { type: \"Table\", diningTableId, coverCount }");
+            writer.WriteLine("  POST /api/v1/orders/{id}/lines         { lines: [ { productId, quantity, course } ] }");
+            writer.WriteLine("  POST /api/v1/orders/{id}/fire          { course: 1 }");
+            writer.WriteLine("  GET  /api/v1/kitchen/tickets?stationId=...");
+            writer.WriteLine("  POST /api/v1/kitchen/tickets/{id}/bump");
+            writer.WriteLine();
+            writer.WriteLine("Every write above needs an Idempotency-Key header, minted once per operation.");
+            writer.WriteLine("There is still no screen for any of it — see docs/HANDOFF.md.");
         }
 
         writer.WriteLine();

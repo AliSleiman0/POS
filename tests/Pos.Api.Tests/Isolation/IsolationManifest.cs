@@ -1034,7 +1034,7 @@ public static class IsolationManifest
             Refused = [Actor.Anonymous, Actor.DeviceOfB],
             VictimId = w => w.A.Orders.OpenOrderId,
             Body = w => new { lines = new[] { new { productId = w.B.Catalog.WaterProductId, quantity = 1m } } },
-            AssertUntouched = AssertTenantAsOrderStillHasOneLine,
+            AssertUntouched = AssertTenantAsOrderStillHasItsLines,
         },
         new()
         {
@@ -1079,7 +1079,7 @@ public static class IsolationManifest
             Refused = [Actor.Anonymous, Actor.DeviceOfB],
             VictimId = w => w.A.Orders.OpenOrderId,
             Body = w => new { sourceOrderId = w.B.Orders.SecondOrderId },
-            AssertUntouched = AssertTenantAsOrderStillHasOneLine,
+            AssertUntouched = AssertTenantAsOrderStillHasItsLines,
         },
         new()
         {
@@ -1091,6 +1091,84 @@ public static class IsolationManifest
             VictimId = w => w.A.Orders.OpenOrderId,
             Body = _ => new { reason = "Attempt" },
             AssertUntouched = AssertTenantAsOrderIsStillOpen,
+        },
+
+        // ---- Phase 10.4: the kitchen -------------------------------------------------
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/fire",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+
+            // A Cashier, because CanTakeOrders: sending a round is the ordinary business of
+            // serving a table, and a waiter who needed a manager would stop using the button.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+            Body = _ => new { course = 1 },
+            AssertUntouched = AssertTenantAsPendingLineWasNotFired,
+        },
+        new()
+        {
+            Key = "GET api/v1/stations",
+            Kind = IsolationKind.Collection,
+
+            // A Cashier, because CanWorkKitchen is everyone: the people bumping tickets are the
+            // people cooking, and a display that needed a manager would be left logged in as one.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.Orders.StationIds,
+            Forbidden = w => w.A.Orders.StationIds,
+        },
+        new()
+        {
+            Key = "POST api/v1/stations",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A create with no id in the URL and no id in the body — there is nothing "
+                      + "cross-tenant to reach for. The row it writes is stamped by the tenant "
+                      + "interceptor like every other, which CrossTenantWriteTests covers.",
+        },
+        new()
+        {
+            Key = "PUT api/v1/stations/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.StationId,
+            Body = _ => new { name = "Renamed by the wrong shop", sortOrder = 9 },
+            AssertUntouched = AssertTenantAsStationIsStillCalledPass,
+        },
+        new()
+        {
+            Key = "GET api/v1/kitchen/tickets",
+            Kind = IsolationKind.Collection,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.Orders.KitchenTicketIds,
+            Forbidden = w => w.A.Orders.KitchenTicketIds,
+        },
+        new()
+        {
+            Key = "POST api/v1/kitchen/tickets/{id:guid}/bump",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.KitchenTicketId,
+            AssertUntouched = AssertTenantAsTicketIsStillActive,
+        },
+        new()
+        {
+            Key = "POST api/v1/kitchen/tickets/{id:guid}/recall",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.KitchenTicketId,
+
+            // Already Active, so a recall that leaked would change nothing visible — which is
+            // why this asserts the ticket rather than trusting the status code. The bump row
+            // above is the one that would actually move a value.
+            AssertUntouched = AssertTenantAsTicketIsStillActive,
         },
 
         // ---- Phase 10.5: bills, and where an order becomes money ---------------------
@@ -1603,14 +1681,22 @@ public static class IsolationManifest
             Assert.Equal(world.A.Orders.AreaId, table.ServiceAreaId);
         });
 
-    private static Task AssertTenantAsOrderStillHasOneLine(
+    /// <summary>
+    /// The seeded order still has exactly the two lines the world gave it.
+    /// </summary>
+    /// <remarks>
+    /// Two, not one, since 10.4: the world seeds a pending line and a fired one, so a ticket
+    /// exists to attack by id without every fire test finding nothing left to send. The count is
+    /// what the assertion is about — a cross-tenant write that landed would make it three.
+    /// </remarks>
+    private static Task AssertTenantAsOrderStillHasItsLines(
         PosApiFactory factory,
         TwoTenantWorld world) =>
         factory.AsTenantAsync(world.A.Id, async services =>
         {
             var db = services.GetRequiredService<AppDbContext>();
 
-            Assert.Equal(1, await db.OrderLines.CountAsync(l => l.OrderId == world.A.Orders.OpenOrderId));
+            Assert.Equal(2, await db.OrderLines.CountAsync(l => l.OrderId == world.A.Orders.OpenOrderId));
         });
 
     private static Task AssertTenantAsOrderLineStillHasQuantityOne(
@@ -1708,5 +1794,44 @@ public static class IsolationManifest
 
             Assert.Equal(OrderStatus.Open, order.Status);
             Assert.Null(order.AbandonReason);
+        });
+
+    private static Task AssertTenantAsPendingLineWasNotFired(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var line = await db.OrderLines.FirstAsync(l => l.Id == world.A.Orders.OpenOrderLineId);
+
+            Assert.Equal(OrderLineStatus.Pending, line.Status);
+            Assert.Null(line.FiredAt);
+
+            // And nothing was addressed to A's kitchen beyond the one the world seeded.
+            Assert.Single(await db.KitchenTickets.ToListAsync());
+        });
+
+    private static Task AssertTenantAsStationIsStillCalledPass(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var station = await db.Stations.FirstAsync(s => s.Id == world.A.Orders.StationId);
+
+            Assert.Equal("Pass", station.Name);
+        });
+
+    private static Task AssertTenantAsTicketIsStillActive(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var ticket = await db.KitchenTickets.FirstAsync(t => t.Id == world.A.Orders.KitchenTicketId);
+
+            Assert.Equal(KitchenTicketStatus.Active, ticket.Status);
+            Assert.Null(ticket.BumpedAt);
+            Assert.Null(ticket.BumpedBy);
         });
 }

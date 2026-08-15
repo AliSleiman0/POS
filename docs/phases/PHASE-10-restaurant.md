@@ -126,9 +126,13 @@ selected modifier becomes a child `OrderLine` with `ParentOrderLineId` set, snap
 description, price and rate.
 
 **Exit criteria**
-- [ ] `ModifierRules` is pure, in `Pos.Core`, and enforced at the API — the UI's gating is a courtesy
-- [ ] A required group with nothing chosen refuses the line
-- [ ] Modifier products never appear in the retail register or in barcode search
+- [x] `ModifierRules` is pure, in `Pos.Core`, and enforced at the API — the UI's gating is a courtesy
+- [x] A required group with nothing chosen refuses the line
+- [ ] Modifier products never appear in the retail register or in barcode search — **half done.** `GET /products` filters them (`ModifierTests.Modifiers_are_kept_out_of_the_product_list_unless_asked_for`) and `GET /catalog/sync` carries the flag so the offline mirror can, but **`GET /products/by-barcode/{code}` does not filter**. In practice nobody assigns a barcode to "extra cheese", so it is latent rather than live; the fix is one `where` clause on both arms of `ProductEndpoints.LookupQuery` plus a test, and it touches the hottest read in the application, so it is written down rather than slipped in
+
+**The boxes above were unticked long after the work landed.** The tests existed from the day 10.3
+shipped; nobody went back to the list. That is the third item having survived unnoticed — a
+checklist is only worth the pass somebody makes over it.
 
 ## 10.4 Courses, seats, stations, kitchen display
 
@@ -143,17 +147,31 @@ because the line can be voided afterwards and the kitchen still cooked it.
 The display polls. There is no SSE and no websocket in this project, and adding a transport is its
 own phase; the interval is a stated, tunable number rather than an oversight.
 
-**Not built.** See *What is not done*. `OrderLineStatus.Fired` and `OrderLine.FiredAt` exist and are
-respected everywhere — a fired line cannot be amended, and voiding one takes `CanVoidFiredLine`,
-a reason and an audit entry — but nothing sets them except a test, because there is no fire
-endpoint and no station yet.
+Routing is set on a **category** and inherited, because a restaurant will configure eight
+categories and will not configure four hundred products — `StationRouting` walks up from the
+product and takes the first station it finds. `Product.StationId` is the override for the one
+bottled cocktail finished at the pass. **Unrouted is a real answer, not a default station:**
+falling back to "the first station" sends a steak to the bar silently and the first anybody knows
+is a customer asking after forty minutes.
+
+Bump and recall are `POST /kitchen/tickets/{id}/bump` and `/recall`, and they carry **no
+`Idempotency-Key`** — they move no money and no stock, and they are idempotent by state rather
+than by a stored response. Bumping a bumped ticket is already a no-op, and requiring a key on
+something a chef does forty times an hour would be friction that buys nothing.
+
+**Nothing in the kitchen is audited.** `AuditAction` is deliberately a short list of the actions
+that move money or conceal theft, and firing is neither. What is recorded is the void afterwards,
+which is where a plate leaves without being paid for — so no new enum member, and no migration for
+one.
 
 **Exit criteria**
-- [ ] Firing is idempotent — a double-tap does not double-cook
-- [ ] Each station's ticket holds only its own items
+- [x] Firing is idempotent — a double-tap does not double-cook. Guaranteed by the line's **status**, changed in the same transaction that writes the ticket, so it holds for a second handheld carrying its own key; proved concurrently in `KitchenTicketWriterTests`, and the endpoint's key is what makes a genuine retry replay the original tickets rather than answer "nothing to fire"
+- [x] Each station's ticket holds only its own items — one ticket per station **per course**, because a ticket spanning rounds is a queue the pass cannot pace
 - [x] Voiding a fired line needs `CanVoidFiredLine` and a reason, and is audited; voiding a pending one needs neither and is not
-- [ ] Bump and recall
-- [ ] The display is asserted in Playwright, not only in jsdom
+- [x] Bump and recall
+- [x] Something with no station refuses the **whole fire**, naming the product — firing half a round would put the rest of the table in the kitchen with no record of what was dropped
+- [x] A ticket is append-only: a line voided afterwards is struck through on the screen, and a product renamed mid-service does not rewrite what the grill was told
+- [ ] The display is asserted in Playwright, not only in jsdom — **belongs to 10.7/10.9**, where the display exists
 
 ## 10.5 Bills, splitting, payment
 
@@ -223,9 +241,24 @@ Takings by table, by server, tips by server, average cover, table turn time — 
 - [ ] Restaurant sections appear only in restaurant mode
 - [ ] A shift's report and the day's report that contains it still add up to the same money
 
-## 10.9 Tests
+## 10.9 Tests and the seed fixture
 
 Per invariant 9 these land **with each milestone**. This list is the floor, not the plan.
+
+**`Pos.Seed --restaurant` exists.** One command puts the shop into restaurant mode and gives it
+three stations, two areas with eight tables, a nine-item menu routed through its categories, and
+two modifier groups — one of them required, so the refusal can be seen by hand. Like
+`--cash-rounding`, it **changes an existing tenant**: a mode that only applied to a shop which did
+not exist yet would be no use to somebody who has been testing against `corner-shop` all week.
+
+The menu is small and every row earns its place. "Food" routes to the pass and "Starters" and
+"Desserts" set nothing, so those two only reach a station by the walk up the chain — the part of
+`StationRouting` a flat menu would never exercise. "Mains" overrides its parent and goes to the
+grill.
+
+**Exit criteria**
+- [x] A room, a kitchen and a menu from one command, re-runnable without damage
+- [ ] `restaurant.spec.ts` walking the *Verification* list below in a browser — needs 10.7
 
 ---
 
@@ -265,38 +298,39 @@ Stated up front so they are not read as oversights:
 ## What is not done
 
 **Written down rather than quietly left off the list**, in the shape of Phase 9's section. The
-phase is **not finished**. What exists is the whole server side of an order's life — seat, order,
-amend, void, transfer, merge, abandon, split, pay — and it is tested end to end against a real
-Postgres. What does not exist is anything a person can look at.
+phase is **not finished**. What exists is the whole server side of a service — seat, order, amend,
+void, transfer, merge, abandon, **fire, bump, recall**, split, pay — tested end to end against a
+real Postgres, and a seeded room to exercise it in. What does not exist is anything a person can
+look at.
 
-1. **The kitchen (10.4).** No `Station`, no `StationRouting`, no `KitchenTicket`, no fire
-   endpoint, no display. `OrderLineStatus.Fired` and `OrderLine.FiredAt` exist and everything
-   downstream respects them — a fired line cannot be amended, and voiding one takes a supervisor,
-   a reason and an audit entry — but **nothing sets them except a test**. This is the largest
-   single piece left and it is self-contained: the columns and the rules it needs are already
-   there.
-
-2. **The entire restaurant UI (10.7).** `/register` still renders the retail screen for every
+1. **The entire restaurant UI (10.7).** `/register` still renders the retail screen for every
    tenant; `serviceMode` is readable at `/admin/settings` and changes nothing else. There is no
-   floor view, no order screen, no modifier sheet, no bill screen, and no `/catalog/modifiers`
-   admin page. **A shop cannot use any of this today** — every endpoint below works and none of
-   them has a caller.
+   floor view, no order screen, no modifier sheet, no bill screen, **no kitchen display**, and no
+   `/catalog/modifiers` admin page. **A shop cannot use any of this today** — every endpoint works
+   and none of them has a caller. This is now the whole of what is left before the phase is real.
 
-3. **Restaurant reporting (10.8).** Takings by table, by server, tips by server, average cover,
+2. **Restaurant reporting (10.8).** Takings by table, by server, tips by server, average cover,
    table turn. The Z-report *does* carry the tips line from 10.6, which is the part that affects
    whether a drawer reconciles; the rest is analysis nobody is blocked on.
 
-4. **The e2e spec and the seed fixture (10.9).** No `restaurant.spec.ts`, and `Pos.Seed` has no
-   `--restaurant` flag — so there is no way to click through this by hand either, which is why
-   item 2 has not been checked in a browser. Per `docs/ROADMAP.md`, **UI testing must never
-   accumulate**, so 10.7 and 10.9 belong to the same piece of work rather than one following the
-   other.
+3. **The e2e spec (10.9).** No `restaurant.spec.ts`. `Pos.Seed --restaurant` now exists, so the
+   room can be clicked through by hand once there is a screen — but per `docs/ROADMAP.md` **UI
+   testing must never accumulate**, so the spec belongs to the same piece of work as 10.7 rather
+   than following it.
 
-5. **Two devices billing the same order line at once.** The allocation check reads the running
+4. **Two devices billing the same order line at once.** The allocation check reads the running
    total and then inserts, which is check-then-act — two waiters splitting one table
    simultaneously could over-allocate a line. The unique index on
    `(tenant, bill, order_line)` stops the *same* line joining one bill twice, and nothing here
    can produce a wrong charge on a bill that is actually paid, but the guard is weaker than the
-   filtered-index one used for seating and it is not yet proved concurrently.
+   filtered-index one used for seating and it is not yet proved concurrently. **Firing has the
+   equivalent guard and it *is* proved** — `KitchenTicketWriterTests.Two_handhelds_firing_at_once_send_the_round_once`
+   is the shape this needs.
 
-Also **deliberate, not a gap**: everything under *Non-goals* above.
+5. **Two small ones, both stated where they belong:** a barcoded modifier still resolves through
+   `GET /products/by-barcode/{code}` (10.3's third box), and the refund path accepts no tip so
+   there is nothing yet to refuse (10.6).
+
+Also **deliberate, not a gap**: everything under *Non-goals* above, and the fact that nothing in
+the kitchen is audited — `AuditAction` is a short list of the actions that move money, and firing
+is not one.

@@ -171,6 +171,12 @@ public sealed partial class DomainExceptionHandler(
         // the same request succeeds.
         OrdersStillOpenException => (StatusCodes.Status409Conflict, "Orders are still open"),
 
+        // Also 409 with a next move, and the message names the products rather than the field —
+        // because there is no field. The body asked to fire an order and the order is fine; what
+        // is wrong is that the menu routes something nowhere, which a manager fixes on the
+        // product or its category and then fires the same request again.
+        ProductNotRoutedException => (StatusCodes.Status409Conflict, "Something has no station to be cooked at"),
+
         _ => (StatusCodes.Status400BadRequest, "Request could not be completed"),
     };
 }

@@ -117,6 +117,12 @@ export function ProductDetailPage() {
     // cheese" back into a sellable item — the same trap the request record's
     // remarks call out. This screen does not edit it; the menu screen does.
     isModifier: existing.data?.isModifier ?? false,
+
+    // And its kitchen routing, for the same reason one level over. PUT replaces,
+    // so a form that dropped this would un-route the product on every price
+    // edit — and the next fire would refuse the whole round naming an item
+    // nobody had touched. This screen does not edit it either.
+    stationId: existing.data?.stationId ?? null,
   })
 
   const save = useMutation({

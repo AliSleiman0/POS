@@ -2651,6 +2651,135 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/stations': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The kitchen's stations */
+    get: {
+      parameters: {
+        query?: {
+          includeRetired?: boolean
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['StationResponse'][]
+          }
+        }
+      }
+    }
+    put?: never
+    /** Add a station */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveStationRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['StationResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/stations/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** Rename, reorder or retire a station */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveStationRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['StationResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/menu/modifier-groups': {
     parameters: {
       query?: never
@@ -3163,6 +3292,67 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/orders/{id}/fire': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Send a round to the kitchen */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['FireOrderRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['KitchenTicketResponse'][]
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/orders/{id}/transfer': {
     parameters: {
       query?: never
@@ -3525,6 +3715,135 @@ export interface paths {
           }
           content: {
             'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/kitchen/tickets': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** What a station has been told to cook */
+    get: {
+      parameters: {
+        query?: {
+          stationId?: string
+          includeBumped?: boolean
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['KitchenTicketResponse'][]
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/kitchen/tickets/{id}/bump': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Clear a ticket off the screen */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['KitchenTicketResponse']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/kitchen/tickets/{id}/recall': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Put a bumped ticket back on the screen */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['KitchenTicketResponse']
           }
         }
         /** @description Not Found */
@@ -3985,6 +4304,8 @@ export interface components {
       /** Format: int32 */
       sortOrder: number | string
       isActive: boolean
+      /** Format: uuid */
+      stationId: null | string
       /** Format: date-time */
       createdAt: string
       /** Format: date-time */
@@ -4009,6 +4330,8 @@ export interface components {
       parentCategoryId: null | string
       /** Format: int32 */
       sortOrder: null | number | string
+      /** Format: uuid */
+      stationId: null | string
     }
     CreateEmployeeRequest: {
       displayName: string
@@ -4031,6 +4354,8 @@ export interface components {
       costPrice: null | number | string
       unit: null | string
       trackStock: null | boolean
+      /** Format: uuid */
+      stationId: null | string
       isModifier: null | boolean
     }
     CreateRegisterRequest: {
@@ -4134,6 +4459,10 @@ export interface components {
       registerId: string
       deviceToken: string
     }
+    FireOrderRequest: {
+      /** Format: int32 */
+      course: null | number | string
+    }
     HttpValidationProblemDetails: {
       type?: null | string
       title?: null | string
@@ -4145,6 +4474,44 @@ export interface components {
         [key: string]: string[]
       }
     }
+    KitchenTicketLineResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: uuid */
+      orderLineId: string
+      /** Format: int32 */
+      lineNumber: number | string
+      description: string
+      /** Format: double */
+      quantity: number | string
+      /** Format: int32 */
+      seatNumber: null | number | string
+      modifierText: null | string
+      note: null | string
+      isVoided: boolean
+    }
+    KitchenTicketResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: uuid */
+      orderId: string
+      /** Format: uuid */
+      stationId: string
+      stationName: string
+      /** Format: int32 */
+      course: number | string
+      /** Format: int64 */
+      orderNumber: number | string
+      orderLabel: string
+      /** Format: date-time */
+      firedAt: string
+      status: components['schemas']['KitchenTicketStatus']
+      /** Format: date-time */
+      bumpedAt: null | string
+      lines: components['schemas']['KitchenTicketLineResponse'][]
+    }
+    /** @enum {unknown} */
+    KitchenTicketStatus: 'Active' | 'Bumped'
     LinkedRefundResponse: {
       /** Format: uuid */
       id: string
@@ -4367,6 +4734,8 @@ export interface components {
       isActive: boolean
       trackStock: boolean
       isModifier: boolean
+      /** Format: uuid */
+      stationId: null | string
       /** Format: date-time */
       createdAt: string
       /** Format: date-time */
@@ -4763,6 +5132,12 @@ export interface components {
       sortOrder: null | number | string
       isActive: null | boolean
     }
+    SaveStationRequest: {
+      name: null | string
+      /** Format: int32 */
+      sortOrder: null | number | string
+      isActive: null | boolean
+    }
     ServiceAreaResponse: {
       /** Format: uuid */
       id: string
@@ -4818,6 +5193,14 @@ export interface components {
     }
     /** @enum {unknown} */
     ShiftStatus: 'Open' | 'Closed'
+    StationResponse: {
+      /** Format: uuid */
+      id: string
+      name: string
+      /** Format: int32 */
+      sortOrder: number | string
+      isActive: boolean
+    }
     StockAdjustmentResponse: {
       movement: components['schemas']['StockMovementResponse']
       /** Format: double */
@@ -4970,6 +5353,8 @@ export interface components {
       parentCategoryId: null | string
       /** Format: int32 */
       sortOrder: null | number | string
+      /** Format: uuid */
+      stationId: null | string
     }
     UpdateEmployeeRequest: {
       displayName: string
@@ -4990,6 +5375,8 @@ export interface components {
       costPrice: null | number | string
       unit: null | string
       trackStock: null | boolean
+      /** Format: uuid */
+      stationId: null | string
       isModifier: null | boolean
     }
     UpdateSettingsRequest: {
