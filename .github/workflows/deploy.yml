@@ -73,7 +73,21 @@ jobs:
       # restore the projects' *packages*, so `migrations script` — which builds the
       # startup project — died on NETSDK1004, "assets file not found". Nothing caught
       # it earlier because Phase 8.3 shipped this workflow without it having run.
+      #
+      # The connection string below is a PLACEHOLDER and is never connected to. That
+      # is the second reason this step failed for real: `migrations script` builds the
+      # startup project and asks it for an AppDbContext, and Program.cs refuses to
+      # construct one without ConnectionStrings:Postgres — so the step died on
+      # "Connection string 'Postgres' is not configured" having produced no SQL.
+      #
+      # `--idempotent` generates its SQL from the model and the migration list in
+      # code; it opens no connection and needs no database to exist. Handing it the
+      # real DATABASE_OWNER_URL would therefore buy nothing and would spread a live
+      # credential across one more step. The real one is used below, by psql, which is
+      # the only thing here that actually talks to the database.
       - name: Generate the migration script
+        env:
+          ConnectionStrings__Postgres: "Host=script-generation-only;Database=none;Username=none;Password=none"
         run: |
           dotnet restore
           dotnet tool restore
