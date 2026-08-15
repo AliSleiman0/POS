@@ -12,12 +12,23 @@ import { describe, expect, it } from 'vitest'
  * the completion panel opens a receipt with a customer at the counter — so it is
  * the same screen as far as a stalled queue is concerned, and it is where the
  * temptation comes back: `confirm('Print this receipt?')` is a one-liner.
+ *
+ * `features/restaurant` joined in 10.7, and it had to join in the commit that
+ * created the folder rather than afterwards — a scan that lags the code it
+ * guards is a scan that passes the day the rule is broken. It is the same screen
+ * for the same reason and then some: an order screen is full of actions that
+ * *look* like they want a confirm (`Void this line?`, `Fire course 2?`), the
+ * device is a handheld in a busy room, and a blocked event loop there stalls a
+ * service rather than a queue.
  */
-const SOURCES = import.meta.glob(['./*.{ts,tsx}', '../sales/*.{ts,tsx}'], {
-  query: '?raw',
-  eager: true,
-  import: 'default',
-}) as Record<string, string>
+const SOURCES = import.meta.glob(
+  ['./*.{ts,tsx}', '../sales/*.{ts,tsx}', '../restaurant/*.{ts,tsx}'],
+  {
+    query: '?raw',
+    eager: true,
+    import: 'default',
+  },
+) as Record<string, string>
 
 /**
  * CLAUDE.md invariant 10, pinned rather than reviewed.

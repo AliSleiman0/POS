@@ -518,12 +518,32 @@ public static class OrderEndpoints
         return TypedResults.Ok(Project(line));
     }
 
+    /// <summary>
+    /// Takes a line off an order.
+    /// </summary>
+    /// <remarks>
+    /// <b>A manager's override grant is accepted, for the reason the retail till accepts one on a
+    /// discount.</b> Voiding fired food is the restaurant's <c>CanVoidSale</c> and it happens on a
+    /// handheld in a busy room — so without a grant the only way for a waiter to cancel a plate is
+    /// to hand the device to a supervisor to sign in and back out. Nobody does that twice: they
+    /// leave a manager signed in for the evening instead, and then every void for the rest of the
+    /// night is attributed to somebody who was not there. The grant is the option that keeps the
+    /// audit entry meaning what it says.
+    /// <para>
+    /// The caller's own policy is checked first, so a manager working the floor never presents a
+    /// grant to themselves. It is spent in the same <c>SaveChangesAsync</c> as the void, and the
+    /// approver is recorded in the audit entry's <c>After</c> — the actor stays the session's own
+    /// user, per <c>AuditEntry.ActorId</c>.
+    /// </para>
+    /// </remarks>
     private static async Task<Results<Ok<OrderLineResponse>, NotFound, ValidationProblem, ProblemHttpResult>>
         VoidLineAsync(
             Guid id,
             Guid lineId,
             VoidOrderLineRequest request,
+            [FromHeader(Name = OverrideGrantService.HeaderName)] string? overrideGrant,
             AppDbContext db,
+            OverrideGrantService grants,
             IAuditLog audit,
             ICurrentActor actor,
             ClaimsPrincipal caller,
@@ -551,13 +571,29 @@ public static class OrderEndpoints
 
         var reason = request.Reason?.Trim();
 
+        OverrideGrant? approval = null;
+
         if (line.Status == OrderLineStatus.Fired)
         {
             // Food that is already cooking. Two things follow, and both are the point of the
             // status existing: it takes a supervisor, and it takes a reason.
             if (!(await authorization.AuthorizeAsync(caller, Policies.CanVoidFiredLine)).Succeeded)
             {
-                return AdjustmentNotAuthorized([Policies.CanVoidFiredLine]);
+                // Not held by the caller, so a manager may have authorised it at the device.
+                // Resolved against the register on the session's claim, so a grant minted at the
+                // bar cannot be replayed on the terrace handheld.
+                var resolution = await grants.ResolveAsync(
+                    overrideGrant,
+                    [Policies.CanVoidFiredLine],
+                    actor.RegisterId,
+                    cancellationToken);
+
+                if (resolution.Grant is not { } granted)
+                {
+                    return AdjustmentNotAuthorized([Policies.CanVoidFiredLine]);
+                }
+
+                approval = granted;
             }
 
             if (string.IsNullOrEmpty(reason))
@@ -620,7 +656,19 @@ public static class OrderEndpoints
                 {
                     ["status"] = nameof(OrderLineStatus.Voided),
                     ["reason"] = line.VoidReason,
+
+                    // Who authorised it, when it was not the person doing it. The actor stays the
+                    // session's own user on every row — see AuditEntry.ActorId — so "who did
+                    // this" means one thing everywhere and the approver is a separate fact.
+                    ["approvedBy"] = approval?.UserId.ToString(),
                 });
+        }
+
+        // In the same save as the void it authorised, so a grant cannot be spent by a request
+        // that then failed, nor survive one that succeeded.
+        if (approval is not null)
+        {
+            grants.Consume(approval);
         }
 
         await db.SaveChangesAsync(cancellationToken);

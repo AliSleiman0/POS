@@ -182,9 +182,13 @@ Indirection through policies means a customer asking "can my supervisors do refu
 
 #### Override grants — the one way a policy is satisfied other than by role
 
-`CanApplyDiscount` and `CanOverridePrice` can also be satisfied by an **override grant**: a manager's PIN, entered at the till on the cashier's screen, exchanged for a single-use token (`POST /auth/override`) that `POST /sales` accepts as `X-Override-Authorization` and consumes inside the sale's transaction.
+`CanApplyDiscount`, `CanOverridePrice` and `CanVoidFiredLine` can also be satisfied by an **override grant**: a manager's PIN, entered at the device on the cashier's screen, exchanged for a single-use token (`POST /auth/override`) that the endpoint accepts as `X-Override-Authorization` and consumes inside the transaction that does the work.
 
 The cashier's session is untouched throughout, and that is the whole point. `POST /sales` takes the cashier from the token, so a flow that swapped the session would attribute the sale to the manager and make the drawer's Z-report reconcile the wrong person. Instead the sale stays the cashier's and `SaleLine.OverriddenBy` names who approved the exception.
+
+**The grantable list is an allow-list and stays short.** Without one this is a general elevation mechanism — a manager's PIN would mint `CanManageEmployees` and the holder could set their own PIN on the owner's account. The test for admission is that the action is **bounded, audited, and about one transaction in front of the person approving it**. `CanRefund` is deliberately absent: money leaving the drawer for a customer who is not standing there is what a supervisor's own session is for.
+
+`CanVoidFiredLine` was added in Phase 10.7 and its argument is that the alternative is worse for the audit log rather than better. A waiter on a shared handheld cannot hand the device to a supervisor for every cancelled steak, so what happens in a real room is a manager session left open all evening — and then every void for the rest of the night is attributed to somebody who was not there. Voiding an order line writes no sale, so the grant is consumed with `ConsumedBySaleId` left null and the approver is recorded in the `OrderLineVoided` audit entry's `After`, exactly as `AuditEntry.ActorId` prescribes.
 
 Three properties keep this from being a hole in the policy model:
 

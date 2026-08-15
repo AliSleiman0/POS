@@ -3246,7 +3246,9 @@ export interface paths {
     post: {
       parameters: {
         query?: never
-        header?: never
+        header?: {
+          'X-Override-Authorization'?: string
+        }
         path: {
           id: string
           lineId: string
