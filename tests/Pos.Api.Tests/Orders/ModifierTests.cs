@@ -172,6 +172,49 @@ public sealed class ModifierTests(PosApiFactory factory)
     }
 
     [Fact]
+    public async Task A_barcoded_modifier_does_not_resolve_at_the_scanner()
+    {
+        var (client, tenant) = await factory.RestaurantTenantAsync();
+
+        // Nobody puts a barcode on "extra cheese", which is exactly why this went unnoticed
+        // until 10.7 went looking. A shop that did — a pre-portioned topping with a supplier
+        // label on it — would have had a till that resolved it, put it on a line of its own
+        // with no burger under it, and sold it.
+        using var created = await client.PostAsJsonAsync(
+            "/api/v1/products",
+            new
+            {
+                sku = "MOD-BARCODED",
+                name = "Extra cheese",
+                taxClassId = tenant.Catalog.StandardTaxClassId,
+                unitPrice = 1.50m,
+                trackStock = false,
+                isModifier = true,
+            });
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        var productId = (await created.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("id")
+            .GetGuid();
+
+        const string Code = "5099999009999";
+
+        using var coded = await client.PostAsJsonAsync(
+            $"/api/v1/products/{productId}/barcodes",
+            new { code = Code, isPrimary = true });
+
+        Assert.Equal(HttpStatusCode.Created, coded.StatusCode);
+
+        // 404, the same answer an unknown code gets. The register then says "unknown item"
+        // rather than offering to sell a topping on its own.
+        using var scanned = await client.GetAsync(
+            new Uri($"/api/v1/products/by-barcode/{Code}", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.NotFound, scanned.StatusCode);
+    }
+
+    [Fact]
     public async Task The_offline_mirror_is_told_which_products_are_modifiers()
     {
         var (client, tenant) = await factory.RestaurantTenantAsync();

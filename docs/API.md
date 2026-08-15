@@ -544,6 +544,7 @@ Reads are everybody's and writes are supervisors': renaming a table or a station
 - **An order line carries no total.** It stores the snapshots — description, unit price, tax rate, discount — that a bill is later priced from. A second set of numbers would have to be kept in step through every edit, void and re-split, and the first time one drifted the till would show a total the sale would not charge.
 - **Prices snapshot when the item is ordered**, not when the bill is paid. A guest who ordered at 18:00 pays the 18:00 price if the menu changes at 19:00.
 - **Voiding a fired line takes `CanVoidFiredLine`, a reason, and is audited.** Voiding a pending one takes neither and is not: nobody cooked it, and filing an entry every time a customer changes their mind is how a log stops being read.
+- **A manager's override grant is accepted on the fired-line void**, presented as `X-Override-Authorization` exactly as a retail discount presents one. Without it a waiter on a shared handheld would have to hand the device to a supervisor to sign in for every cancelled steak, and what happens in a real room is a manager session left open all evening — which attributes every later void to somebody who was not there. The grant is single-use, spent in the same save as the void, and the approver is recorded in the audit entry's `after` while the actor stays the session's own user.
 - **A modifier is one level deep**, travels with its parent when voided, and cannot carry modifiers of its own. A required modifier group with nothing chosen refuses the line and names the question.
 - **Seating a table that is already served is `409 table-already-occupied`** — lost on a filtered unique index, not on a pre-check. Re-read `GET /orders`.
 - **The register and shift travel in the body on `/pay`**, exactly as they do on `POST /sales`: the money goes into the drawer that is open *now*, not the one the order was opened at.
@@ -590,6 +591,17 @@ Reads are everybody's and writes are supervisors': renaming a table or a station
 **Bump and recall carry no `Idempotency-Key`**, unlike every 🔒 route above. They move no money and no stock and are idempotent by state — bumping a bumped ticket is already a no-op, and answers `200` rather than a conflict, because two chefs reaching for one screen is ordinary and the outcome is what both of them wanted. Requiring a key on something a chef does forty times an hour would be friction that buys nothing, and invariant 6 is a rule about writes that move money.
 
 **Nothing in the kitchen is audited.** `AuditAction` is deliberately a short list of the actions that move money or conceal theft, and firing is neither. What is recorded is the void afterwards, which is where a plate leaves without being paid for.
+
+**`POST .../pay` answers with `changeGiven`**, the server's figure, carried out of the commit that
+computed it rather than fetched afterwards through `saleId`. A second round trip would land at the
+one moment a waiter is counting notes into a customer's hand, and it would make this the only
+screen in the application learning the change from somewhere other than the write that produced it.
+Null on an unpaid bill rather than zero — zero means the guest tendered it exactly.
+
+**Opening a bill takes a lock on the order row.** The allocation check reads what each line has
+already had taken and then inserts, which is check-then-act: two waiters splitting one table in the
+same second would both see a line as free. The unique index on `(tenant, bill, order_line)` stops
+the same line joining *one* bill twice and nothing more, so it is not the guard this needs.
 
 ### Tips
 

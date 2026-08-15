@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { ErrorState, LoadingState } from '@/components/states'
 import { useToast } from '@/components/toastContext'
 import { getEnrolledRegisterId } from '@/auth/deviceToken'
+import { OpenShiftPanel } from '@/features/register/OpenShiftPanel'
 import { useCurrentShift } from '@/features/register/queries'
 import { TenderPanel } from '@/features/register/TenderPanel'
 import { quickCash, tenderedMinor, type Tender } from '@/features/register/tender'
@@ -76,6 +77,8 @@ export function BillPage() {
           Back to the order
         </Button>
       </header>
+
+      <Drawer />
 
       {open.length === 0 && paid.length === 0 ? (
         <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border p-4">
@@ -290,5 +293,37 @@ function PaidCard({ bill }: { bill: OrderBill }) {
         ) : null}
       </dl>
     </section>
+  )
+}
+
+/**
+ * The drawer, if this till has not opened one.
+ *
+ * **Found by the e2e walk-through and worth stating.** The retail till shows
+ * this panel on the register screen; the floor does not, because a floor is not
+ * a till. That left a restaurant able to seat, order and fire all evening and
+ * then discover at the first bill that no drawer was ever opened — with no
+ * control anywhere on any restaurant screen to open one.
+ *
+ * It belongs here rather than on the floor: this is the screen where money
+ * happens, it is the first moment the absence matters, and putting it on the
+ * floor would ask every waiter to think about drawers before they seat anybody.
+ */
+function Drawer() {
+  const shift = useCurrentShift()
+
+  if (shift.isPending || shift.data !== undefined) {
+    return null
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3">
+      <p className="text-sm text-foreground">
+        <strong className="font-semibold">No drawer is open at this till.</strong> Money cannot be
+        taken until one is.
+      </p>
+
+      <OpenShiftPanel registerId={shift.registerId} currency="EUR" />
+    </div>
   )
 }

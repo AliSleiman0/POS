@@ -12,6 +12,7 @@ using Pos.Core.Pricing;
 using Pos.Core.Sales;
 using Pos.Core.Tenders;
 using Pos.Data;
+using Pos.Data.Orders;
 
 namespace Pos.Api.Endpoints;
 
@@ -147,10 +148,26 @@ public static class OrderBillEndpoints
         return TypedResults.Ok(await PriceAllAsync(db, id, cancellationToken));
     }
 
+    /// <summary>
+    /// Opens a bill over some or all of the unbilled lines.
+    /// </summary>
+    /// <remarks>
+    /// <b>Under a lock on the order row, because the allocation check is check-then-act.</b> It
+    /// reads what each line has already had taken and then inserts; without serialising, two
+    /// waiters splitting one table in the same second both see a line as free and both take it,
+    /// and the order ends up billed for more than it holds. The filtered unique index on
+    /// <c>(tenant, bill, order_line)</c> stops the same line joining <i>one</i> bill twice and
+    /// nothing more, so it is not the guard this needs.
+    /// <para>
+    /// The same lock <c>OrderWriter</c> takes for line numbers and <c>KitchenTicketWriter</c>
+    /// takes for firing — one implementation, so the three cannot drift.
+    /// </para>
+    /// </remarks>
     private static async Task<Results<Created<OrderBillResponse>, NotFound, ValidationProblem>> CreateAsync(
         Guid id,
         CreateBillRequest request,
         AppDbContext db,
+        OrderWriter orders,
         IIdempotencyContext idempotency,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -170,61 +187,97 @@ public static class OrderBillEndpoints
             throw new OrderNotOpenException();
         }
 
-        var lines = await ActiveLinesAsync(db, id, cancellationToken);
-        var allocated = await AllocatedAsync(db, id, cancellationToken);
+        OrderBill? bill = null;
+        Dictionary<string, string[]>? failed = null;
 
-        var (wanted, errors) = ResolveAllocations(request.Allocations, lines, allocated);
+        var strategy = db.Database.CreateExecutionStrategy();
 
-        if (errors.Count > 0)
+        await strategy.ExecuteAsync(async () =>
         {
-            return TypedResults.ValidationProblem(errors);
-        }
+            bill = null;
+            failed = null;
 
-        if (wanted.Count == 0)
-        {
-            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+            // Everything below reads and then writes against the same order, so it has to be
+            // one writer at a time. See the remarks on this method.
+            await orders.LockOpenOrderAsync(id, cancellationToken);
+
+            var lines = await ActiveLinesAsync(db, id, cancellationToken);
+            var allocated = await AllocatedAsync(db, id, cancellationToken);
+
+            var (wanted, errors) = ResolveAllocations(request.Allocations, lines, allocated);
+
+            if (errors.Count > 0)
             {
-                ["allocations"] = ["There is nothing left to bill on this order."],
-            });
-        }
+                failed = errors;
+                return;
+            }
 
-        var nextNumber = await db.OrderBills
-            .Where(b => b.OrderId == id)
-            .Select(b => (int?)b.BillNumber)
-            .MaxAsync(cancellationToken) ?? 0;
-
-        var bill = new OrderBill
-        {
-            OrderId = id,
-            BillNumber = nextNumber + 1,
-            Status = OrderBillStatus.Open,
-
-            // Minted with the bill, not with the payment attempt. Invariant 6: a key generated
-            // per attempt makes the header decorative and charges the table twice on a retry.
-            ClientTransactionId = Guid.CreateVersion7(),
-        };
-
-        db.OrderBills.Add(bill);
-        await db.SaveChangesAsync(cancellationToken);
-
-        foreach (var (lineId, quantity) in wanted)
-        {
-            db.OrderBillLines.Add(new OrderBillLine
+            if (wanted.Count == 0)
             {
-                OrderBillId = bill.Id,
-                OrderLineId = lineId,
-                Quantity = quantity,
-            });
+                failed = new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    ["allocations"] = ["There is nothing left to bill on this order."],
+                };
+
+                return;
+            }
+
+            var nextNumber = await db.OrderBills
+                .Where(b => b.OrderId == id)
+                .Select(b => (int?)b.BillNumber)
+                .MaxAsync(cancellationToken) ?? 0;
+
+            bill = new OrderBill
+            {
+                OrderId = id,
+                BillNumber = nextNumber + 1,
+                Status = OrderBillStatus.Open,
+
+                // Minted with the bill, not with the payment attempt. Invariant 6: a key
+                // generated per attempt makes the header decorative and charges the table twice
+                // on a retry.
+                ClientTransactionId = Guid.CreateVersion7(),
+            };
+
+            db.OrderBills.Add(bill);
+
+            // Saved before the lines so the id is stamped to point at — there are no navigation
+            // properties in this model, so EF does no foreign-key fixup.
+            await db.SaveChangesAsync(cancellationToken);
+
+            foreach (var (lineId, quantity) in wanted)
+            {
+                db.OrderBillLines.Add(new OrderBillLine
+                {
+                    OrderBillId = bill.Id,
+                    OrderLineId = lineId,
+                    Quantity = quantity,
+                });
+            }
+
+            // Recorded inside the transaction that created the bill, so a replay cannot answer
+            // for a bill that was rolled back.
+            idempotency.Record(
+                db,
+                StatusCodes.Status201Created,
+                new { billId = bill.Id },
+                timeProvider.GetUtcNow());
+
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        });
+
+        if (failed is { } problems)
+        {
+            return TypedResults.ValidationProblem(problems);
         }
-
-        idempotency.Record(db, StatusCodes.Status201Created, new { billId = bill.Id }, timeProvider.GetUtcNow());
-
-        await db.SaveChangesAsync(cancellationToken);
 
         var priced = await PriceAllAsync(db, id, cancellationToken);
 
         return TypedResults.Created(
-            $"/api/v1/orders/{id}/bills/{bill.Id}",
+            $"/api/v1/orders/{id}/bills/{bill!.Id}",
             priced.First(b => b.Id == bill.Id));
     }
 

@@ -4,6 +4,8 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Pos.Api.Tests.Infrastructure;
+using Pos.Core.Entities;
+using Pos.Core.Monetary;
 using Pos.Data;
 
 namespace Pos.Api.Tests.Sales;
@@ -172,5 +174,56 @@ public sealed class TipTests(PosApiFactory factory)
 
         Assert.Equal(0m, sale.GetProperty("tipAmount").GetDecimal());
         Assert.Equal(10m - sale.GetProperty("total").GetDecimal(), sale.GetProperty("changeGiven").GetDecimal());
+    }
+
+    [Fact]
+    public async Task A_tip_cannot_be_attached_to_a_refund()
+    {
+        var (client, tenant) = await factory.TradingTenantAsync();
+
+        using var sold = await client.PostIdempotentAsync("/api/v1/sales", new
+        {
+            clientTransactionId = Guid.CreateVersion7(),
+            registerId = tenant.RegisterId,
+            shiftId = tenant.ShiftId,
+            lines = new[] { new { productId = tenant.Catalog.WaterProductId, quantity = 1m } },
+            tenders = new[] { new { method = "Cash", amount = 10m } },
+            tip = 2m,
+        });
+
+        Assert.Equal(HttpStatusCode.Created, sold.StatusCode);
+
+        var saleId = (await sold.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        // `tip` is sent deliberately and there is no field to bind it to: RefundSaleRequest has
+        // none. The assertion is that it cannot be smuggled in — a refund with a tip on it would
+        // be the shop handing back the gratuity as well as the meal, which is the outcome
+        // keeping the tip out of Total exists to prevent.
+        using var refunded = await client.PostIdempotentAsync($"/api/v1/sales/{saleId}/refund", new
+        {
+            clientTransactionId = Guid.CreateVersion7(),
+            registerId = tenant.RegisterId,
+            shiftId = tenant.ShiftId,
+            reason = "Changed their mind",
+            tip = 2m,
+        });
+
+        Assert.Equal(HttpStatusCode.Created, refunded.StatusCode);
+
+        var refund = await refunded.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(0m, refund.GetProperty("tipAmount").GetDecimal());
+
+        await factory.AsTenantAsync(tenant.TenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            var row = await db.Sales.SingleAsync(sale => sale.Type == SaleType.Refund);
+
+            // Zero on the row too, not merely omitted from the response. The refund path builds
+            // its own Sale and never sets TipAmount, and this is what would notice if somebody
+            // wired the request through to it later without thinking about what it means.
+            Assert.Equal(Money.Zero, row.TipAmount);
+        });
     }
 }

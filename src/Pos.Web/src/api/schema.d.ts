@@ -4895,6 +4895,8 @@ export interface components {
       shifts: components['schemas']['ReportShiftResponse'][]
       voids: components['schemas']['ReportReversalResponse'][]
       refunds: components['schemas']['ReportReversalResponse'][]
+      byTable: components['schemas']['ReportTableResponse'][]
+      byServer: components['schemas']['ReportServerResponse'][]
     }
     ReportReversalResponse: {
       /** Format: uuid */
@@ -4949,6 +4951,19 @@ export interface components {
       toUtc: string
       timeZoneId: string
     }
+    ReportServerResponse: {
+      serverName: string
+      /** Format: int32 */
+      covers: number | string
+      /** Format: int32 */
+      orders: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: double */
+      tips: number | string
+      /** Format: double */
+      averageSpendPerCover: null | number | string
+    }
     ReportShiftResponse: {
       /** Format: uuid */
       id: string
@@ -4968,6 +4983,21 @@ export interface components {
       countedCash: null | number | string
       /** Format: double */
       variance: null | number | string
+    }
+    ReportTableResponse: {
+      tableName: string
+      /** Format: int32 */
+      covers: number | string
+      /** Format: int32 */
+      orders: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: double */
+      tips: number | string
+      /** Format: double */
+      averageSpendPerCover: null | number | string
+      /** Format: double */
+      averageMinutesPerSitting: null | number | string
     }
     ReportTaxLineResponse: {
       /** Format: double */

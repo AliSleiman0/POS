@@ -702,7 +702,13 @@ public static class ProductEndpoints
         join taxClass in db.TaxClasses on product.TaxClassId equals taxClass.Id
         // A withdrawn code must not scan. The row survives as a tombstone so the offline
         // mirror learns the code is gone; it is not a code the shop still sells against.
-        where barcode.Code == code && barcode.DeletedAt == null
+        //
+        // Nor must a modifier. "Extra cheese" is a product so that it carries a price, a tax
+        // class and stock, and IsModifier is what keeps it out of the places it is not an
+        // answer — the register grid, the product list, the offline mirror's search, and here.
+        // Nobody scans it, so this is latent rather than live; a till that resolved one would
+        // put it on a line of its own with no burger under it, and sell it.
+        where barcode.Code == code && barcode.DeletedAt == null && !product.IsModifier
         select new BarcodeLookupResponse(
             barcode.Id,
             barcode.Code,
@@ -728,7 +734,13 @@ public static class ProductEndpoints
         join taxClass in db.TaxClasses on product.TaxClassId equals taxClass.Id
         // A withdrawn code must not scan. The row survives as a tombstone so the offline
         // mirror learns the code is gone; it is not a code the shop still sells against.
-        where barcode.Code == code && barcode.DeletedAt == null
+        //
+        // Nor must a modifier. "Extra cheese" is a product so that it carries a price, a tax
+        // class and stock, and IsModifier is what keeps it out of the places it is not an
+        // answer — the register grid, the product list, the offline mirror's search, and here.
+        // Nobody scans it, so this is latent rather than live; a till that resolved one would
+        // put it on a line of its own with no burger under it, and sell it.
+        where barcode.Code == code && barcode.DeletedAt == null && !product.IsModifier
         select new BarcodeLookupResponse(
             barcode.Id,
             barcode.Code,

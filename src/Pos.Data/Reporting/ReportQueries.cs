@@ -31,7 +31,14 @@ namespace Pos.Data.Reporting;
 public sealed class ReportQueries(AppDbContext db, ITenantContext tenant)
 {
     /// <summary>Everything one report needs.</summary>
-    public async Task<ReportData> ReadAsync(ReportScope scope, CancellationToken cancellationToken)
+    /// <param name="restaurant">
+    /// Whether to run the two restaurant aggregations. False for a counter, where they would
+    /// return nothing anyway — a retail Z-report costs exactly what it did before Phase 10.8.
+    /// </param>
+    public async Task<ReportData> ReadAsync(
+        ReportScope scope,
+        bool restaurant,
+        CancellationToken cancellationToken)
     {
         return new ReportData(
             await SaleTotalsAsync(scope, cancellationToken),
@@ -40,8 +47,101 @@ public sealed class ReportQueries(AppDbContext db, ITenantContext tenant)
             await CashMovementsAsync(scope, cancellationToken),
             await ShiftsAsync(scope, cancellationToken),
             await ReversalsAsync(scope, voided: true, cancellationToken),
-            await ReversalsAsync(scope, voided: false, cancellationToken));
+            await ReversalsAsync(scope, voided: false, cancellationToken),
+            restaurant ? await ByTableAsync(scope, cancellationToken) : [],
+            restaurant ? await ByServerAsync(scope, cancellationToken) : []);
     }
+
+    /// <summary>
+    /// What each table took, joined through the bill to the sale it became.
+    /// </summary>
+    /// <remarks>
+    /// <b>The join runs <c>order_bill → sale</c>, and never to the catalog.</b> Every amount here
+    /// comes off the <c>sale</c> row, which is the append-only record of what was actually
+    /// charged — invariant 5. Pricing an old table from today's menu would retroactively rewrite
+    /// what the shop took and stop the report reconciling with the cash.
+    /// <para>
+    /// <b>The table's name is read live, and that is a real limitation stated rather than
+    /// hidden.</b> A table renamed from "4" to "Window" reports its whole history under the new
+    /// name. Snapshotting it onto the order would fix that and was not done: unlike a price, a
+    /// table's name is an identifier a person uses to find the row again, and a report that
+    /// listed a name nobody on the floor recognises is worse than one that follows the rename.
+    /// The kitchen ticket, whose label is read by somebody standing at a pass mid-service, does
+    /// snapshot it — different consumer, different answer.
+    /// </para>
+    /// <para>
+    /// Voided sales are excluded here for the reason they are everywhere else in this file: the
+    /// cash went straight back, so it never stayed in the drawer.
+    /// </para>
+    /// <para>
+    /// <c>customer_order</c> and <c>dining_table</c>, because <c>ORDER</c> and <c>TABLE</c> are
+    /// reserved words — the whole reason those tables are named as they are.
+    /// </para>
+    /// </remarks>
+    private Task<List<TableTakingsRow>> ByTableAsync(
+        ReportScope scope,
+        CancellationToken cancellationToken) =>
+        db.Database.SqlQuery<TableTakingsRow>(
+            $"""
+             SELECT COALESCE(dt.name, 'Unknown')                AS table_name,
+                    COALESCE(SUM(DISTINCT co.cover_count), 0)::int AS covers,
+                    COUNT(DISTINCT co.id)::int                  AS orders,
+                    COALESCE(SUM(s.total), 0)                   AS total,
+                    COALESCE(SUM(s.tip_amount), 0)              AS tips,
+                    SUM(
+                      EXTRACT(EPOCH FROM (co.closed_at - co.opened_at)) / 60.0
+                    ) FILTER (WHERE co.closed_at IS NOT NULL)   AS minutes_seated
+             FROM order_bill ob
+             JOIN sale s            ON s.id = ob.sale_id            AND s.tenant_id = ob.tenant_id
+             JOIN customer_order co ON co.id = ob.order_id          AND co.tenant_id = ob.tenant_id
+             LEFT JOIN dining_table dt
+                                    ON dt.id = co.dining_table_id   AND dt.tenant_id = co.tenant_id
+             WHERE ob.tenant_id = {tenant.TenantId}
+               AND s.status <> 'Voided'
+               AND s.completed_at >= {scope.StartUtc}
+               AND s.completed_at < {scope.EndUtc}
+               AND ({scope.ShiftId} = '00000000-0000-0000-0000-000000000000'::uuid
+                    OR s.shift_id = {scope.ShiftId})
+             GROUP BY COALESCE(dt.name, 'Unknown')
+             ORDER BY 4 DESC, 1
+             """)
+            .ToListAsync(cancellationToken);
+
+    /// <summary>
+    /// What each member of staff took, and what guests left them.
+    /// </summary>
+    /// <remarks>
+    /// <b>Whoever <i>opened</i> the order, not whoever rang the sale.</b> Those are different
+    /// people and the difference is the point: the money belongs to the drawer the bill was
+    /// settled at — a terrace table paid at the bar is the bar's cash — but the service belongs
+    /// to the person who worked the table. A tips-by-server report keyed on the till would hand
+    /// the evening's gratuities to whoever happened to be standing at it.
+    /// </remarks>
+    private Task<List<ServerTakingsRow>> ByServerAsync(
+        ReportScope scope,
+        CancellationToken cancellationToken) =>
+        db.Database.SqlQuery<ServerTakingsRow>(
+            $"""
+             SELECT COALESCE(u.display_name, 'Unknown')          AS server_name,
+                    COALESCE(SUM(DISTINCT co.cover_count), 0)::int AS covers,
+                    COUNT(DISTINCT co.id)::int                  AS orders,
+                    COALESCE(SUM(s.total), 0)                   AS total,
+                    COALESCE(SUM(s.tip_amount), 0)              AS tips
+             FROM order_bill ob
+             JOIN sale s            ON s.id = ob.sale_id       AND s.tenant_id = ob.tenant_id
+             JOIN customer_order co ON co.id = ob.order_id     AND co.tenant_id = ob.tenant_id
+             LEFT JOIN application_user u
+                                    ON u.id = co.opened_by     AND u.tenant_id = co.tenant_id
+             WHERE ob.tenant_id = {tenant.TenantId}
+               AND s.status <> 'Voided'
+               AND s.completed_at >= {scope.StartUtc}
+               AND s.completed_at < {scope.EndUtc}
+               AND ({scope.ShiftId} = '00000000-0000-0000-0000-000000000000'::uuid
+                    OR s.shift_id = {scope.ShiftId})
+             GROUP BY COALESCE(u.display_name, 'Unknown')
+             ORDER BY 4 DESC, 1
+             """)
+            .ToListAsync(cancellationToken);
 
     /// <summary>
     /// The headline figures, grouped by sale type.

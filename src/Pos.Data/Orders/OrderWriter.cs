@@ -218,13 +218,24 @@ public sealed class OrderWriter(
     /// Takes an exclusive lock on one order and refuses if it is not open.
     /// </summary>
     /// <remarks>
+    /// <b>Public because the bill path needs the same lock.</b> Allocating lines to a bill reads
+    /// what is already allocated and then inserts, which is check-then-act: two waiters splitting
+    /// one table in the same second both see a line as free and both take it. Serialising on the
+    /// order row is the same answer used here for line numbers and in <c>KitchenTicketWriter</c>
+    /// for firing, and one implementation is what stops the three drifting apart.
+    /// <para>
+    /// The caller must already be in a transaction — a lock outside one is released immediately
+    /// and buys nothing.
+    /// </para>
+    /// </remarks>
+    /// <remarks>
     /// Raw SQL because the lock is the point, and EF has no <c>FOR UPDATE</c>. The
     /// <c>tenant_id</c> predicate is written by hand for the reason <c>ShiftWriter</c> states:
     /// the global query filter composes over LINQ and not over this. That is not a bypass of
     /// invariant 2 — the tenant comes from the validated token exactly as everywhere else, and
     /// row-level security is underneath as the layer that holds when application code is wrong.
     /// </remarks>
-    private async Task LockOpenOrderAsync(Guid orderId, CancellationToken cancellationToken)
+    public async Task LockOpenOrderAsync(Guid orderId, CancellationToken cancellationToken)
     {
         var statuses = await db.Database
             .SqlQuery<string>(

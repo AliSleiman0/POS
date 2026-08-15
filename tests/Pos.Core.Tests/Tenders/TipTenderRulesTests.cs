@@ -34,6 +34,65 @@ public sealed class TipTenderRulesTests
         Assert.Equal((Money)5m, change);
     }
 
+    /// <summary>
+    /// The invariant, over generated cases rather than the ones somebody thought of.
+    /// </summary>
+    /// <remarks>
+    /// <b>DATA-MODEL invariant 2, as amended in 10.6:</b>
+    /// <c>sum(Tender.Amount) &gt;= Sale.Total + TipAmount</c>, and the excess is
+    /// <c>ChangeGiven</c>. Three worked examples prove the cases their author imagined; this
+    /// walks a grid, and it is the form the phase doc asked for because the failure being
+    /// guarded against is an off-by-a-cent at a boundary nobody pictured.
+    /// <para>
+    /// The two halves are one statement: whatever is tendered, either it is refused, or the
+    /// change is exactly what is left after the total and the tip. There is no third outcome,
+    /// and a tip that silently ate the remainder would be one.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(0.01)]
+    [InlineData(0.05)]
+    [InlineData(1)]
+    [InlineData(19.99)]
+    [InlineData(20)]
+    [InlineData(123.45)]
+    public void Tendered_less_the_total_and_the_tip_is_always_the_change(decimal total)
+    {
+        decimal[] tips = [0m, 0.01m, 0.5m, 5m, total];
+        decimal[] extras = [-0.01m, 0m, 0.01m, 0.99m, 5m, 100m];
+
+        foreach (var tip in tips)
+        {
+            foreach (var extra in extras)
+            {
+                var tendered = total + tip + extra;
+
+                if (tendered < 0m)
+                {
+                    continue;
+                }
+
+                var covered = TenderRules.IsSufficient((Money)(total + tip), [(Money)tendered]);
+
+                // Short by a cent is short. The only case that must never be "close enough".
+                Assert.Equal(extra >= 0m, covered);
+
+                if (!covered)
+                {
+                    continue;
+                }
+
+                var change = TenderRules.ChangeFor((Money)total, [(Money)tendered], (Money)tip);
+
+                Assert.Equal((Money)extra, change);
+
+                // And the whole of it reconciles: what the drawer keeps is the total plus the
+                // tip, which is precisely why ExpectedCash needed no change in 10.6.
+                Assert.Equal((Money)(total + tip), (Money)(tendered - (decimal)change));
+            }
+        }
+    }
+
     [Fact]
     public void A_tender_that_covers_the_bill_but_not_the_tip_is_refused()
     {

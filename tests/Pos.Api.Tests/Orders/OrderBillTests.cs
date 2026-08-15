@@ -403,6 +403,57 @@ public sealed class OrderBillTests(PosApiFactory factory)
     }
 
     [Fact]
+    public async Task Two_waiters_splitting_one_table_at_once_cannot_over_allocate_a_line()
+    {
+        var (client, tenant) = await factory.RestaurantTenantAsync();
+
+        var orderId = await client.SeatAsync(tenant.TableId);
+
+        // One line, quantity one. Both requests want the whole of it, so exactly one can win.
+        await client.AddLineAsync(orderId, tenant.Catalog.WaterProductId);
+
+        var second = await factory.CashierClientAsync(tenant);
+
+        // Concurrent for real, per CLAUDE.md invariant 9. A pre-check cannot make this pass:
+        // both readers see the line as unbilled and both insert. What makes it deterministic is
+        // the FOR UPDATE on the order row, the same lock line numbering and firing take.
+        using var barrier = new Barrier(2);
+
+        async Task<HttpStatusCode> BillAsync(HttpClient who)
+        {
+            await Task.Yield();
+            barrier.SignalAndWait();
+
+            using var response = await who.PostIdempotentAsync(
+                $"/api/v1/orders/{orderId}/bills",
+                new { allocations = (object?)null });
+
+            return response.StatusCode;
+        }
+
+        var outcomes = await Task.WhenAll(BillAsync(client), BillAsync(second));
+
+        // One bill, and the loser is told there is nothing left rather than being handed a
+        // second claim on the same plate.
+        Assert.Single(outcomes, code => code == HttpStatusCode.Created);
+        Assert.Single(outcomes, code => code == HttpStatusCode.BadRequest);
+
+        await factory.AsTenantAsync(tenant.TenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            Assert.Single(await db.OrderBills.ToListAsync());
+
+            // The claim that matters: the order is billed for exactly what it holds. Two rows
+            // here is a table charged twice for one glass of water.
+            var allocations = await db.OrderBillLines.ToListAsync();
+
+            Assert.Single(allocations);
+            Assert.Equal(1m, allocations[0].Quantity);
+        });
+    }
+
+    [Fact]
     public async Task A_bill_cannot_be_torn_up_once_it_is_paid()
     {
         var (client, tenant) = await factory.RestaurantTenantAsync();

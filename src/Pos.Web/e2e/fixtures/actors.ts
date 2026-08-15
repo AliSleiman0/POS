@@ -1,5 +1,13 @@
 import type { Page } from '@playwright/test'
-import { CASHIER_EMAIL, MANAGER_EMAIL, OWNER_EMAIL, PASSWORD, readSeed, TENANT_SLUG } from './seed'
+import {
+  CASHIER_EMAIL,
+  MANAGER_EMAIL,
+  OWNER_EMAIL,
+  PASSWORD,
+  readSeed,
+  RESTAURANT_SLUG,
+  TENANT_SLUG,
+} from './seed'
 
 export type Role = 'owner' | 'manager' | 'cashier'
 
@@ -47,6 +55,37 @@ export async function enrolDevice(page: Page): Promise<void> {
       localStorage.setItem('pos.registerId', register as string)
     },
     [deviceToken, registerId],
+  )
+}
+
+/**
+ * Signs in to the restaurant shop.
+ *
+ * A different tenant, not a different mode on the same one — see
+ * `RESTAURANT_SLUG`. The emails are the same because the seeder derives them
+ * from the slug, so they belong to different people at different shops.
+ */
+export async function signInToRestaurant(page: Page, role: Role): Promise<void> {
+  await page.goto('/login')
+
+  await page.getByLabel('Shop').fill(RESTAURANT_SLUG)
+  await page.getByLabel('Email').fill(EMAILS[role].replace(TENANT_SLUG, RESTAURANT_SLUG))
+  await page.getByLabel('Password').fill(PASSWORD)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+
+  await page.waitForURL('/')
+}
+
+/** Makes this browser the restaurant's till. */
+export async function enrolRestaurantDevice(page: Page): Promise<void> {
+  const { restaurantDeviceToken, restaurantRegisterId } = readSeed()
+
+  await page.addInitScript(
+    ([token, register]) => {
+      localStorage.setItem('pos.deviceToken', token as string)
+      localStorage.setItem('pos.registerId', register as string)
+    },
+    [restaurantDeviceToken, restaurantRegisterId],
   )
 }
 
