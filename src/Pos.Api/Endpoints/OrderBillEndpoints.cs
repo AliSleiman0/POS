@@ -68,6 +68,24 @@ public sealed record OrderBillResponse(
     decimal RoundingAdjustment,
     decimal Total,
     decimal TipAmount,
+
+    /// <summary>
+    /// What the customer gets back, once the bill has been paid. Null before that.
+    /// </summary>
+    /// <remarks>
+    /// <b>The server's figure, and the reason it is on this response rather than fetched
+    /// afterwards.</b> It comes from <c>TenderRules.ChangeFor</c> against the amounts actually
+    /// recorded on the sale — the running balance a tender pad shows while somebody counts is
+    /// provisional and says so. Making the client follow the <see cref="SaleId"/> with a second
+    /// call would put a round trip at the one moment a waiter is counting notes into a hand, and
+    /// it would make this the only screen in the application that learns the change from anywhere
+    /// other than the write that produced it.
+    /// <para>
+    /// Null on an unpaid bill rather than zero: nothing is owed back on a bill nobody has paid,
+    /// and zero is a real answer meaning the customer tendered it exactly.
+    /// </para>
+    /// </remarks>
+    decimal? ChangeGiven,
     IReadOnlyList<BillLineResponse> Lines);
 
 /// <summary>
@@ -400,7 +418,14 @@ public static class OrderBillEndpoints
 
         var priceds = await PriceAllAsync(db, id, cancellationToken);
 
-        return TypedResults.Ok(priceds.First(b => b.Id == billId) with { SaleId = committed.SaleId });
+        return TypedResults.Ok(priceds.First(b => b.Id == billId) with
+        {
+            SaleId = committed.SaleId,
+
+            // Carried out of the commit rather than re-read: it is the figure the writer computed
+            // inside the transaction that took the money.
+            ChangeGiven = committed.ChangeGiven.ToDecimal(),
+        });
     }
 
     /// <summary>
@@ -639,9 +664,11 @@ public static class OrderBillEndpoints
 
             if (cart.Lines.Count == 0)
             {
+                // Null change: this list is a quote, and the paid bill's own change is put on
+                // by PayAsync from the commit that computed it.
                 responses.Add(new OrderBillResponse(
                     bill.Id, bill.BillNumber, bill.Status, bill.ClientTransactionId, bill.SaleId,
-                    0m, 0m, 0m, 0m, 0m, (decimal)bill.TipAmount, []));
+                    0m, 0m, 0m, 0m, 0m, (decimal)bill.TipAmount, null, []));
 
                 continue;
             }
@@ -660,6 +687,7 @@ public static class OrderBillEndpoints
                 (decimal)priced.RoundingAdjustment,
                 (decimal)priced.Total,
                 (decimal)bill.TipAmount,
+                null,
                 [.. priced.Lines.Select((line, index) => new BillLineResponse(
                     cart.Lines[index].ProductId,
                     line.Source.Description,

@@ -11,6 +11,7 @@ import { SyncStatus } from '@/features/offline/SyncStatus'
 import { UpdatePrompt } from '@/features/offline/UpdatePrompt'
 import { OverrideProvider } from '@/features/register/OverrideProvider'
 import { useCurrentShift } from '@/features/register/queries'
+import { useServiceMode } from '@/features/restaurant/serviceMode'
 import { clearCart } from '@/features/register/storage'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
@@ -59,32 +60,7 @@ export function AppLayout() {
                 <span className="truncate text-xs text-muted-foreground">{tenant?.slug}</span>
               </div>
 
-              <nav className="flex flex-1 items-center gap-1">
-                <NavItem to="/">Overview</NavItem>
-                <IfPolicy policy="CanSell">
-                  <NavItem to="/register">Register</NavItem>
-                  <NavItem to="/sales">Sales</NavItem>
-                </IfPolicy>
-                <IfPolicy policy="CanManageCatalog">
-                  <NavItem to="/catalog">Catalog</NavItem>
-                  <NavItem to="/catalog/categories">Categories</NavItem>
-                  <NavItem to="/catalog/tax-classes">Tax</NavItem>
-                  <NavItem to="/stock">Stock</NavItem>
-                </IfPolicy>
-                {/* A third group: reconciliation is CanCloseShift, which a Cashier
-                  does not hold and a Manager does. */}
-                <IfPolicy policy="CanCloseShift">
-                  <NavItem to="/reports/daily">Reports</NavItem>
-                </IfPolicy>
-                {/* And a fourth: running the shop itself, which is Owner-only.
-                  Whoever can add a user can add one who sells. */}
-                <IfPolicy policy="CanManageEmployees">
-                  <NavItem to="/admin/people">People</NavItem>
-                  <NavItem to="/admin/tills">Tills</NavItem>
-                  <NavItem to="/admin/activity">Activity</NavItem>
-                  <NavItem to="/admin/settings">Settings</NavItem>
-                </IfPolicy>
-              </nav>
+              <Nav />
 
               <SyncStatus />
 
@@ -130,6 +106,58 @@ export function AppLayout() {
         </OverrideProvider>
       </CartProvider>
     </OfflineProvider>
+  )
+}
+
+/**
+ * The nav.
+ *
+ * **Its own component so it can read the service mode.** `useServiceMode` reads
+ * the offline mirror through `useOffline`, and `AppLayout` is what *renders*
+ * `OfflineProvider` — a hook called in the parent would be outside the provider
+ * it needs. Splitting it here is the smallest way to put the call inside the
+ * tree rather than above it.
+ */
+function Nav() {
+  const { isRestaurant } = useServiceMode()
+
+  return (
+    <nav className="flex flex-1 items-center gap-1">
+      <NavItem to="/">Overview</NavItem>
+      <IfPolicy policy="CanSell">
+        {/* The same route either way. What changes is the word, because "the
+          register" is not what anybody in a dining room calls it. */}
+        <NavItem to="/register">{isRestaurant ? 'Floor' : 'Register'}</NavItem>
+        <NavItem to="/sales">Sales</NavItem>
+      </IfPolicy>
+      {/* Only where there is a kitchen. A retail shop's nav is untouched by this
+        phase, which is half of what "the retail path is unchanged" has to mean
+        in practice. */}
+      {isRestaurant ? (
+        <IfPolicy policy="CanWorkKitchen">
+          <NavItem to="/kitchen">Kitchen</NavItem>
+        </IfPolicy>
+      ) : null}
+      <IfPolicy policy="CanManageCatalog">
+        <NavItem to="/catalog">Catalog</NavItem>
+        <NavItem to="/catalog/categories">Categories</NavItem>
+        <NavItem to="/catalog/tax-classes">Tax</NavItem>
+        <NavItem to="/stock">Stock</NavItem>
+      </IfPolicy>
+      {/* A third group: reconciliation is CanCloseShift, which a Cashier does
+        not hold and a Manager does. */}
+      <IfPolicy policy="CanCloseShift">
+        <NavItem to="/reports/daily">Reports</NavItem>
+      </IfPolicy>
+      {/* And a fourth: running the shop itself, which is Owner-only. Whoever can
+        add a user can add one who sells. */}
+      <IfPolicy policy="CanManageEmployees">
+        <NavItem to="/admin/people">People</NavItem>
+        <NavItem to="/admin/tills">Tills</NavItem>
+        <NavItem to="/admin/activity">Activity</NavItem>
+        <NavItem to="/admin/settings">Settings</NavItem>
+      </IfPolicy>
+    </nav>
   )
 }
 

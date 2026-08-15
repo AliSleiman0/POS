@@ -16,7 +16,10 @@ import { ProductDetailPage } from '@/features/catalog/ProductDetailPage'
 import { ProductListPage } from '@/features/catalog/ProductListPage'
 import { TaxClassesPage } from '@/features/catalog/TaxClassesPage'
 import { StockPage } from '@/features/catalog/StockPage'
-import { RegisterPage } from '@/features/register/RegisterPage'
+import { BillPage } from '@/features/restaurant/BillPage'
+import { KitchenPage } from '@/features/restaurant/KitchenPage'
+import { OrderPage } from '@/features/restaurant/OrderPage'
+import { ServiceModeRegister } from '@/features/restaurant/ServiceModeRegister'
 import { SaleDetailPage } from '@/features/sales/SaleDetailPage'
 import { SaleListPage } from '@/features/sales/SaleListPage'
 import { DailyReportPage } from '@/features/reports/DailyReportPage'
@@ -48,6 +51,24 @@ export const router = createBrowserRouter([
     element: <RequireAuth />,
     children: [
       {
+        /*
+         * The pass, and the one authenticated screen outside `AppLayout`.
+         *
+         * A kitchen display is an appliance bolted to a wall, not a page
+         * somebody navigates to: no nav, no header, no tenant chrome, and
+         * nothing on it that is not a ticket. It still sits inside
+         * `RequireAuth`, so an expired session prompts over it rather than
+         * throwing the board away.
+         */
+        path: 'kitchen',
+        element: (
+          <RequirePolicy policy="CanWorkKitchen">
+            <KitchenPage />
+          </RequirePolicy>
+        ),
+      },
+
+      {
         element: <AppLayout />,
         children: [
           { index: true, element: <OverviewPage /> },
@@ -58,9 +79,24 @@ export const router = createBrowserRouter([
             path: 'register',
             element: (
               <RequirePolicy policy="CanSell">
-                <RegisterPage />
+                {/* Retail till or restaurant floor, decided by the shop's
+                    serviceMode. One route, because staff are trained on "the
+                    register" and a second URL per mode is the wrong seam. */}
+                <ServiceModeRegister />
               </RequirePolicy>
             ),
+          },
+
+          {
+            // The screens a service is worked from, past the floor. Gated on
+            // CanTakeOrders like the API, and reachable only in restaurant mode
+            // — every endpoint behind them answers 409 otherwise.
+            path: 'restaurant',
+            element: <RequirePolicy policy="CanTakeOrders" />,
+            children: [
+              { path: 'orders/:orderId', element: <OrderPage /> },
+              { path: 'orders/:orderId/bill', element: <BillPage /> },
+            ],
           },
 
           {

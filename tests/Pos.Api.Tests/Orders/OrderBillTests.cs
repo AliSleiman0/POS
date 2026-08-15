@@ -323,6 +323,86 @@ public sealed class OrderBillTests(PosApiFactory factory)
     }
 
     [Fact]
+    public async Task Paying_answers_with_the_change_the_guest_gets_back()
+    {
+        var (client, tenant) = await factory.RestaurantTenantAsync();
+
+        var orderId = await client.SeatAsync(tenant.TableId);
+        await client.AddLineAsync(orderId, tenant.Catalog.WaterProductId, quantity: 2m);
+
+        var bill = await CreateBillAsync(client, orderId);
+        var total = bill.GetProperty("total").GetDecimal();
+
+        // An unpaid bill owes nothing back, and says so with null rather than zero — zero is a
+        // real answer meaning the guest tendered it exactly.
+        Assert.Equal(JsonValueKind.Null, bill.GetProperty("changeGiven").ValueKind);
+
+        using var paid = await client.PostIdempotentAsync(
+            $"/api/v1/orders/{orderId}/bills/{bill.GetProperty("id").GetGuid()}/pay",
+            new
+            {
+                registerId = tenant.RegisterId,
+                shiftId = tenant.ShiftId,
+                tenders = new[] { new { amount = total + 10m } },
+            });
+
+        Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+
+        var body = await paid.Content.ReadFromJsonAsync<JsonElement>();
+
+        // On the response, not behind a second call to GET /sales/{saleId}. A waiter is counting
+        // notes into a hand at this moment, and this is the server's figure — the running balance
+        // on the tender pad was provisional and said so.
+        Assert.Equal(10m, body.GetProperty("changeGiven").GetDecimal());
+
+        await factory.AsTenantAsync(tenant.TenantId, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var sale = Assert.Single(await db.Sales.ToListAsync());
+            var tenders = await db.Tenders.Where(t => t.SaleId == sale.Id).ToListAsync();
+
+            // Change is derived, not stored — TenderRules.ChangeFor over what was actually
+            // recorded. What the response must agree with is that arithmetic, so this asserts
+            // the inputs: tendered less the total is the ten the guest gets back.
+            Assert.Equal(total + 10m, tenders.Sum(t => (decimal)t.Amount));
+            Assert.Equal(total, (decimal)sale.Total);
+        });
+    }
+
+    [Fact]
+    public async Task A_tipped_bill_answers_with_the_change_after_the_tip()
+    {
+        var (client, tenant) = await factory.RestaurantTenantAsync();
+
+        var orderId = await client.SeatAsync(tenant.TableId);
+        await client.AddLineAsync(orderId, tenant.Catalog.WaterProductId);
+
+        var bill = await CreateBillAsync(client, orderId);
+        var total = bill.GetProperty("total").GetDecimal();
+
+        using var paid = await client.PostIdempotentAsync(
+            $"/api/v1/orders/{orderId}/bills/{bill.GetProperty("id").GetGuid()}/pay",
+            new
+            {
+                registerId = tenant.RegisterId,
+                shiftId = tenant.ShiftId,
+                tenders = new[] { new { amount = total + 10m } },
+                tip = 4m,
+            });
+
+        Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+
+        var body = await paid.Content.ReadFromJsonAsync<JsonElement>();
+
+        // The tip comes out of the change, never into the total: €10 over on a bill with a €4
+        // tip is €6 back. That is the arithmetic a guest does in their head, and it is why
+        // ShiftArithmetic needed no change at all — the €4 is still cash in the drawer.
+        Assert.Equal(6m, body.GetProperty("changeGiven").GetDecimal());
+        Assert.Equal(4m, body.GetProperty("tipAmount").GetDecimal());
+        Assert.Equal(total, body.GetProperty("total").GetDecimal());
+    }
+
+    [Fact]
     public async Task A_bill_cannot_be_torn_up_once_it_is_paid()
     {
         var (client, tenant) = await factory.RestaurantTenantAsync();

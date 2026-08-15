@@ -4625,6 +4625,8 @@ export interface components {
       total: number | string
       /** Format: double */
       tipAmount: number | string
+      /** Format: double */
+      changeGiven: null | number | string
       lines: components['schemas']['BillLineResponse'][]
     }
     /** @enum {unknown} */
