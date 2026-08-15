@@ -200,5 +200,6 @@ function sale(): Sale {
     voidReason: null,
     refundReason: null,
     refunds: [],
+    tipAmount: 0,
   }
 }

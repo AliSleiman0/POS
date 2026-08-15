@@ -96,6 +96,31 @@ public sealed class Sale : TenantEntity
     public Money Total { get; set; }
 
     /// <summary>
+    /// Cash left over and above <see cref="Total"/>, for the staff.
+    /// </summary>
+    /// <remarks>
+    /// <b>Deliberately not part of <see cref="Total"/>.</b> The total is what the goods came to,
+    /// and every report, tax figure and refund calculation reads it — folding a tip in would
+    /// inflate revenue, inflate the tax owed on revenue that was never charged tax, and make a
+    /// refund of the meal offer to return the tip as well.
+    /// <para>
+    /// <b>It is why DATA-MODEL invariant 2 now reads
+    /// <c>sum(Tender.Amount) &gt;= Total + TipAmount</c>.</b> The product is cash-only, so a tip
+    /// is physically cash in the drawer: the till really did receive €25 against a €20 bill, and
+    /// €0 really did go back. Without a column for it the money still arrives — expected cash
+    /// sums tendered less change given — but nothing on any row says why the drawer holds more
+    /// than the takings, and every tipped shift reads as an unexplained surplus. That is the same
+    /// failure as absorbing a cash-rounding adjustment instead of recording it.
+    /// </para>
+    /// <para>
+    /// Not gated on <see cref="ServiceMode"/>: a tip jar at a counter is the same fact. Always
+    /// zero or positive, and always zero on a <see cref="SaleType.Refund"/> — a shop does not
+    /// take a tip for handing money back.
+    /// </para>
+    /// </remarks>
+    public Money TipAmount { get; set; }
+
+    /// <summary>
     /// When the sale was completed — when the customer stood at the counter.
     /// </summary>
     /// <remarks>

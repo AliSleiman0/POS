@@ -119,6 +119,45 @@ public class AppDbContext : IdentityDbContext<
     /// </summary>
     public DbSet<SaleSequence> SaleSequences => Set<SaleSequence>();
 
+    /// <summary>A question the till asks about an item — "how would you like it cooked?".</summary>
+    public DbSet<ModifierGroup> ModifierGroups => Set<ModifierGroup>();
+
+    /// <summary>One answer, pointing at the product it adds. The price is the product's.</summary>
+    public DbSet<ModifierOption> ModifierOptions => Set<ModifierOption>();
+
+    /// <summary>Which questions a product asks, and in what order.</summary>
+    public DbSet<ProductModifierGroup> ProductModifierGroups => Set<ProductModifierGroup>();
+
+    /// <summary>Where tables are grouped in the room — the bar, the terrace.</summary>
+    public DbSet<ServiceArea> ServiceAreas => Set<ServiceArea>();
+
+    /// <summary>A table in the room. Named for SQL's sake; see the entity.</summary>
+    public DbSet<DiningTable> DiningTables => Set<DiningTable>();
+
+    /// <summary>
+    /// A table's running order. <b>Working state, not a financial record</b> — mutable while it
+    /// is open, and settled by committing an ordinary <see cref="Sale"/> per bill.
+    /// </summary>
+    public DbSet<Order> Orders => Set<Order>();
+
+    /// <summary>One item on an order. Stores the snapshots a bill is priced from, not amounts.</summary>
+    public DbSet<OrderLine> OrderLines => Set<OrderLine>();
+
+    /// <summary>
+    /// The per-tenant order-number counter. Its own series, deliberately separate from the
+    /// sale's — see the entity.
+    /// </summary>
+    public DbSet<OrderSequence> OrderSequences => Set<OrderSequence>();
+
+    /// <summary>
+    /// A share of an order's lines, settled as an ordinary <see cref="Sale"/>. The link runs
+    /// this way only — <c>Sale</c> gains no <c>OrderId</c>.
+    /// </summary>
+    public DbSet<OrderBill> OrderBills => Set<OrderBill>();
+
+    /// <summary>How much of one order line a bill takes. A quantity, because a bottle is shared.</summary>
+    public DbSet<OrderBillLine> OrderBillLines => Set<OrderBillLine>();
+
     /// <summary>
     /// Stored responses for money- and stock-moving writes, so a retry replays.
     /// </summary>

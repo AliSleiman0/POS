@@ -17,6 +17,7 @@ const settings: MirroredSettings = {
   currencyCode: 'EUR',
   timeZoneId: 'Europe/Dublin',
   taxMode: 'Inclusive',
+  serviceMode: 'Retail',
   cashRoundingIncrement: '0',
   businessDayStartOffset: '04:00:00',
   addressLine: null,

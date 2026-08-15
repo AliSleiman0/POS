@@ -91,5 +91,25 @@ public static class AuditManifest
             AuditAction.AuthorizationRefused,
             "POST /sales — SaleEndpoints.CreateAsync, when an adjustment is not permitted",
             "RefusedAdjustmentAuditTests.A_cashiers_discount_is_refused_and_the_attempt_is_recorded"),
+        new(
+            AuditAction.OrderOpened,
+            "POST /orders — inside OrderWriter.OpenAsync's transaction",
+            "OrderAuditTests.Seating_a_table_is_audited_with_its_order_number"),
+        new(
+            AuditAction.OrderLineVoided,
+            "POST /orders/{id}/lines/{lineId}/void — only when the line had already been fired",
+            "OrderAuditTests.Voiding_a_fired_line_is_audited_and_a_pending_one_is_not"),
+        new(
+            AuditAction.OrderTransferred,
+            "POST /orders/{id}/transfer",
+            "OrderAuditTests.Moving_an_order_to_another_table_is_audited_with_both_sides"),
+        new(
+            AuditAction.OrderMerged,
+            "POST /orders/{id}/merge",
+            "OrderAuditTests.Absorbing_one_order_into_another_is_audited"),
+        new(
+            AuditAction.OrderAbandoned,
+            "POST /orders/{id}/abandon",
+            "OrderAuditTests.Abandoning_an_order_records_the_reason"),
     ];
 }

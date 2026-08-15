@@ -152,6 +152,7 @@ function toProduct(row: SyncResponse['products'][number]): MirroredProduct {
     unit: row.unit,
     isActive: row.isActive,
     trackStock: row.trackStock,
+    isModifier: row.isModifier ?? false,
     // Stored lower-cased so the search index is a range scan rather than a
     // case-folding walk over every row on every keystroke.
     search: row.name.toLowerCase(),
@@ -201,6 +202,11 @@ function toSettings(row: NonNullable<SyncResponse['settings']>): MirroredSetting
     currencyCode: row.currencyCode,
     timeZoneId: row.timeZoneId,
     taxMode: row.taxMode,
+
+    // Defaulted rather than asserted, like `taxMode` on the settings screen: .NET's
+    // OpenAPI types every enum as nullable, and a mirror that refused to store a
+    // page over one absent field would leave the till unable to price anything.
+    serviceMode: row.serviceMode ?? 'Retail',
     cashRoundingIncrement: decimal(row.cashRoundingIncrement),
     businessDayStartOffset: row.businessDayStartOffset,
     addressLine: row.addressLine ?? null,

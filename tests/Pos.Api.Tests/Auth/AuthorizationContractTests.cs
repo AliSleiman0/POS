@@ -83,9 +83,13 @@ public sealed partial class AuthorizationContractTests(PosApiFactory factory)
     }
 
     [Theory]
-    [InlineData(RoleNames.Cashier, 1)]
-    [InlineData(RoleNames.Manager, 7)]
-    [InlineData(RoleNames.Owner, 9)]
+
+    // Phase 10 added four: CanTakeOrders and CanWorkKitchen to everyone, CanVoidFiredLine and
+    // CanManageFloor to supervisors. The cashier's three are all "do the job in front of you";
+    // what a cashier still holds none of is anything that decides money.
+    [InlineData(RoleNames.Cashier, 3)]
+    [InlineData(RoleNames.Manager, 11)]
+    [InlineData(RoleNames.Owner, 13)]
     public void Each_role_grants_the_expected_number_of_policies(string role, int expected)
     {
         // A blunt count, deliberately: it fails when a policy is added without deciding who

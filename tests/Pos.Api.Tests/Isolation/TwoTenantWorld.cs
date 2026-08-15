@@ -1,4 +1,5 @@
 using Pos.Api.Tests.Infrastructure;
+using Pos.Core.Entities;
 using Pos.Data.Identity;
 
 namespace Pos.Api.Tests.Isolation;
@@ -13,8 +14,12 @@ public sealed record IsolatedTenant(
     EnrolledRegister FrontCounter,
     Guid BackCounterId,
     SeededCatalog Catalog,
-    SeededSales Sales)
+    SeededSales Sales,
+    SeededOrders Orders)
 {
+    /// <summary>Everything <c>GET /orders</c> must return: the two open ones.</summary>
+    public IReadOnlyList<Guid> OpenOrderIds => Orders.OpenOrderIds;
+
     /// <summary>Everything <c>GET /registers</c> must return for this tenant, and nothing else.</summary>
     public IReadOnlyList<Guid> RegisterIds => [FrontCounter.Id, BackCounterId];
 
@@ -105,7 +110,20 @@ public sealed class TwoTenantWorld
 
     private static async Task<IsolatedTenant> SeedTenantAsync(PosApiFactory factory, string slug)
     {
-        var tenant = await factory.CreateTenantAsync(slug, "Corner Shop");
+        /*
+         * Both tenants run restaurant mode.
+         *
+         * Not because the isolation question is different for a restaurant — it is not — but
+         * because the order and floor routes are gated on it, and a retail tenant answers
+         * 409 restaurant-mode-required from every one of them. A manifest row asserting "another
+         * tenant's order is a 404" would then pass against an endpoint that never looked at the
+         * order at all, which is the shape of coverage that reads as green and proves nothing.
+         *
+         * Nothing else in the world changes: every retail route behaves identically in either
+         * mode, because a service mode decides which screens a shop sees rather than what any
+         * stored row means.
+         */
+        var tenant = await factory.CreateTenantAsync(slug, "Corner Shop", ServiceMode.Restaurant);
 
         // The owner deliberately has no PIN: pin-eligible must return the two cashiers and
         // not everybody with an account.
@@ -135,7 +153,11 @@ public sealed class TwoTenantWorld
         // under test, and never written to again — see SalesFixture.
         var sales = await SalesFixture.WriteAsync(factory, tenant.Id, front.Id, cashier.Id, catalog);
 
+        // A room and two open orders, so the Phase 10 by-id routes have a victim row to reach
+        // for and GET /orders has more than one thing to get wrong.
+        var orders = await OrdersFixture.WriteAsync(factory, tenant.Id, cashier.Id, catalog);
+
         return new IsolatedTenant(
-            tenant.Id, slug, owner.Id, cashier.Id, second.Id, front, back, catalog, sales);
+            tenant.Id, slug, owner.Id, cashier.Id, second.Id, front, back, catalog, sales, orders);
     }
 }

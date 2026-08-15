@@ -19,6 +19,7 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
             .HasBoundedText(t => t.CurrencyCode, "currency_code", 3)
             .HasBoundedText(t => t.TimeZoneId, "time_zone_id", 64)
             .HasEnumAsText(t => t.TaxMode, "tax_mode")
+            .HasEnumAsText(t => t.ServiceMode, "service_mode")
 
             // The receipt header block. All nullable: a shop that has not filled them in
             // still prints a receipt, with the lines it has no content for simply absent.
@@ -48,5 +49,10 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         builder.Property(t => t.BusinessDayStartOffset).HasColumnType("interval");
 
         builder.Property(t => t.IsActive).HasDefaultValue(true);
+
+        // Defaulted in the column, not only in C#. Every tenant that existed before restaurant
+        // mode did is a shop counter, and the migration has to say so: without a default the
+        // added column arrives empty and fails its own check constraint on the first row.
+        builder.Property(t => t.ServiceMode).HasDefaultValue(ServiceMode.Retail);
     }
 }

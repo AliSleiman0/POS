@@ -60,6 +60,9 @@ public sealed partial class Tenant
     /// <inheritdoc cref="Entities.TaxMode" />
     public TaxMode TaxMode { get; set; } = TaxMode.Inclusive;
 
+    /// <inheritdoc cref="Entities.ServiceMode" />
+    public ServiceMode ServiceMode { get; set; } = ServiceMode.Retail;
+
     /// <summary>
     /// The smallest coin a cash total is rounded to, e.g. <c>0.05</c>. Zero — the default —
     /// means the jurisdiction has no such rule.

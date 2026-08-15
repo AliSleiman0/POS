@@ -119,6 +119,12 @@ export function useOfflineQuote(db: OfflineDb | null, cart: Cart, enabled: boole
               isPriceOverridden: false,
             })),
             tenders: [],
+
+            // Zero, because an offline till cannot take one: a tip is keyed on the
+            // bill screen, and a bill is server-side state a queued sale has no
+            // access to. Stated rather than omitted, so the cast stays honest
+            // about the shape it is claiming.
+            tipAmount: '0',
           } as SaleResponse,
           unpriceable: false,
           lines,

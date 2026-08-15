@@ -937,6 +937,272 @@ public static class IsolationManifest
             Kind = IsolationKind.Exempt,
             Exemption = "Liveness only. Touches no tenant-owned data and reaches no database.",
         },
+        // ---- Phase 10: the floor and the orders on it -------------------------------
+        //
+        // Both isolation tenants run restaurant mode, because these routes are gated: a retail
+        // tenant answers 409 restaurant-mode-required from every one of them, and a row
+        // asserting "another tenant's order is a 404" would pass against an endpoint that never
+        // looked at the order. See TwoTenantWorld.SeedTenantAsync.
+        new()
+        {
+            Key = "GET api/v1/floor",
+            Kind = IsolationKind.Collection,
+
+            // A Cashier, because CanTakeOrders: everybody working the room has to see it.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // The areas, not the tables. A collection row asserts on the ids the response's top
+            // level carries, and this one is a list of areas with their tables nested inside.
+            Expected = w => [w.B.Orders.AreaId],
+            Forbidden = w => [w.A.Orders.AreaId],
+        },
+        new()
+        {
+            Key = "POST api/v1/floor/areas",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A create with no id in the URL and no id in the body — there is nothing "
+                      + "cross-tenant to reach for. The row it writes is stamped by the tenant "
+                      + "interceptor like every other, which CrossTenantWriteTests covers.",
+        },
+        new()
+        {
+            Key = "PUT api/v1/floor/areas/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.AreaId,
+            Body = _ => new { name = "Renamed by the wrong shop", sortOrder = 9 },
+            AssertUntouched = AssertTenantAsAreaIsStillNamedMainRoom,
+        },
+        new()
+        {
+            Key = "POST api/v1/floor/tables",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A create with no id in the URL. The serviceAreaId travels in the body "
+                      + "and another tenant's is answered 400 on the field, identically to an "
+                      + "unknown one, so it is not an existence oracle. Covered by "
+                      + "FloorTests.A_cross_tenant_area_cannot_have_a_table_added_to_it.",
+        },
+        new()
+        {
+            Key = "PUT api/v1/floor/tables/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.FreeTableId,
+            Body = w => new { serviceAreaId = w.B.Orders.AreaId, name = "Stolen", seats = 99 },
+            AssertUntouched = AssertTenantAsFreeTableIsUnchanged,
+        },
+        new()
+        {
+            Key = "POST api/v1/orders",
+            Kind = IsolationKind.Exempt,
+            Idempotent = true,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Exemption = "A write with no id in the URL. The diningTableId travels in the body "
+                      + "and another tenant's is answered 400 on the field, identically to an "
+                      + "unknown or a retired one. Covered by "
+                      + "OrderLifecycleTests.A_cross_tenant_table_cannot_be_seated, which also "
+                      + "asserts the victim tenant gained no order.",
+        },
+        new()
+        {
+            Key = "GET api/v1/orders",
+            Kind = IsolationKind.Collection,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            Expected = w => w.B.OpenOrderIds,
+            Forbidden = w => w.A.OpenOrderIds,
+        },
+        new()
+        {
+            Key = "GET api/v1/orders/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+        },
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/lines",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+            Body = w => new { lines = new[] { new { productId = w.B.Catalog.WaterProductId, quantity = 1m } } },
+            AssertUntouched = AssertTenantAsOrderStillHasOneLine,
+        },
+        new()
+        {
+            Key = "PATCH api/v1/orders/{id:guid}/lines/{lineId:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // VictimPath rather than VictimId: two parameters, and both have to be A's or the
+            // 404 would come from the mismatch rather than from the scoping.
+            VictimPath = w => [w.A.Orders.OpenOrderId.ToString(), w.A.Orders.OpenOrderLineId.ToString()],
+            Body = _ => new { quantity = 99m },
+            AssertUntouched = AssertTenantAsOrderLineStillHasQuantityOne,
+        },
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/lines/{lineId:guid}/void",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimPath = w => [w.A.Orders.OpenOrderId.ToString(), w.A.Orders.OpenOrderLineId.ToString()],
+            Body = _ => new { reason = "Attempt" },
+            AssertUntouched = AssertTenantAsOrderLineIsStillPending,
+        },
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/transfer",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+            Body = w => new { diningTableId = w.B.Orders.FreeTableId },
+            AssertUntouched = AssertTenantAsOrderIsStillOnItsOwnTable,
+        },
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/merge",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+            Body = w => new { sourceOrderId = w.B.Orders.SecondOrderId },
+            AssertUntouched = AssertTenantAsOrderStillHasOneLine,
+        },
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/abandon",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+            Body = _ => new { reason = "Attempt" },
+            AssertUntouched = AssertTenantAsOrderIsStillOpen,
+        },
+
+        // ---- Phase 10.5: bills, and where an order becomes money ---------------------
+        new()
+        {
+            Key = "GET api/v1/orders/{id:guid}/bills",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+        },
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/bills",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Orders.OpenOrderId,
+            Body = _ => new { },
+            AssertUntouched = AssertTenantAsOrderHasNoBills,
+        },
+        new()
+        {
+            Key = "DELETE api/v1/orders/{id:guid}/bills/{billId:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // The world seeds no bills, so a random second id is the only thing to send. The
+            // order id is A's, which is what the scoping has to refuse — stated rather than
+            // glossed, and the write path is covered by OrderBillTests against two real
+            // restaurants.
+            VictimPath = w => [w.A.Orders.OpenOrderId.ToString(), Guid.CreateVersion7().ToString()],
+        },
+        new()
+        {
+            Key = "POST api/v1/orders/{id:guid}/bills/{billId:guid}/pay",
+            Kind = IsolationKind.ById,
+            Idempotent = true,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimPath = w => [w.A.Orders.OpenOrderId.ToString(), Guid.CreateVersion7().ToString()],
+            Body = w => new
+            {
+                registerId = w.B.FrontCounter.Id,
+                shiftId = w.B.Sales.OpenShiftId,
+                tenders = new[] { new { amount = 50m } },
+            },
+            AssertUntouched = AssertNeitherTenantGainedASaleFromABill,
+        },
+
+        // ---- Phase 10.3: the menu's questions ---------------------------------------
+        new()
+        {
+            Key = "GET api/v1/menu/modifier-groups",
+            Kind = IsolationKind.Collection,
+
+            // A Cashier, because CanTakeOrders: every order screen reads this on every tap.
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+
+            // The isolation world seeds no modifier groups, so both lists are empty and the
+            // Collection shape has nothing to compare. Covered instead by ModifierTests, which
+            // creates groups in two throwaway restaurants — the world is read-only by rule.
+            Expected = _ => [],
+            Forbidden = _ => [],
+        },
+        new()
+        {
+            Key = "GET api/v1/menu/products/{productId:guid}/modifier-groups",
+            Kind = IsolationKind.ById,
+            Caller = Actor.CashierOfB,
+            Refused = [Actor.Anonymous, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+        },
+        new()
+        {
+            Key = "POST api/v1/menu/modifier-groups",
+            Kind = IsolationKind.Exempt,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            Exemption = "A create with no id in the URL. The optionProductIds travel in the "
+                      + "body and another tenant's are answered 400 on the field, identically "
+                      + "to unknown ones. Covered by "
+                      + "ModifierTests.A_group_whose_maximum_is_below_its_minimum_is_refused "
+                      + "for the validation path and by the interceptor for the write.",
+        },
+        new()
+        {
+            Key = "PUT api/v1/menu/modifier-groups/{id:guid}",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+
+            // The world seeds no groups, so there is no victim row of A's to reach for and a
+            // random id proves the 404 comes from scoping rather than from absence. That is
+            // weaker than the rows above and is stated rather than glossed: the write path is
+            // covered by ModifierTests against two real restaurants.
+            VictimId = _ => Guid.CreateVersion7(),
+            Body = _ => new { name = "Renamed by the wrong shop", minSelections = 0 },
+        },
+        new()
+        {
+            Key = "PUT api/v1/menu/products/{productId:guid}/modifier-groups",
+            Kind = IsolationKind.ById,
+            Caller = Actor.OwnerOfB,
+            Refused = [Actor.Anonymous, Actor.CashierOfB, Actor.DeviceOfB],
+            VictimId = w => w.A.Catalog.WaterProductId,
+            Body = _ => new { modifierGroupIds = Array.Empty<Guid>() },
+            AssertUntouched = AssertTenantAsProductAsksNothing,
+        },
+
         new()
         {
             Key = "ANY health/ready",
@@ -1302,5 +1568,145 @@ public static class IsolationManifest
             var cashier = await users.Users.FirstAsync(u => u.Id == tenant.SecondCashierId);
 
             Assert.True(cashier.IsActive);
+        });
+
+    // ---- Phase 10 ------------------------------------------------------------------
+    //
+    // The refusals above are all 404s, and a 404 on its own only proves the response said no.
+    // These say the victim's row is unchanged, which is the thing that actually matters: a
+    // handler that wrote first and scoped afterwards would answer 404 and still have done it.
+
+    private static Task AssertTenantAsAreaIsStillNamedMainRoom(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var area = await db.ServiceAreas.FirstAsync(a => a.Id == world.A.Orders.AreaId);
+
+            Assert.Equal("Main room", area.Name);
+        });
+
+    private static Task AssertTenantAsFreeTableIsUnchanged(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var table = await db.DiningTables.FirstAsync(t => t.Id == world.A.Orders.FreeTableId);
+
+            Assert.Equal("2", table.Name);
+            Assert.Equal(2, table.Seats);
+
+            // And it did not migrate into tenant B's room, which is what a write that scoped
+            // the read but not the update would have done.
+            Assert.Equal(world.A.Orders.AreaId, table.ServiceAreaId);
+        });
+
+    private static Task AssertTenantAsOrderStillHasOneLine(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            Assert.Equal(1, await db.OrderLines.CountAsync(l => l.OrderId == world.A.Orders.OpenOrderId));
+        });
+
+    private static Task AssertTenantAsOrderLineStillHasQuantityOne(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var line = await db.OrderLines.FirstAsync(l => l.Id == world.A.Orders.OpenOrderLineId);
+
+            Assert.Equal(1m, line.Quantity);
+        });
+
+    private static Task AssertTenantAsOrderLineIsStillPending(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var line = await db.OrderLines.FirstAsync(l => l.Id == world.A.Orders.OpenOrderLineId);
+
+            Assert.Equal(OrderLineStatus.Pending, line.Status);
+        });
+
+    private static Task AssertTenantAsOrderIsStillOnItsOwnTable(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var order = await db.Orders.FirstAsync(o => o.Id == world.A.Orders.OpenOrderId);
+
+            Assert.Equal(world.A.Orders.SeatedTableId, order.DiningTableId);
+        });
+
+    private static Task AssertTenantAsOrderHasNoBills(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            Assert.Empty(await db.OrderBills.Where(b => b.OrderId == world.A.Orders.OpenOrderId).ToListAsync());
+        });
+
+    /// <summary>
+    /// Neither shop gained a sale from a cross-tenant payment attempt.
+    /// </summary>
+    /// <remarks>
+    /// <b>Both, and B is the one that matters here.</b> The body names B's own register and
+    /// shift, so a handler that validated the payment before scoping the bill would have written
+    /// a perfectly valid sale into the <i>attacker's</i> drawer for another shop's food. The
+    /// 404 alone would not show that; the sale count does.
+    /// </remarks>
+    private static Task AssertNeitherTenantGainedASaleFromABill(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        Task.WhenAll(
+            AssertSaleCountUnchangedAsync(factory, world.A),
+            AssertSaleCountUnchangedAsync(factory, world.B));
+
+    private static Task AssertSaleCountUnchangedAsync(PosApiFactory factory, IsolatedTenant tenant) =>
+        factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            // Four, from SalesFixture. A fifth means a bill payment landed somewhere it should
+            // not have.
+            Assert.Equal(tenant.SaleIds.Count, await db.Sales.CountAsync());
+        });
+
+    private static Task AssertTenantAsProductAsksNothing(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+
+            // The assignment endpoint *replaces* a product's questions, so an unscoped write
+            // would have deleted A's — which, since A has none, is indistinguishable from
+            // success. The row count is checked anyway: it is the only thing that would move
+            // if the handler started writing before it scoped.
+            Assert.Empty(await db.ProductModifierGroups
+                .Where(link => link.ProductId == world.A.Catalog.WaterProductId)
+                .ToListAsync());
+        });
+
+    private static Task AssertTenantAsOrderIsStillOpen(
+        PosApiFactory factory,
+        TwoTenantWorld world) =>
+        factory.AsTenantAsync(world.A.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var order = await db.Orders.FirstAsync(o => o.Id == world.A.Orders.OpenOrderId);
+
+            Assert.Equal(OrderStatus.Open, order.Status);
+            Assert.Null(order.AbandonReason);
         });
 }

@@ -27,6 +27,16 @@ public sealed record SyncProductResponse(
     Unit Unit,
     bool IsActive,
     bool TrackStock,
+
+    /// <summary>
+    /// Whether this is a modifier rather than something sold on its own.
+    /// </summary>
+    /// <remarks>
+    /// Mirrored so the offline register grid and the offline search exclude them, exactly as the
+    /// online ones do. A till that offered "extra cheese" as a scannable line while the network
+    /// was down would sell one, and the sale would be perfectly valid.
+    /// </remarks>
+    bool IsModifier,
     DateTimeOffset ChangedAt);
 
 /// <summary>A code that scans to a product, as the mirror stores it.</summary>
@@ -66,6 +76,17 @@ public sealed record SyncSettingsResponse(
     string CurrencyCode,
     string TimeZoneId,
     TaxMode TaxMode,
+
+    /// <summary>
+    /// Which front-of-house model this shop runs.
+    /// </summary>
+    /// <remarks>
+    /// Mirrored so a till that has lost the network still knows what it is. It does not enable
+    /// anything offline — an order needs the server, and a restaurant till cannot take one with
+    /// the line down — it is how the app can <i>say so</i> rather than presenting a floor plan
+    /// that will refuse every tap.
+    /// </remarks>
+    ServiceMode ServiceMode,
     decimal CashRoundingIncrement,
     TimeSpan BusinessDayStartOffset,
     string? AddressLine,
@@ -314,6 +335,7 @@ public static class CatalogSyncEndpoints
                 p.Unit,
                 p.IsActive,
                 p.TrackStock,
+                p.IsModifier,
                 p.UpdatedAt ?? p.CreatedAt),
             page,
             cancellationToken);
@@ -426,11 +448,38 @@ public static class CatalogSyncEndpoints
             .ToListAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// The calling tenant's settings block.
+    /// </summary>
+    /// <remarks>
+    /// <b>The <c>Where</c> is the whole safety mechanism here, and it was missing.</b>
+    /// <c>Tenant</c> is deliberately not tenant-owned — it is the list of tenants, and login has
+    /// to resolve a row in it before any tenant is known — so it carries no query filter, no RLS
+    /// policy and no interceptor check. Every other table in this application has three layers
+    /// underneath it; this read has one clause, exactly as <c>GET /settings</c> and the receipt
+    /// path do.
+    /// <para>
+    /// Without it, <c>FirstOrDefaultAsync</c> returned an arbitrary row — in practice some other
+    /// shop's — and every till mirrored that shop's currency, tax mode, rounding increment and
+    /// receipt address. Offline, <c>taxMode</c> is an input to the pricing engine, so the till
+    /// would have priced every cart by another business's rules.
+    /// </para>
+    /// <para>
+    /// It survived because the test that covers this asserted <c>currencyCode</c> and
+    /// <c>timeZoneId</c>, and the isolation world seeds both tenants identically — so the two
+    /// possible answers were the same string. The field that finally differed was
+    /// <c>serviceMode</c>, added in Phase 10.0. That is the lesson worth keeping: a fixture built
+    /// to make leaks obvious by <i>duplication</i> hides them in any field it duplicates.
+    /// </para>
+    /// </remarks>
     private static async Task<SyncSettingsResponse?> SettingsAsync(
         AppDbContext db,
         CancellationToken cancellationToken)
     {
-        var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
+        var tenant = await db.Tenants
+            .AsNoTracking()
+            .Where(t => t.Id == db.CurrentTenantId)
+            .FirstOrDefaultAsync(cancellationToken);
 
         return tenant is null
             ? null
@@ -438,6 +487,7 @@ public static class CatalogSyncEndpoints
                 tenant.CurrencyCode,
                 tenant.TimeZoneId,
                 tenant.TaxMode,
+                tenant.ServiceMode,
                 (decimal)tenant.CashRoundingIncrement,
                 tenant.BusinessDayStartOffset,
                 tenant.AddressLine,

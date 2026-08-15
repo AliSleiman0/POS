@@ -67,6 +67,29 @@ public sealed class Product : TenantEntity
     public bool TrackStock { get; set; } = true;
 
     /// <summary>
+    /// Whether this is a modifier — "extra cheese", "no ice" — rather than something sold on
+    /// its own.
+    /// </summary>
+    /// <remarks>
+    /// <b>A modifier <i>is</i> a product, and that is the Phase 10 decision this flag exists to
+    /// serve.</b> Making it one gives it a price, a tax class and optional stock tracking for
+    /// free, and — the part that matters — it prices through the same engine as everything else.
+    /// The alternative, folding a delta into the parent line's unit price, produces a receipt a
+    /// customer cannot read, denies the modifier a tax rate of its own, and puts a second little
+    /// pricing rule outside <c>Pos.Core.Pricing</c>.
+    /// <para>
+    /// What the flag does is keep it out of the places a modifier is not an answer: the register
+    /// grid, the product list's default view, and barcode search. Nobody scans "extra cheese",
+    /// and a till offering it as a line item is a till that will sell one on its own.
+    /// </para>
+    /// <para>
+    /// It rides <c>GET /catalog/sync</c> so the offline mirror excludes them too. Retail shops
+    /// have none, and the column defaults to false, so nothing about a counter changes.
+    /// </para>
+    /// </remarks>
+    public bool IsModifier { get; set; }
+
+    /// <summary>
     /// Canonicalises staff input into the stored SKU form, so <c>"abc-1 "</c> and
     /// <c>"ABC-1"</c> are the same product rather than two.
     /// </summary>

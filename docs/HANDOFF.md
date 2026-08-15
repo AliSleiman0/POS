@@ -1,172 +1,123 @@
 # Session Handoff
 
-**Written:** 2026-08-11 · **Updated:** 2026-08-14 · **Branch:** `main` (merged, pushed, CI green) ·
-**Phases 8 and 9 shipped and deployed**
+**Written:** 2026-08-15 · **Branch:** `phase-10/restaurant-mode` (not merged, not pushed, **not committed**) ·
+**Phase 10 is in progress: the server side is done, nothing has a screen**
 
-> A till now sells with the network off. The sale is priced locally by an engine pinned to the
-> server's, queued before any network attempt, and lands **exactly once** when the connection
-> returns — dated when the customer paid rather than when it synced. That is asserted end to
-> end against a real API and a real Postgres, not described.
+> A restaurant can be seated, ordered for, split and settled — through the API. Paying a bill
+> writes an ordinary `Sale` through `ISaleWriter`, with the same number counter, the same stock
+> ledger and the same Z-report a counter sale uses. That is the phase's central claim and it is
+> asserted end to end against a real Postgres.
 >
-> **Four things are not done.** They are listed in
-> [`PHASE-9-offline.md` § What is not done](phases/PHASE-9-offline.md#what-is-not-done) and
-> repeated below. None is a stub; each is absent.
+> **Nothing in it has a user interface.** `/register` still renders the retail screen for every
+> tenant. Every endpoint works and none of them has a caller.
 
-> This file is session state, not durable truth. Overwrite it when you finish. Durable
-> decisions belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in
-> [`ROADMAP.md`](ROADMAP.md), operational procedure in [`RUNBOOK.md`](RUNBOOK.md).
+> This file is session state, not durable truth. Overwrite it when you finish. Durable decisions
+> belong in [`DECISIONS.md`](../DECISIONS.md), durable progress in [`ROADMAP.md`](ROADMAP.md),
+> operational procedure in [`RUNBOOK.md`](RUNBOOK.md).
 
 ---
 
 ## Before anything else
 
-1. **Rotate the deployment credentials.** The database owner URL and both Render deploy hooks
-   were pasted into a chat transcript on 2026-08-14 to complete the deploy. Reset the database
-   password (pos-db → Reset password) and regenerate both deploy hooks, then update the
-   matching GitHub secrets. The app connects as `pos_app`, so resetting the **owner** password
-   does not disturb the running service.
-2. **The deployed database is deleted on 2026-09-10.** Free plan, 30 days, no automatic
-   backups. Unchanged by this phase, and now closer.
-3. **`pnpm build` before `pnpm test:e2e`**, or five service-worker specs skip. CI does this;
-   locally it is on you. They throw rather than skip under `CI`.
+1. **Nothing is committed.** The whole phase is uncommitted work on
+   `phase-10/restaurant-mode`. `git status` will show ~60 changed and added files. Commit it
+   before doing anything else, or a stray `git checkout` loses a day.
+2. **Still owed from Phase 8, and now three weeks older:** rotate the deployment credentials
+   (the database owner URL and both Render deploy hooks were pasted into a chat transcript on
+   2026-08-14).
+3. **The deployed database self-deletes on 2026-09-10.** Free plan, 30 days, no automatic
+   backups. Unchanged by this phase and now much closer.
+4. **`pnpm build` before `pnpm test:e2e`**, or five service-worker specs skip.
 
-## Deployment state as of 2026-08-14
+## Where it got to
 
-Everything the Phase 8 handoff left owing is now done. Recorded here because the next session
-will otherwise re-derive it.
-
-| | |
+| Milestone | State |
 |---|---|
-| `main` | Phases 8 + 9 merged, CI green on all four jobs |
-| Migrations on the deployed DB | `OfflineSaleTimestamps` and `CatalogSync` applied and verified |
-| GitHub secrets | All five set (`DATABASE_OWNER_URL`, both deploy hooks, both origins) |
-| Render `pos-api` / `pos-web` | Both switched from `phase-8/deployment` to **`main`**, both **auto-deploy Off** |
-| Deploys | Triggered by hook after the migrations, in that order |
+| 10.0 Service mode | ✅ Done |
+| 10.1 Order model | ✅ Done |
+| 10.2 Orders API + floor | ✅ Done |
+| 10.3 Modifiers | ✅ Done (server side; no admin screen) |
+| 10.4 Kitchen | ❌ **Not built** |
+| 10.5 Bills, splitting, payment | ✅ Done |
+| 10.6 Tips | ✅ Done |
+| 10.7 Restaurant UI | ❌ **Not built** |
+| 10.8 Restaurant reporting | ❌ Not built (the Z-report's tips line shipped with 10.6) |
+| 10.9 e2e + seed fixture | ❌ Not built |
 
-**Two defects were found by shipping, and both are fixed on `main`:**
+**Tests: 1685 .NET · 321 Vitest.** All green locally. `dotnet build` and `pnpm build` are
+warning-free, `pnpm lint` and `pnpm format:check` clean. **Nothing has run in CI** — the branch is
+unpushed.
 
-- **`deploy.yml` had never worked.** Phase 8.3 shipped it with "the pipeline has not run for
-  real", and the first real run died on `NETSDK1004`: it ran `dotnet tool restore` (which
-  installs `dotnet-ef`) but never `dotnet restore` (which restores packages), and
-  `migrations script` builds the startup project. Reproduced against a clean clone and fixed.
-  **Expect more of the same** — the pipeline still has not completed end to end.
-- **`SSH.NET` 2025.1.0 advisory** (GHSA-q939-rpr3-3284) arriving transitively via
-  Testcontainers. `NuGetAudit` is at `low` with warnings-as-errors, so restore failed outright
-  on a branch that was green locally. Testcontainers 4.14.0 resolves SSH.NET 2026.0.0.
+Full detail, and the five gaps written out, in
+[`PHASE-10-restaurant.md` § What is not done](phases/PHASE-10-restaurant.md#what-is-not-done).
 
-**Two traps worth carrying forward**, both of which cost time:
+## Two real defects were found, both in shipped code
 
-- **Render settings do not save on selection.** Choosing a value from a dropdown does nothing
-  until the **Save changes** button below it is clicked. An auto-deploy change looked applied,
-  read back as "Off", and had not saved — only the browser's "Leave site?" dialog revealed it.
-  Reload and re-read after every change.
-- **`SELECT count(*)` as the owner returns 0 on tenant tables.** `FORCE ROW LEVEL SECURITY`
-  applies to the owner, and with no `app.tenant_id` set the policy matches nothing. It reads
-  as an empty table. Lift `FORCE` for the statement and restore it, exactly as the migration
-  does.
+**1. `GET /catalog/sync` served an arbitrary tenant's settings.** The handler read
+`db.Tenants.FirstOrDefaultAsync()` with **no `Where`**. `Tenant` is deliberately not
+tenant-owned — it is the list of tenants and login resolves a row in it before any tenant is
+known — so it carries no query filter, no RLS policy and no interceptor check. The scoping was one
+clause the handler had to contain, and did not. Every till mirrored some other shop's currency,
+tax mode, rounding increment and receipt address; **offline, `taxMode` is an input to the pricing
+engine**, so the till would have priced carts by another business's rules.
 
-## What Phase 9 actually does
+It had a passing test. The isolation world seeds both tenants *identically* — deliberately, so a
+leak doubles a list — which makes the two possible answers the same string in every field that
+test asserted on. The first field that differed was `serviceMode`, added in 10.0. **A fixture
+built to make leaks obvious by duplication hides them in any field it duplicates**; the new test
+sets up two shops that disagree about everything it checks.
 
-- **Sells offline.** Scan from the mirror, price with the ported engine, tender, take cash. The
-  panel says *"Saved on this till"* and shows a local reference — there is no sale number,
-  because `SaleSequence` is assigned inside the server's transaction.
-- **Lands exactly once.** The queued sale replays as an ordinary `POST /sales` with its
-  original `Idempotency-Key`. No bulk endpoint, no sync API, no second server write path.
-- **Keeps the right date.** `occurredAt` is minted once when the sale completes and replayed
-  unchanged; `Sale.RecordedAt` records the server's clock beside it.
-- **Explains itself.** Header chip: online/offline, *n* to send, *n* needing review, and the
-  mirror's age. `/sync` explains every refusal and what it means for the money.
-- **Does not overpromise.** The limits panel is written to be unflattering, and a test rejects
-  the words *safe*, *secure* and *guaranteed* in every warning the app can produce.
-
-## What is NOT done
-
-1. **Offline shift close.** A drawer cannot be closed while the till is offline. The design is
-   settled and small (`CloseShiftRequest` carries only a typed `countedCash`, so it queues like
-   any other write) — it is simply not built.
-2. **Price-change-on-reconnect for an open cart.** The mirror updates; nothing tells the
-   cashier the shelf price moved under a product already in the basket. The *charge* is
-   correct — the customer pays what they were told — but the phase doc asks for it to be
-   surfaced.
-3. **A measured 10k-product sync.** The design answers it (cursor pages, a yield between them,
-   bounded index-backed search). Nobody has run it. A design is not a measurement.
-4. **Oversell through two offline browsers.** The server behaviour is genuinely covered by
-   `SaleCommitTests`; nobody has driven two clients offline and sold the same last unit in
-   both. Step 6 of the phase doc's manual script is how.
-
-Also deliberate, not a gap: **no offline PIN login**. See `DECISIONS.md`.
-
-## The three decisions this phase made
-
-All three are in [`DECISIONS.md`](../DECISIONS.md) under *Resolved 2026-08-11*. Read them
-before changing any of this.
-
-1. **`occurredAt` on `POST /sales`.** The only client-supplied value in the system that reaches
-   a stored column, bounded in both directions, with `RecordedAt` beside it.
-2. **Invariant 3 amended.** Two pricing engines, pinned by
-   `tests/fixtures/pricing-conformance.json` — 913 carts, asserted from C# *and* TypeScript,
-   compared **as strings so the decimal scale is pinned too**. A change to either engine that
-   is not a change to both turns one side red.
-3. **Invariant 11 reconciled.** Cart and credential stay in `sessionStorage`; the outbox is
-   durable in IndexedDB, because a queued sale is money that already changed hands.
+**2. `OfflineSaleTests.A_sale_rung_yesterday_lands_in_yesterdays_history` was date-dependent.**
+It derived the query day from the **UTC** date while the filter resolves trading days in the
+**tenant's** zone. Correct for twenty-three hours a day; wrong between 23:00 and midnight UTC in
+summer, which is when it was run. Invariant 8's failure mode, in a test.
 
 ## Things that will bite you
 
-1. **`node_modules/.vite` goes stale when a dependency is added**, and the symptom is every
-   component dying with *"Invalid hook call"* in code you did not touch — `ToastProvider`, in
-   this case. It looks exactly like a duplicate-React bug and it is not. `rm -rf
-   node_modules/.vite`. CI never sees it. Recorded in `vite.config.ts`.
-2. **`occurredAt` is part of the idempotency fingerprint.** Anything that rebuilds a queued
-   request instead of replaying the stored body will re-read the clock, send a different body
-   under the same key, and be answered `409 idempotency-key-reused` **for ever** — which at a
-   till reads as a sale that will not go through. There is a test whose entire point is that
-   two builds of the same cart differ.
-3. **The pricing port's rounding is asymmetric on purpose.** Division rounds **half to even**
-   (that is what .NET's `decimal` does when it runs out of room); the pipeline rounds **half
-   away from zero**. Both were read off the real type by probing it. Do not "tidy" them into
-   agreement.
-4. **A decimal's *scale* is part of the result.** `12.97` and `12.9700` are the same number and
-   not the same result — scale propagates through the multiplication that follows, and the
-   pipeline rounds only at the end. The corpus compares strings for this reason.
-5. **The catalog feed may repeat a row and cannot skip one.** Its sort key is
-   `COALESCE(updated_at, created_at)`, which moves when a row is edited. The mirror's writes
-   must stay upserts.
-6. **A migration's `UPDATE` matches zero rows under `FORCE ROW LEVEL SECURITY`** when it runs
-   as the owner with no `app.tenant_id` set — silently. Invisible locally, because `pos` is a
-   superuser with `BYPASSRLS`. Verified against a `NOSUPERUSER NOBYPASSRLS` owner: `UPDATE 0`
-   versus `UPDATE 2`.
-7. **The pending-sales badge is hidden before the provider has counted.** A test that waits for
-   it to disappear passes instantly on a fresh page. Poll the server instead — three e2e drafts
-   died on this.
-8. **Still true from before:** `pnpm format:check` is its own CI step; never run `dotnet test`
-   and Playwright at once; a leftover `dotnet run` holds :5013; `InvariantGlobalization` must
-   stay `false`; origin values are a matched set.
+1. **`ORDER` and `TABLE` are reserved words in SQL.** The tables are `customer_order` and
+   `dining_table`. This codebase writes raw SQL in the money paths — EF cannot aggregate a
+   value-converted `Money` — and 10.8's reporting will add more.
+2. **An order line stores inputs, not amounts.** There is no `LineTotal` on `OrderLine`, unlike
+   `SaleLine`, and that is deliberate: the money comes from `PricingEngine` whenever a bill is
+   quoted or settled. Do not add one "for the screen" — it is a second set of numbers to keep in
+   step through every edit, void and re-split.
+3. **A bill's idempotency key is minted with the bill, not with the payment.** Invariant 6. A key
+   per attempt makes the header decorative and charges the table twice on a retry.
+4. **The tip comes out of the change, never into the total.** That is what leaves it inside
+   `ExpectedCash` without `ShiftArithmetic` changing at all. Folding it into `Total` would inflate
+   revenue, inflate the tax owed on revenue nobody was charged tax for, and make a refund of a
+   meal offer to hand the gratuity back.
+5. **Adding an `AuditAction` member needs a migration.** `HasEnumAsText` generates a check
+   constraint, so the model has pending changes until you generate one — and an `AuditManifest`
+   row plus the test it names, or the build fails.
+6. **Every new tenant-owned table needs `ApplyTenantRowLevelSecurity()` called in *its own*
+   migration.** An applied migration does not re-run.
+7. **The isolation world now runs restaurant mode**, because the order routes are gated and a
+   retail tenant answers `409` from all of them — a manifest row would otherwise pass against an
+   endpoint that never looked at the resource.
+8. **Still true from before:** `pnpm format:check` is its own CI step; never run `dotnet test` and
+   Playwright at once; a leftover `dotnet run` holds :5013; `node_modules/.vite` goes stale when a
+   dependency is added and presents as "Invalid hook call".
 
-## Where the offline code lives
+## Where the new code lives
 
 | | |
 |---|---|
-| `src/Pos.Web/src/lib/pricing/` | The ported engine. `decimal.ts` is the load-bearing file |
-| `src/Pos.Web/src/lib/offline/` | `db`, `catalog`, `sync`, `outbox`, `replay`, `connectivity`, `persist` |
-| `src/Pos.Web/src/features/offline/` | Provider, status chip, queued-sale panel, review page, limits |
-| `tests/fixtures/pricing-conformance.json` | The oracle. Regenerate with `POS_REGENERATE_PRICING_CORPUS=1` — it rewrites and then **fails**, deliberately |
-| `src/Pos.Web/e2e/offline.spec.ts` | The five specs that prove the phase |
+| `src/Pos.Core/Entities/` | `Order`, `OrderLine`, `OrderBill`, `ServiceArea`, `DiningTable`, `ModifierGroup`, the enums; `Sale.TipAmount`, `Product.IsModifier` |
+| `src/Pos.Core/Menus/ModifierRules.cs` | Pure. The questions a menu asks, enforced at the API |
+| `src/Pos.Data/Orders/OrderWriter.cs` | The counter upsert and the `FOR UPDATE` on an order row |
+| `src/Pos.Api/Endpoints/` | `OrderEndpoints`, `OrderBillEndpoints`, `FloorEndpoints`, `MenuEndpoints` |
+| `src/Pos.Api/Orders/RestaurantModeFilter.cs` | The `409 restaurant-mode-required` gate, on the group |
+| `tests/Pos.Api.Tests/Infrastructure/RestaurantTenant.cs` | The fixture every restaurant test builds on |
 
-## Test counts
+## What to do next
 
-1441 .NET · 321 Vitest · 70 Playwright. All green locally. **Not yet run in CI** — the branch
-is unpushed.
+**Build 10.7 and 10.9 together, and 10.4 with them.** Not in that order — together. Per
+[`ROADMAP.md`](ROADMAP.md#test-the-phase-before-starting-the-next-one), UI testing is the one that
+must never accumulate, and right now there is no screen *and* no way to click through this by hand
+(`Pos.Seed` has no `--restaurant` flag). The server side is finished and proved; what is missing is
+everything a person touches, and shipping more API before any of it exists would be building the
+second storey of a house with no stairs.
 
-## Longer-standing gaps this phase did not change
-
-- **No password change or reset flow.** Still the largest gap for a shipped product, still on
-  no phase's list.
-- A deactivated user's access token works for ~15 minutes.
-- `/reports/sales-summary` and `/reports/top-products` documented, not built.
-- Margin cost is not snapshotted.
-- The beep (unverified since 5.2), a real thermal printer, and whether the audit log answers
-  the question somebody actually asks.
-- **Nobody who has worked a till has used any of it.** No phase gate clears this. It was the
-  real bar before Phase 9 and it is the real bar now — and Phase 9 has made it more urgent
-  rather than less, because offline behaviour is exactly the kind of thing that reads fine in a
-  test and wrong at a counter.
+**Nobody who has worked a restaurant has seen any of this.** That was the real bar before Phase 9
+and it is the real bar now.

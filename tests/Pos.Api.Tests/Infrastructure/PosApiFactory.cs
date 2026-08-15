@@ -128,7 +128,16 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
     }
 
     /// <summary>Creates a tenant. Not tenant-owned, so no ambient tenant is needed.</summary>
-    public async Task<Tenant> CreateTenantAsync(string slug, string name = "Test Shop")
+    /// <param name="serviceMode">
+    /// Defaults to <see cref="ServiceMode.Retail"/>, which is what a new shop is. Pass
+    /// <see cref="ServiceMode.Restaurant"/> for a test that needs the order routes to answer at
+    /// all — they are gated, so a retail tenant gets <c>409 restaurant-mode-required</c> from
+    /// every one of them.
+    /// </param>
+    public async Task<Tenant> CreateTenantAsync(
+        string slug,
+        string name = "Test Shop",
+        ServiceMode serviceMode = ServiceMode.Retail)
     {
         await using var scope = Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -140,6 +149,7 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
             Slug = slug,
             CurrencyCode = "EUR",
             TimeZoneId = "Europe/Dublin",
+            ServiceMode = serviceMode,
         };
 
         db.Tenants.Add(tenant);

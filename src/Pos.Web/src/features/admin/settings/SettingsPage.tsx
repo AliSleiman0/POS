@@ -32,6 +32,7 @@ export function SettingsPage() {
 
   const [name, setName] = useState('')
   const [taxMode, setTaxMode] = useState<'Inclusive' | 'Exclusive'>('Inclusive')
+  const [serviceMode, setServiceMode] = useState<'Retail' | 'Restaurant'>('Retail')
   const [rounding, setRounding] = useState('')
   const [addressLine, setAddressLine] = useState('')
   const [taxNumber, setTaxNumber] = useState('')
@@ -53,6 +54,7 @@ export function SettingsPage() {
     // way; the server always sends one. Defaulted rather than asserted, so an
     // unexpected null renders a form instead of throwing.
     setTaxMode(settings.data.taxMode ?? 'Inclusive')
+    setServiceMode(settings.data.serviceMode ?? 'Retail')
     setRounding(String(settings.data.cashRoundingIncrement))
     setAddressLine(settings.data.addressLine ?? '')
     setTaxNumber(settings.data.taxNumber ?? '')
@@ -68,6 +70,7 @@ export function SettingsPage() {
           body: {
             name: name.trim(),
             taxMode,
+            serviceMode,
             cashRoundingIncrement: Number(rounding),
             addressLine: blank(addressLine),
             taxNumber: blank(taxNumber),
@@ -169,6 +172,32 @@ export function SettingsPage() {
             {(fieldProps) => <Input {...fieldProps} value={settings.data.timeZoneId} disabled />}
           </Field>
         </div>
+
+        {/* Changeable, unlike the tax mode above it. A tax mode decides what every
+            stored price means; this decides which screens staff see, and nothing
+            already recorded is reinterpreted by moving it. The hint states the one
+            real cost rather than selling the feature. */}
+        <Field
+          label="How you serve"
+          hint={
+            serviceMode === 'Restaurant'
+              ? 'Tables, orders held open, courses and split bills. Orders need the server — a restaurant till cannot take one while the network is down.'
+              : 'Scan, tender, done. A retail till can keep selling with the network down.'
+          }
+        >
+          {(fieldProps) => (
+            <Select
+              {...fieldProps}
+              value={serviceMode}
+              onChange={(event) => {
+                setServiceMode(event.target.value as 'Retail' | 'Restaurant')
+              }}
+            >
+              <option value="Retail">Counter — retail</option>
+              <option value="Restaurant">Tables — restaurant</option>
+            </Select>
+          )}
+        </Field>
       </section>
 
       <section className="flex flex-col gap-4">

@@ -239,6 +239,76 @@ public sealed class SettingsTests(PosApiFactory factory)
     }
 
     [Fact]
+    public async Task An_owner_can_switch_the_shop_to_restaurant_mode()
+    {
+        var (client, tenant) = await OwnerOfAsync("settings-service-mode");
+
+        using var response = await client.PutAsJsonAsync(
+            "/api/v1/settings",
+            Update(new { serviceMode = nameof(ServiceMode.Restaurant) }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(nameof(ServiceMode.Restaurant), body.GetProperty("serviceMode").GetString());
+
+        // Not locked the way taxMode is, and the distinction is the point: a tax mode decides
+        // what every stored price *means*, so changing it rewrites history. A service mode
+        // decides which screens a shop sees, and every sale already written reads identically
+        // afterwards because it is the same row.
+        var read = await client.GetFromJsonAsync<JsonElement>("/api/v1/settings");
+        Assert.Equal(nameof(ServiceMode.Restaurant), read.GetProperty("serviceMode").GetString());
+
+        await factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var shop = await db.Tenants.FirstAsync(t => t.Id == tenant.Id);
+
+            Assert.Equal(ServiceMode.Restaurant, shop.ServiceMode);
+        });
+    }
+
+    [Fact]
+    public async Task A_body_that_omits_the_service_mode_is_refused_rather_than_defaulted()
+    {
+        var (client, tenant) = await OwnerOfAsync("settings-service-mode-absent");
+
+        using var switched = await client.PutAsJsonAsync(
+            "/api/v1/settings",
+            Update(new { serviceMode = nameof(ServiceMode.Restaurant) }));
+
+        Assert.Equal(HttpStatusCode.OK, switched.StatusCode);
+
+        /*
+         * The whole reason the field is nullable on the request.
+         *
+         * An omitted enum binds to its zero member, which here is Retail — so a client that
+         * had never heard of this field would post a complete-looking body that silently
+         * turned a restaurant back into a counter, closing the floor screen with tables still
+         * open. Exactly the trap CloseShiftRequest.CountedCash already guards, where an
+         * omitted decimal binds to zero and reads as a drawer counted empty.
+         */
+        var body = Update(new { });
+        body.Remove("serviceMode");
+
+        using var response = await client.PutAsJsonAsync("/api/v1/settings", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(problem.GetProperty("errors").TryGetProperty("serviceMode", out _));
+
+        // And the shop is still a restaurant, because the write never happened.
+        await factory.AsTenantAsync(tenant.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var shop = await db.Tenants.FirstAsync(t => t.Id == tenant.Id);
+
+            Assert.Equal(ServiceMode.Restaurant, shop.ServiceMode);
+        });
+    }
+
+    [Fact]
     public async Task A_cashier_may_read_the_settings_but_not_change_them()
     {
         var tenant = await factory.CreateTenantAsync("settings-cashier");
@@ -288,6 +358,7 @@ public sealed class SettingsTests(PosApiFactory factory)
         {
             ["name"] = "Test Shop",
             ["taxMode"] = nameof(TaxMode.Inclusive),
+            ["serviceMode"] = nameof(ServiceMode.Retail),
             ["cashRoundingIncrement"] = 0m,
             ["addressLine"] = null,
             ["taxNumber"] = null,

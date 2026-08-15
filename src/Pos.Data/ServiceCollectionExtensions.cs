@@ -8,6 +8,7 @@ using Pos.Core.Tenancy;
 using Pos.Data.Auditing;
 using Pos.Data.Interceptors;
 using Pos.Data.Inventory;
+using Pos.Data.Orders;
 using Pos.Data.Reporting;
 using Pos.Data.Sales;
 using Pos.Data.Shifts;
@@ -98,6 +99,12 @@ public static class ServiceCollectionExtensions
         // own. The arithmetic is already pure in ShiftArithmetic, and what is left is three
         // queries and a lock.
         services.AddScoped<ShiftWriter>();
+
+        // Registered on the same reasoning, and with one more of its own: an order is working
+        // state rather than money, so there is not even a financial invariant here for Core to
+        // own. What it does hold is a counter upsert and a row lock, which is why it is a writer
+        // and not endpoint code.
+        services.AddScoped<OrderWriter>();
 
         // Reads only, and behind no port either: aggregating money has to be raw SQL because
         // EF cannot sum a value-converted property, and a port would exist only to hide a type

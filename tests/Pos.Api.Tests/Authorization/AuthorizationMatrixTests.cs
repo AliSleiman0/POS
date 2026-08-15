@@ -296,6 +296,10 @@ public sealed class AuthorizationMatrixTests(PosApiFactory factory)
             "POST" when testCase.Idempotent => client.PostIdempotentAsync(url, new { }),
             "POST" => client.PostAsJsonAsync(url, new { }),
             "PUT" => client.PutAsJsonAsync(url, new { }),
+
+            // PATCH arrived with Phase 10's order-line amendment, which is a partial update by
+            // nature: a waiter changes a quantity, not the snapshotted price beside it.
+            "PATCH" => client.PatchAsJsonAsync(url, new { }),
             "DELETE" => client.DeleteAsync(new Uri(url, UriKind.Relative)),
             _ => throw new NotSupportedException($"The matrix cannot send '{testCase.Method}' yet."),
         };

@@ -1049,6 +1049,7 @@ export interface paths {
           q?: string
           categoryId?: string
           activeOnly?: boolean
+          includeModifiers?: boolean
         }
         header?: never
         path?: never
@@ -2398,6 +2399,1149 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/floor': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The room: areas and their tables */
+    get: {
+      parameters: {
+        query?: {
+          includeRetired?: boolean
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ServiceAreaResponse'][]
+          }
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/floor/areas': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Add an area to the room */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveServiceAreaRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ServiceAreaResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/floor/areas/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** Rename or retire an area */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveServiceAreaRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ServiceAreaResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/floor/tables': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Add a table */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveDiningTableRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['DiningTableResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/floor/tables/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** Rename, reseat or retire a table */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveDiningTableRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['DiningTableResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/menu/modifier-groups': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Every question the menu can ask, with its answers */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ModifierGroupResponse'][]
+          }
+        }
+      }
+    }
+    put?: never
+    /** Add a question */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveModifierGroupRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ModifierGroupResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/menu/products/{productId}/modifier-groups': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** The questions one item asks, in order */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          productId: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ModifierGroupResponse'][]
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    /** Set which questions an item asks */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          productId: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['AssignModifierGroupsRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ModifierGroupResponse'][]
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/menu/modifier-groups/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** Change a question or its answers */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['SaveModifierGroupRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ModifierGroupResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Open orders, oldest first */
+    get: {
+      parameters: {
+        query?: {
+          status?: components['schemas']['OrderStatus']
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderResponse'][]
+          }
+        }
+      }
+    }
+    put?: never
+    /** Seat a table, start a tab or take a takeaway */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['OpenOrderRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** One order and its lines */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderResponse']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/lines': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Put items on an order */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['AddOrderLinesRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/lines/{lineId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    /** Change a line the kitchen has not been told about */
+    patch: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+          lineId: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['AmendOrderLineRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderLineResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    trace?: never
+  }
+  '/api/v1/orders/{id}/lines/{lineId}/void': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Take a line off an order */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+          lineId: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['VoidOrderLineRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderLineResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/transfer': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Move an order to another table */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['TransferOrderRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/merge': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Absorb another order into this one */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['MergeOrderRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/abandon': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Write off an order nobody paid for */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['AbandonOrderRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/bills': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** This order's bills, priced */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderBillResponse'][]
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    put?: never
+    /** Split off a bill */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path: {
+          id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['CreateBillRequest']
+        }
+      }
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderBillResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/bills/{billId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    /** Tear up a bill nobody has paid */
+    delete: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          id: string
+          billId: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description No Content */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/orders/{id}/bills/{billId}/pay': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Take the money for a bill */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description A client-generated GUID, created before the first attempt and reused on every retry. A replay returns the original status and body with Idempotent-Replay: true. */
+          'Idempotency-Key': string
+        }
+        path: {
+          id: string
+          billId: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': components['schemas']['PayBillRequest']
+        }
+      }
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['OrderBillResponse']
+          }
+        }
+        /** @description Bad Request */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/problem+json': components['schemas']['HttpValidationProblemDetails']
+          }
+        }
+        /** @description Not Found */
+        404: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/reports/daily': {
     parameters: {
       query?: never
@@ -2652,9 +3796,43 @@ export interface paths {
 export type webhooks = Record<string, never>
 export interface components {
   schemas: {
+    AbandonOrderRequest: {
+      reason: null | string
+    }
     AddBarcodeRequest: {
       code: null | string
       isPrimary: null | boolean
+    }
+    AddOrderLineRequest: {
+      /** Format: uuid */
+      productId: null | string
+      /** Format: double */
+      quantity: null | number | string
+      /** Format: int32 */
+      course: null | number | string
+      /** Format: int32 */
+      seatNumber: null | number | string
+      note: null | string
+      /** Format: double */
+      unitPriceOverride: null | number | string
+      /** Format: double */
+      discountAmount: null | number | string
+      modifiers: null | components['schemas']['AddOrderLineRequest'][]
+    }
+    AddOrderLinesRequest: {
+      lines: null | components['schemas']['AddOrderLineRequest'][]
+    }
+    AmendOrderLineRequest: {
+      /** Format: double */
+      quantity: null | number | string
+      /** Format: int32 */
+      course: null | number | string
+      /** Format: int32 */
+      seatNumber: null | number | string
+      note: null | string
+    }
+    AssignModifierGroupsRequest: {
+      modifierGroupIds: null | string[]
     }
     /** @enum {unknown} */
     AuditAction:
@@ -2673,6 +3851,11 @@ export interface components {
       | 'SettingsChanged'
       | 'ShiftClosed'
       | 'AuthorizationRefused'
+      | 'OrderOpened'
+      | 'OrderLineVoided'
+      | 'OrderTransferred'
+      | 'OrderMerged'
+      | 'OrderAbandoned'
     AuditEntryResponse: {
       /** Format: uuid */
       id: string
@@ -2744,6 +3927,27 @@ export interface components {
       /** Format: date-time */
       createdAt: string
     }
+    BillAllocationRequest: {
+      /** Format: uuid */
+      orderLineId: null | string
+      /** Format: double */
+      quantity: null | number | string
+    }
+    BillLineResponse: {
+      /** Format: uuid */
+      orderLineId: string
+      description: string
+      /** Format: double */
+      quantity: number | string
+      /** Format: double */
+      unitPrice: number | string
+      /** Format: double */
+      lineTotal: number | string
+    }
+    BillTenderRequest: {
+      /** Format: double */
+      amount: null | number | string
+    }
     CashMovementResponse: {
       /** Format: uuid */
       id: string
@@ -2790,6 +3994,9 @@ export interface components {
       /** Format: double */
       countedCash: null | number | string
     }
+    CreateBillRequest: {
+      allocations: null | components['schemas']['BillAllocationRequest'][]
+    }
     CreateCashMovementRequest: {
       type: null | string
       /** Format: double */
@@ -2824,6 +4031,7 @@ export interface components {
       costPrice: null | number | string
       unit: null | string
       trackStock: null | boolean
+      isModifier: null | boolean
     }
     CreateRegisterRequest: {
       name: string
@@ -2841,6 +4049,8 @@ export interface components {
       tenders: null | components['schemas']['SaleTenderRequest'][]
       /** Format: date-time */
       occurredAt?: null | string
+      /** Format: double */
+      tip?: null | number | string
     }
     CreateStockAdjustmentRequest: {
       /** Format: uuid */
@@ -2895,6 +4105,18 @@ export interface components {
       items: components['schemas']['TaxClassResponse'][]
       nextCursor: null | string
       hasMore: boolean
+    }
+    DiningTableResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: uuid */
+      serviceAreaId: string
+      name: string
+      /** Format: int32 */
+      seats: number | string
+      /** Format: int32 */
+      sortOrder: number | string
+      isActive: boolean
     }
     EmployeeSummary: {
       /** Format: uuid */
@@ -2969,12 +4191,130 @@ export interface components {
       user: components['schemas']['AuthUser']
       tenant: components['schemas']['TenantSettings']
     }
+    MergeOrderRequest: {
+      /** Format: uuid */
+      sourceOrderId: null | string
+    }
+    ModifierGroupResponse: {
+      /** Format: uuid */
+      id: string
+      name: string
+      /** Format: int32 */
+      minSelections: number | string
+      /** Format: int32 */
+      maxSelections: null | number | string
+      /** Format: int32 */
+      sortOrder: number | string
+      options: components['schemas']['ModifierOptionResponse'][]
+    }
+    ModifierOptionResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: uuid */
+      productId: string
+      name: string
+      /** Format: double */
+      unitPrice: number | string
+      /** Format: int32 */
+      sortOrder: number | string
+      isDefault: boolean
+    }
+    OpenOrderRequest: {
+      type: null | components['schemas']['OrderType']
+      /** Format: uuid */
+      diningTableId: null | string
+      tabName: null | string
+      /** Format: int32 */
+      coverCount: null | number | string
+      note: null | string
+    }
     OpenShiftRequest: {
       /** Format: uuid */
       registerId: null | string
       /** Format: double */
       openingFloat: null | number | string
     }
+    OrderBillResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: int32 */
+      billNumber: number | string
+      status: components['schemas']['OrderBillStatus']
+      /** Format: uuid */
+      clientTransactionId: string
+      /** Format: uuid */
+      saleId: null | string
+      /** Format: double */
+      subtotal: number | string
+      /** Format: double */
+      discountTotal: number | string
+      /** Format: double */
+      taxTotal: number | string
+      /** Format: double */
+      roundingAdjustment: number | string
+      /** Format: double */
+      total: number | string
+      /** Format: double */
+      tipAmount: number | string
+      lines: components['schemas']['BillLineResponse'][]
+    }
+    /** @enum {unknown} */
+    OrderBillStatus: 'Open' | 'Paid' | 'Voided'
+    OrderLineResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: int32 */
+      lineNumber: number | string
+      /** Format: uuid */
+      productId: string
+      /** Format: uuid */
+      parentOrderLineId: null | string
+      description: string
+      /** Format: double */
+      quantity: number | string
+      /** Format: double */
+      unitPrice: number | string
+      /** Format: double */
+      taxRate: number | string
+      /** Format: double */
+      discountAmount: number | string
+      /** Format: int32 */
+      course: number | string
+      /** Format: int32 */
+      seatNumber: null | number | string
+      note: null | string
+      status: components['schemas']['OrderLineStatus']
+      /** Format: date-time */
+      firedAt: null | string
+    }
+    /** @enum {unknown} */
+    OrderLineStatus: 'Pending' | 'Fired' | 'Voided'
+    OrderResponse: {
+      /** Format: uuid */
+      id: string
+      /** Format: int64 */
+      orderNumber: number | string
+      type: components['schemas']['OrderType']
+      status: components['schemas']['OrderStatus']
+      /** Format: uuid */
+      diningTableId: null | string
+      tableName: null | string
+      tabName: null | string
+      /** Format: int32 */
+      coverCount: null | number | string
+      note: null | string
+      /** Format: uuid */
+      openedBy: string
+      /** Format: date-time */
+      openedAt: string
+      /** Format: date-time */
+      closedAt: null | string
+      lines: components['schemas']['OrderLineResponse'][]
+    }
+    /** @enum {unknown} */
+    OrderStatus: 'Open' | 'Closed' | 'Abandoned'
+    /** @enum {unknown} */
+    OrderType: 'Table' | 'Tab' | 'Takeaway'
     OverrideGrantResponse: {
       grant: string
       /** Format: int32 */
@@ -2989,6 +4329,15 @@ export interface components {
       userId: string
       pin: string
       policies: string[]
+    }
+    PayBillRequest: {
+      /** Format: uuid */
+      registerId: null | string
+      /** Format: uuid */
+      shiftId: null | string
+      tenders: null | components['schemas']['BillTenderRequest'][]
+      /** Format: double */
+      tip: null | number | string
     }
     PinEligibleEmployee: {
       /** Format: uuid */
@@ -3017,6 +4366,7 @@ export interface components {
       unit: components['schemas']['Unit']
       isActive: boolean
       trackStock: boolean
+      isModifier: boolean
       /** Format: date-time */
       createdAt: string
       /** Format: date-time */
@@ -3208,6 +4558,11 @@ export interface components {
       refundCount: number | string
       /** Format: double */
       averageBasket: number | string
+      /**
+       * Format: double
+       * @default 0
+       */
+      tips: number | string
     }
     ReportScopeResponse: {
       kind: string
@@ -3336,6 +4691,11 @@ export interface components {
       refunds?: null | components['schemas']['LinkedRefundResponse'][]
       /** Format: date-time */
       recordedAt?: null | string
+      /**
+       * Format: double
+       * @default 0
+       */
+      tipAmount: number | string
     }
     /** @enum {unknown} */
     SaleStatus: 'Completed' | 'Voided'
@@ -3376,6 +4736,44 @@ export interface components {
     }
     /** @enum {unknown} */
     SaleType: 'Sale' | 'Refund'
+    SaveDiningTableRequest: {
+      /** Format: uuid */
+      serviceAreaId: null | string
+      name: null | string
+      /** Format: int32 */
+      seats: null | number | string
+      /** Format: int32 */
+      sortOrder: null | number | string
+      isActive: null | boolean
+    }
+    SaveModifierGroupRequest: {
+      name: null | string
+      /** Format: int32 */
+      minSelections: null | number | string
+      /** Format: int32 */
+      maxSelections: null | number | string
+      /** Format: int32 */
+      sortOrder: null | number | string
+      isActive: null | boolean
+      optionProductIds: null | string[]
+    }
+    SaveServiceAreaRequest: {
+      name: null | string
+      /** Format: int32 */
+      sortOrder: null | number | string
+      isActive: null | boolean
+    }
+    ServiceAreaResponse: {
+      /** Format: uuid */
+      id: string
+      name: string
+      /** Format: int32 */
+      sortOrder: number | string
+      isActive: boolean
+      tables: components['schemas']['DiningTableResponse'][]
+    }
+    /** @enum {unknown} */
+    ServiceMode: 'Retail' | 'Restaurant'
     SetPinRequest: {
       pin: string
     }
@@ -3386,6 +4784,7 @@ export interface components {
       timeZoneId: string
       taxMode: components['schemas']['TaxMode']
       taxModeLocked: boolean
+      serviceMode: components['schemas']['ServiceMode']
       /** Format: double */
       cashRoundingIncrement: number | string
       businessDayStartOffset: string
@@ -3508,6 +4907,7 @@ export interface components {
       unit: components['schemas']['Unit']
       isActive: boolean
       trackStock: boolean
+      isModifier: boolean
       /** Format: date-time */
       changedAt: string
     }
@@ -3515,6 +4915,7 @@ export interface components {
       currencyCode: string
       timeZoneId: string
       taxMode: components['schemas']['TaxMode']
+      serviceMode: components['schemas']['ServiceMode']
       /** Format: double */
       cashRoundingIncrement: number | string
       businessDayStartOffset: string
@@ -3556,6 +4957,11 @@ export interface components {
     }
     /** @enum {unknown} */
     TenderMethod: 'Cash' | 'External' | 'Card' | 'Voucher'
+    TransferOrderRequest: {
+      /** Format: uuid */
+      diningTableId: null | string
+      tabName: null | string
+    }
     /** @enum {unknown} */
     Unit: 'Each' | 'Kilogram' | 'Litre'
     UpdateCategoryRequest: {
@@ -3584,10 +4990,12 @@ export interface components {
       costPrice: null | number | string
       unit: null | string
       trackStock: null | boolean
+      isModifier: null | boolean
     }
     UpdateSettingsRequest: {
       name: string
       taxMode: components['schemas']['TaxMode']
+      serviceMode: null | components['schemas']['ServiceMode']
       /** Format: double */
       cashRoundingIncrement: number | string
       addressLine: null | string
@@ -3600,6 +5008,9 @@ export interface components {
       /** Format: double */
       rate: null | number | string
       isDefault: null | boolean
+    }
+    VoidOrderLineRequest: {
+      reason: null | string
     }
     VoidSaleRequest: {
       reason: null | string

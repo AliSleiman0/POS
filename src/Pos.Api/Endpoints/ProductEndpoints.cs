@@ -39,7 +39,17 @@ public sealed record CreateProductRequest(
     decimal? UnitPrice,
     decimal? CostPrice,
     string? Unit,
-    bool? TrackStock);
+    bool? TrackStock,
+
+    /// <summary>
+    /// Whether this is a modifier — "extra cheese" — rather than something sold on its own.
+    /// </summary>
+    /// <remarks>
+    /// Nullable like every other flag here, and for the same reason: an absent <c>bool</c> binds
+    /// to <c>false</c>, which would quietly turn a modifier back into a sellable item the moment
+    /// somebody edited its price on a form that did not carry the field.
+    /// </remarks>
+    bool? IsModifier);
 
 /// <summary>
 /// A full replacement of the mutable fields. There is no <c>isActive</c>: a PUT never
@@ -60,7 +70,17 @@ public sealed record UpdateProductRequest(
     decimal? UnitPrice,
     decimal? CostPrice,
     string? Unit,
-    bool? TrackStock);
+    bool? TrackStock,
+
+    /// <summary>
+    /// Whether this is a modifier — "extra cheese" — rather than something sold on its own.
+    /// </summary>
+    /// <remarks>
+    /// Nullable like every other flag here, and for the same reason: an absent <c>bool</c> binds
+    /// to <c>false</c>, which would quietly turn a modifier back into a sellable item the moment
+    /// somebody edited its price on a form that did not carry the field.
+    /// </remarks>
+    bool? IsModifier);
 
 /// <summary>
 /// A product as the caller is allowed to see it.
@@ -84,6 +104,7 @@ public sealed record ProductResponse(
     Unit Unit,
     bool IsActive,
     bool TrackStock,
+    bool IsModifier,
     DateTimeOffset CreatedAt,
     DateTimeOffset? UpdatedAt);
 
@@ -211,6 +232,7 @@ public static class ProductEndpoints
         string? q,
         Guid? categoryId,
         bool? activeOnly,
+        bool? includeModifiers,
         CancellationToken cancellationToken)
     {
         if (!PageQuery.TryRead<string>(cursor, limit, Sort, out var page, out var errors))
@@ -237,6 +259,15 @@ public static class ProductEndpoints
         if (activeOnly ?? true)
         {
             query = query.Where(p => p.IsActive);
+        }
+
+        // Modifiers are excluded by default, and defaulting that way is the same fail-safe as
+        // activeOnly above: the register grid is the dominant caller, nobody orders "extra
+        // cheese" on its own, and a till that offered it as a line item would eventually sell
+        // one. The catalog's modifier screen asks for them explicitly.
+        if (!(includeModifiers ?? false))
+        {
+            query = query.Where(p => !p.IsModifier);
         }
 
         // A category belonging to another tenant matches nothing and yields an empty page.
@@ -462,6 +493,7 @@ public static class ProductEndpoints
             CostPrice = canViewMargins ? (Money?)request.CostPrice : null,
             Unit = fields.Unit ?? Core.Entities.Unit.Each,
             TrackStock = request.TrackStock ?? true,
+            IsModifier = request.IsModifier ?? false,
         };
 
         db.Products.Add(product);
@@ -527,6 +559,7 @@ public static class ProductEndpoints
         // The two exceptions to full replacement. See UpdateProductRequest.
         product.Unit = fields.Unit ?? product.Unit;
         product.TrackStock = request.TrackStock ?? product.TrackStock;
+        product.IsModifier = request.IsModifier ?? product.IsModifier;
 
         await SaveOrReportDuplicateSkuAsync(db, fields.Sku, cancellationToken);
 
@@ -851,12 +884,12 @@ public static class ProductEndpoints
     private static Expression<Func<Product, ProductResponse>> ProjectWithCost =>
         p => new ProductResponse(
             p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, (decimal)p.UnitPrice,
-            (decimal?)p.CostPrice, p.Unit, p.IsActive, p.TrackStock, p.CreatedAt, p.UpdatedAt);
+            (decimal?)p.CostPrice, p.Unit, p.IsActive, p.TrackStock, p.IsModifier, p.CreatedAt, p.UpdatedAt);
 
     private static Expression<Func<Product, ProductResponse>> ProjectWithoutCost =>
         p => new ProductResponse(
             p.Id, p.Sku, p.Name, p.Description, p.CategoryId, p.TaxClassId, (decimal)p.UnitPrice,
-            null, p.Unit, p.IsActive, p.TrackStock, p.CreatedAt, p.UpdatedAt);
+            null, p.Unit, p.IsActive, p.TrackStock, p.IsModifier, p.CreatedAt, p.UpdatedAt);
 
     private static ProductResponse Map(Product product, bool canViewMargins) => new(
         product.Id,
@@ -870,6 +903,7 @@ public static class ProductEndpoints
         product.Unit,
         product.IsActive,
         product.TrackStock,
+        product.IsModifier,
         product.CreatedAt,
         product.UpdatedAt);
 }

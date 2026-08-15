@@ -111,6 +111,12 @@ export function ProductDetailPage() {
     costPrice: values.costPrice.trim() === '' ? null : Number(values.costPrice),
     unit: values.unit,
     trackStock: values.trackStock,
+
+    // Sent back as it was, not defaulted. An absent `isModifier` binds to false
+    // server-side, so a form that dropped the field would quietly turn "extra
+    // cheese" back into a sellable item — the same trap the request record's
+    // remarks call out. This screen does not edit it; the menu screen does.
+    isModifier: existing.data?.isModifier ?? false,
   })
 
   const save = useMutation({

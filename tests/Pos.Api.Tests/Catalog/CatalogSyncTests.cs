@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Pos.Api.Endpoints;
 using Pos.Api.Tests.Infrastructure;
 using Pos.Api.Tests.Isolation;
+using Pos.Core.Entities;
 using Pos.Data;
 using Pos.Data.Identity;
 
@@ -72,6 +73,62 @@ public sealed class CatalogSyncTests(PosApiFactory factory)
     }
 
     [Fact]
+    public async Task The_settings_block_is_the_calling_tenants_own_when_the_two_shops_differ()
+    {
+        /*
+         * The version of the test below that has teeth, and it is here because the one below
+         * did not.
+         *
+         * `Tenant` is not tenant-owned, so it carries no query filter, no RLS policy and no
+         * interceptor check — the scoping is one `Where` clause the handler has to contain.
+         * `SettingsAsync` did not contain it, and every till was served an arbitrary shop's
+         * currency, tax mode, rounding increment and receipt address. Offline that is worse
+         * than a display bug: `taxMode` is an input to the pricing engine, so the till would
+         * have priced carts by another business's rules.
+         *
+         * It survived a passing test because the isolation world seeds both tenants
+         * identically — deliberately, so a leak doubles a list rather than having to be
+         * reasoned about — and identical fixtures make the two possible answers the same
+         * string. So this test does the opposite on purpose: two shops set up to disagree
+         * about every field it asserts on.
+         */
+        var (client, tenant) = await factory.RestaurantTenantAsync();
+
+        // A second shop with a different currency, zone and mode, created after the first so
+        // it is the more likely row for an unscoped read to land on.
+        var other = await factory.CreateTenantAsync(
+            $"sync-other-{Guid.CreateVersion7():N}"[..24],
+            "Somebody Else",
+            ServiceMode.Retail);
+
+        await factory.AsTenantAsync(other.Id, async services =>
+        {
+            var db = services.GetRequiredService<AppDbContext>();
+            var row = await db.Tenants.FirstAsync(t => t.Id == other.Id);
+
+            row.CurrencyCode = "GBP";
+            row.TimeZoneId = "Europe/London";
+            row.TaxMode = TaxMode.Exclusive;
+            row.ReceiptHeader = "Not your shop";
+
+            await db.SaveChangesAsync();
+        });
+
+        var body = await SyncAsync(client);
+        var settings = body.GetProperty("settings");
+
+        Assert.Equal("EUR", settings.GetProperty("currencyCode").GetString());
+        Assert.Equal("Europe/Dublin", settings.GetProperty("timeZoneId").GetString());
+        Assert.Equal(nameof(TaxMode.Inclusive), settings.GetProperty("taxMode").GetString());
+        Assert.Equal(nameof(ServiceMode.Restaurant), settings.GetProperty("serviceMode").GetString());
+
+        // The most direct evidence, because this string exists in exactly one shop.
+        Assert.NotEqual("Not your shop", settings.GetProperty("receiptHeader").GetString());
+
+        Assert.NotEqual(Guid.Empty, tenant.TenantId);
+    }
+
+    [Fact]
     public async Task The_settings_block_is_the_calling_tenants_own()
     {
         // Tenant is not tenant-owned and carries no query filter, so the scoping here is a
@@ -93,6 +150,13 @@ public sealed class CatalogSyncTests(PosApiFactory factory)
 
             Assert.Equal(tenant.CurrencyCode, settings.GetProperty("currencyCode").GetString());
             Assert.Equal(tenant.TimeZoneId, settings.GetProperty("timeZoneId").GetString());
+
+            // Mirrored so a till that has lost the network still knows which product it is.
+            // It enables nothing offline — an order needs the server — it is what lets the
+            // app say so instead of showing a floor plan that refuses every tap.
+            Assert.Equal(
+                tenant.ServiceMode.ToString(),
+                settings.GetProperty("serviceMode").GetString());
         });
     }
 

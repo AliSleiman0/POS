@@ -25,7 +25,18 @@ public sealed record SaleTotalsRow(
     decimal Discount,
     decimal Tax,
     decimal Rounding,
-    decimal Total);
+    decimal Total,
+
+    /// <summary>
+    /// Cash left for the staff, summed separately and <b>never added to <see cref="Total"/></b>.
+    /// </summary>
+    /// <remarks>
+    /// It is reported because it is in the drawer: expected cash sums tendered less change
+    /// given, so the tips are already inside the figure a manager counts against. Without a line
+    /// of its own, a shop that took €40 in tips reads as €40 over with nothing explaining it —
+    /// the same failure as absorbing a cash-rounding adjustment instead of recording it.
+    /// </remarks>
+    decimal Tips);
 
 /// <summary>A drop, payout or petty-cash movement, with who did it and why.</summary>
 public sealed record CashMovementRow(
@@ -101,5 +112,5 @@ public sealed record ReportData(
     /// only politeness — a shop that opened and sold nothing still has to cash up, and a report
     /// that 404s is a report nobody can reconcile the float against.
     /// </remarks>
-    private static SaleTotalsRow Empty(SaleType type) => new(type.ToString(), 0, 0m, 0m, 0m, 0m, 0m);
+    private static SaleTotalsRow Empty(SaleType type) => new(type.ToString(), 0, 0m, 0m, 0m, 0m, 0m, 0m);
 }

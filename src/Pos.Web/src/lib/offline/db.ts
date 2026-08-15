@@ -63,6 +63,16 @@ export interface MirroredProduct {
   unit: string
   isActive: boolean
   trackStock: boolean
+  /**
+   * Whether this is a modifier — "extra cheese" — rather than something sold
+   * on its own.
+   *
+   * Mirrored so the offline grid and the offline search exclude them, exactly
+   * as the online ones do. A till that offered "extra cheese" as a scannable
+   * line while the network was down would sell one, and the sale would be
+   * perfectly valid.
+   */
+  isModifier: boolean
   /** Lower-cased name, for prefix search without scanning every row. */
   search: string
 }
@@ -95,6 +105,15 @@ export interface MirroredSettings {
   currencyCode: string
   timeZoneId: string
   taxMode: 'Inclusive' | 'Exclusive'
+  /**
+   * Which front-of-house model this shop runs.
+   *
+   * Mirrored so a till that has lost the network still knows what it is. It
+   * enables nothing offline — an order lives on the server, so a restaurant till
+   * cannot take one with the line down — it is how the app can *say so* instead
+   * of showing a floor plan that refuses every tap.
+   */
+  serviceMode: 'Retail' | 'Restaurant'
   cashRoundingIncrement: string
   businessDayStartOffset: string
   addressLine: string | null

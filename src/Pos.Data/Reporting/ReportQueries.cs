@@ -63,7 +63,8 @@ public sealed class ReportQueries(AppDbContext db, ITenantContext tenant)
                     COALESCE(SUM(s.discount_total), 0)       AS discount,
                     COALESCE(SUM(s.tax_total), 0)            AS tax,
                     COALESCE(SUM(s.rounding_adjustment), 0)  AS rounding,
-                    COALESCE(SUM(s.total), 0)                AS total
+                    COALESCE(SUM(s.total), 0)                AS total,
+                    COALESCE(SUM(s.tip_amount), 0)           AS tips
              FROM sale s
              WHERE s.tenant_id = {tenant.TenantId}
                AND s.status <> 'Voided'

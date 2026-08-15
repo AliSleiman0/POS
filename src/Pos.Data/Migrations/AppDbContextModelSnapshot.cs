@@ -96,7 +96,7 @@ namespace Pos.Data.Migrations
 
                     b.ToTable("audit_entry", null, t =>
                         {
-                            t.HasCheckConstraint("ck_audit_entry_action_allowed", "\"action\" IN ('PriceOverridden', 'DiscountApplied', 'SaleVoided', 'RefundIssued', 'ReceiptIssued', 'StockAdjusted', 'EmployeeCreated', 'EmployeeDeactivated', 'RoleChanged', 'PinReset', 'DeviceEnrolled', 'DeviceRevoked', 'SettingsChanged', 'ShiftClosed', 'AuthorizationRefused')");
+                            t.HasCheckConstraint("ck_audit_entry_action_allowed", "\"action\" IN ('PriceOverridden', 'DiscountApplied', 'SaleVoided', 'RefundIssued', 'ReceiptIssued', 'StockAdjusted', 'EmployeeCreated', 'EmployeeDeactivated', 'RoleChanged', 'PinReset', 'DeviceEnrolled', 'DeviceRevoked', 'SettingsChanged', 'ShiftClosed', 'AuthorizationRefused', 'OrderOpened', 'OrderLineVoided', 'OrderTransferred', 'OrderMerged', 'OrderAbandoned')");
 
                             t.HasCheckConstraint("ck_audit_entry_entity_type_length", "length(\"entity_type\") <= 64");
                         });
@@ -295,6 +295,77 @@ namespace Pos.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Pos.Core.Entities.DiningTable", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<int>("Seats")
+                        .HasColumnType("integer")
+                        .HasColumnName("seats");
+
+                    b.Property<Guid>("ServiceAreaId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("service_area_id");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_dining_table");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_dining_table_tenant_id_id");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("ux_dining_table_tenant_name");
+
+                    b.HasIndex("TenantId", "ServiceAreaId", "SortOrder")
+                        .HasDatabaseName("ix_dining_table_tenant_area_sort");
+
+                    b.ToTable("dining_table", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_dining_table_name_length", "length(\"name\") <= 40");
+
+                            t.HasCheckConstraint("ck_dining_table_seats_range", "seats >= 0");
+                        });
+                });
+
             modelBuilder.Entity("Pos.Core.Entities.IdempotencyRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -362,6 +433,568 @@ namespace Pos.Data.Migrations
 
                             t.HasCheckConstraint("ck_idempotency_record_request_hash_length", "length(\"request_hash\") <= 64");
                         });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.ModifierGroup", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<int?>("MaxSelections")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_selections");
+
+                    b.Property<int>("MinSelections")
+                        .HasColumnType("integer")
+                        .HasColumnName("min_selections");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_modifier_group");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_modifier_group_tenant_id_id");
+
+                    b.HasIndex("TenantId", "SortOrder", "Name")
+                        .HasDatabaseName("ix_modifier_group_tenant_sort");
+
+                    b.ToTable("modifier_group", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_modifier_group_name_length", "length(\"name\") <= 80");
+
+                            t.HasCheckConstraint("ck_modifier_group_selection_range", "min_selections >= 0 AND (max_selections IS NULL OR max_selections >= min_selections)");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.ModifierOption", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_default");
+
+                    b.Property<Guid>("ModifierGroupId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("modifier_group_id");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_modifier_option");
+
+                    b.HasIndex("TenantId", "ProductId")
+                        .HasDatabaseName("ix_modifier_option_tenant_id_product_id");
+
+                    b.HasIndex("TenantId", "ModifierGroupId", "ProductId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_modifier_option_tenant_group_product");
+
+                    b.ToTable("modifier_option", (string)null);
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.Order", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AbandonReason")
+                        .HasColumnType("text")
+                        .HasColumnName("abandon_reason");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("closed_at");
+
+                    b.Property<Guid?>("ClosedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("closed_by");
+
+                    b.Property<int?>("CoverCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("cover_count");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid?>("DiningTableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("dining_table_id");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text")
+                        .HasColumnName("note");
+
+                    b.Property<DateTimeOffset>("OpenedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("opened_at");
+
+                    b.Property<Guid>("OpenedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("opened_by");
+
+                    b.Property<long>("OrderNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("order_number");
+
+                    b.Property<Guid?>("RegisterId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("register_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TabName")
+                        .HasColumnType("text")
+                        .HasColumnName("tab_name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("type");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_customer_order");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_customer_order_tenant_id_id");
+
+                    b.HasIndex("TenantId", "DiningTableId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_customer_order_tenant_table_open")
+                        .HasFilter("status = 'Open' AND dining_table_id IS NOT NULL");
+
+                    b.HasIndex("TenantId", "OrderNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_customer_order_tenant_order_number");
+
+                    b.HasIndex("TenantId", "RegisterId")
+                        .HasDatabaseName("ix_customer_order_tenant_id_register_id");
+
+                    b.HasIndex("TenantId", "Status", "OpenedAt")
+                        .HasDatabaseName("ix_customer_order_tenant_status_opened_at");
+
+                    b.ToTable("customer_order", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_customer_order_abandon_reason_length", "length(\"abandon_reason\") <= 200");
+
+                            t.HasCheckConstraint("ck_customer_order_note_length", "length(\"note\") <= 500");
+
+                            t.HasCheckConstraint("ck_customer_order_status_allowed", "\"status\" IN ('Open', 'Closed', 'Abandoned')");
+
+                            t.HasCheckConstraint("ck_customer_order_tab_name_length", "length(\"tab_name\") <= 60");
+
+                            t.HasCheckConstraint("ck_customer_order_type_allowed", "\"type\" IN ('Table', 'Tab', 'Takeaway')");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.OrderBill", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("BillNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("bill_number");
+
+                    b.Property<Guid>("ClientTransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_transaction_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<DateTimeOffset?>("PaidAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("paid_at");
+
+                    b.Property<Guid?>("PaidBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("paid_by");
+
+                    b.Property<Guid?>("SaleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sale_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<decimal>("TipAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("tip_amount");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_order_bill");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_order_bill_tenant_id_id");
+
+                    b.HasIndex("TenantId", "ClientTransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_order_bill_tenant_client_transaction_id");
+
+                    b.HasIndex("TenantId", "SaleId")
+                        .HasDatabaseName("ix_order_bill_tenant_id_sale_id");
+
+                    b.HasIndex("TenantId", "OrderId", "BillNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_order_bill_tenant_order_number");
+
+                    b.ToTable("order_bill", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_order_bill_status_allowed", "\"status\" IN ('Open', 'Paid', 'Voided')");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.OrderBillLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("OrderBillId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_bill_id");
+
+                    b.Property<Guid>("OrderLineId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_line_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("quantity");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_order_bill_line");
+
+                    b.HasIndex("TenantId", "OrderLineId")
+                        .HasDatabaseName("ix_order_bill_line_tenant_order_line");
+
+                    b.HasIndex("TenantId", "OrderBillId", "OrderLineId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_order_bill_line_tenant_bill_line");
+
+                    b.ToTable("order_bill_line", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_order_bill_line_quantity_positive", "quantity > 0");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.OrderLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Course")
+                        .HasColumnType("integer")
+                        .HasColumnName("course");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("description");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("discount_amount");
+
+                    b.Property<DateTimeOffset?>("FiredAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("fired_at");
+
+                    b.Property<bool>("IsPriceOverridden")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_price_overridden");
+
+                    b.Property<int>("LineNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("line_number");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text")
+                        .HasColumnName("note");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<Guid?>("OverriddenBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("overridden_by");
+
+                    b.Property<Guid?>("ParentOrderLineId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_order_line_id");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("quantity");
+
+                    b.Property<int?>("SeatNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("seat_number");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<decimal>("TaxRate")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("tax_rate");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("unit_price");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<string>("VoidReason")
+                        .HasColumnType("text")
+                        .HasColumnName("void_reason");
+
+                    b.Property<DateTimeOffset?>("VoidedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("voided_at");
+
+                    b.Property<Guid?>("VoidedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("voided_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_customer_order_line");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_customer_order_line_tenant_id_id");
+
+                    b.HasIndex("TenantId", "ParentOrderLineId")
+                        .HasDatabaseName("ix_customer_order_line_tenant_parent");
+
+                    b.HasIndex("TenantId", "ProductId")
+                        .HasDatabaseName("ix_customer_order_line_tenant_id_product_id");
+
+                    b.HasIndex("TenantId", "OrderId", "LineNumber")
+                        .HasDatabaseName("ix_customer_order_line_tenant_order_line_number");
+
+                    b.ToTable("customer_order_line", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_customer_order_line_course_positive", "course >= 1");
+
+                            t.HasCheckConstraint("ck_customer_order_line_description_length", "length(\"description\") <= 200");
+
+                            t.HasCheckConstraint("ck_customer_order_line_note_length", "length(\"note\") <= 200");
+
+                            t.HasCheckConstraint("ck_customer_order_line_quantity_positive", "quantity > 0");
+
+                            t.HasCheckConstraint("ck_customer_order_line_seat_positive", "seat_number IS NULL OR seat_number >= 1");
+
+                            t.HasCheckConstraint("ck_customer_order_line_status_allowed", "\"status\" IN ('Pending', 'Fired', 'Voided')");
+
+                            t.HasCheckConstraint("ck_customer_order_line_void_reason_length", "length(\"void_reason\") <= 200");
+                        });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.OrderSequence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<long>("LastNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_number");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_customer_order_sequence");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_customer_order_sequence_tenant");
+
+                    b.ToTable("customer_order_sequence", (string)null);
                 });
 
             modelBuilder.Entity("Pos.Core.Entities.OverrideGrant", b =>
@@ -474,6 +1107,10 @@ namespace Pos.Data.Migrations
                         .HasDefaultValue(true)
                         .HasColumnName("is_active");
 
+                    b.Property<bool>("IsModifier")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_modifier");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text")
@@ -551,6 +1188,61 @@ namespace Pos.Data.Migrations
 
                             t.HasCheckConstraint("ck_product_unit_allowed", "\"unit\" IN ('Each', 'Kilogram', 'Litre')");
                         });
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.ProductModifierGroup", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("ModifierGroupId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("modifier_group_id");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_product_modifier_group");
+
+                    b.HasIndex("TenantId", "ModifierGroupId")
+                        .HasDatabaseName("ix_product_modifier_group_tenant_id_modifier_group_id");
+
+                    b.HasIndex("TenantId", "ProductId", "ModifierGroupId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_product_modifier_group_tenant_product_group");
+
+                    b.HasIndex("TenantId", "ProductId", "SortOrder")
+                        .HasDatabaseName("ix_product_modifier_group_tenant_product_sort");
+
+                    b.ToTable("product_modifier_group", (string)null);
                 });
 
             modelBuilder.Entity("Pos.Core.Entities.RefreshToken", b =>
@@ -778,6 +1470,11 @@ namespace Pos.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<decimal>("TipAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("tip_amount");
+
                     b.Property<decimal>("Total")
                         .HasPrecision(19, 4)
                         .HasColumnType("numeric(19,4)")
@@ -1003,6 +1700,63 @@ namespace Pos.Data.Migrations
                         .HasDatabaseName("ux_sale_sequence_tenant");
 
                     b.ToTable("sale_sequence", (string)null);
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.ServiceArea", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_service_area");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_service_area_tenant_id_id");
+
+                    b.HasIndex("TenantId", "SortOrder", "Name")
+                        .HasDatabaseName("ix_service_area_tenant_sort");
+
+                    b.ToTable("service_area", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_service_area_name_length", "length(\"name\") <= 60");
+                        });
                 });
 
             modelBuilder.Entity("Pos.Core.Entities.Shift", b =>
@@ -1410,6 +2164,13 @@ namespace Pos.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("receipt_header");
 
+                    b.Property<string>("ServiceMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Retail")
+                        .HasColumnName("service_mode");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasColumnType("text")
@@ -1449,6 +2210,8 @@ namespace Pos.Data.Migrations
                             t.HasCheckConstraint("ck_tenant_receipt_footer_length", "length(\"receipt_footer\") <= 1000");
 
                             t.HasCheckConstraint("ck_tenant_receipt_header_length", "length(\"receipt_header\") <= 1000");
+
+                            t.HasCheckConstraint("ck_tenant_service_mode_allowed", "\"service_mode\" IN ('Retail', 'Restaurant')");
 
                             t.HasCheckConstraint("ck_tenant_slug_format", "slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'");
 
@@ -1868,6 +2631,116 @@ namespace Pos.Data.Migrations
                         .HasConstraintName("fk_category_parent");
                 });
 
+            modelBuilder.Entity("Pos.Core.Entities.DiningTable", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.ServiceArea", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ServiceAreaId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_dining_table_service_area");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.ModifierOption", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.ModifierGroup", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ModifierGroupId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_modifier_option_group");
+
+                    b.HasOne("Pos.Core.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ProductId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_modifier_option_product");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.Order", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.DiningTable", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "DiningTableId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_customer_order_dining_table");
+
+                    b.HasOne("Pos.Core.Entities.Register", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "RegisterId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_customer_order_register");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.OrderBill", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Order", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OrderId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_bill_order");
+
+                    b.HasOne("Pos.Core.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SaleId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_order_bill_sale");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.OrderBillLine", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.OrderBill", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OrderBillId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_bill_line_bill");
+
+                    b.HasOne("Pos.Core.Entities.OrderLine", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OrderLineId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_bill_line_order_line");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.OrderLine", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.Order", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OrderId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_customer_order_line_order");
+
+                    b.HasOne("Pos.Core.Entities.OrderLine", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ParentOrderLineId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_customer_order_line_parent");
+
+                    b.HasOne("Pos.Core.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ProductId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_customer_order_line_product");
+                });
+
             modelBuilder.Entity("Pos.Core.Entities.Product", b =>
                 {
                     b.HasOne("Pos.Core.Entities.Category", null)
@@ -1884,6 +2757,25 @@ namespace Pos.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_product_tax_class");
+                });
+
+            modelBuilder.Entity("Pos.Core.Entities.ProductModifierGroup", b =>
+                {
+                    b.HasOne("Pos.Core.Entities.ModifierGroup", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ModifierGroupId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_product_modifier_group_group");
+
+                    b.HasOne("Pos.Core.Entities.Product", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ProductId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_product_modifier_group_product");
                 });
 
             modelBuilder.Entity("Pos.Core.Entities.Sale", b =>

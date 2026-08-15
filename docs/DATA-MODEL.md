@@ -109,7 +109,7 @@ A class, not a bare rate on the product: rates change by law, and a rate change 
 
 **`Sale`** — the financial record. **Append-only: once `Completed`, never updated or deleted.**
 
-`SaleNumber` (per-tenant sequential, unique), `ClientTransactionId` (GUID, unique per tenant), `RegisterId`, `ShiftId`, `CashierId`, `Type` (`Sale`|`Refund`), `Status` (`Completed`|`Voided`), `OriginalSaleId?`, `Subtotal`, `DiscountTotal`, `TaxTotal`, `RoundingAdjustment`, `Total`, `CompletedAt`, `RecordedAt`, `VoidedAt?`, `VoidedBy?`, `VoidReason?`.
+`SaleNumber` (per-tenant sequential, unique), `ClientTransactionId` (GUID, unique per tenant), `RegisterId`, `ShiftId`, `CashierId`, `Type` (`Sale`|`Refund`), `Status` (`Completed`|`Voided`), `OriginalSaleId?`, `Subtotal`, `DiscountTotal`, `TaxTotal`, `RoundingAdjustment`, `Total`, `TipAmount`, `CompletedAt`, `RecordedAt`, `VoidedAt?`, `VoidedBy?`, `VoidReason?`.
 
 - **A refund is a new `Sale` with `Type = Refund`** and negative amounts, linked by `OriginalSaleId`. Never an edit of the original.
 - **A void is a status flag plus compensating stock movements**, not a delete.
@@ -222,7 +222,7 @@ accept it, RLS notwithstanding. The tenant has to be *inside* the key. Deletes a
 These hold in every phase. A change request that breaks one is a design discussion, not a patch.
 
 1. `Sale.Total == Subtotal - DiscountTotal + TaxTotal + RoundingAdjustment` (with `TaxMode = Inclusive`, tax is extracted from rather than added to the line prices, and this identity still holds).
-2. `sum(Tender.Amount) >= Sale.Total` for a cash sale; the excess is `ChangeGiven`.
+2. `sum(Tender.Amount) >= Sale.Total + Sale.TipAmount` for a cash sale; the excess is `ChangeGiven`. **Amended in Phase 10.6, and the amendment is the point rather than a detail.** The product takes cash only, so a tip is physically cash left in the drawer: €25 against a €20 bill with a €5 tip is nothing back, not €5 of change. Taking the tip out of the change instead of adding it to the total is what leaves the money inside `ExpectedCash` — which sums tendered less change given — so `ShiftArithmetic` needs no change at all. The tip is deliberately **not** part of `Total`: folding it in would inflate revenue, inflate the tax owed on revenue nobody was charged tax for, and make a refund of a meal offer to hand the gratuity back too.
 3. `StockItem.OnHand == sum(StockMovement.Quantity)` for that product. Any drift is a bug, and is detectable precisely because the ledger exists.
 4. A `Completed` sale is never mutated. Corrections are new linked rows.
 5. Every row in a tenant table has a non-empty `TenantId`. No nulls, no sentinel "shared" tenant.

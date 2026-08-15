@@ -31,7 +31,8 @@
 | 8 | [Deployment & hardening](phases/PHASE-8-deployment.md) | Containerize, host, backups, security | ✅ Done |
 | — | **← MVP line.** Everything above ships as v1. | | |
 | 9 | [Offline (PWA)](phases/PHASE-9-offline.md) | Service worker, local catalog, outbox, reconciliation | ✅ Done (4 gaps recorded) |
-| 10+ | [Beyond MVP](#beyond-mvp) | Restaurant mode, desktop, platform admin (card payments dropped) | ⬜ Not started |
+| 10 | [Restaurant mode](phases/PHASE-10-restaurant.md) | Tables, orders, modifiers, kitchen display, split bills, tips | 🔨 In progress |
+| 11+ | [Beyond MVP](#beyond-mvp) | Desktop, platform admin (card payments dropped) | ⬜ Not started |
 
 Legend: ⬜ not started · 🔨 in progress · ✅ done · ⏸️ blocked
 
@@ -152,7 +153,28 @@ Deliberately post-MVP per `DECISIONS.md`. Rests on 3.5. Detail: [phases/PHASE-9-
 - [x] **9.4 Conflict reconciliation** — `/sync` explains each refusal, its consequence for the money, and the one action. A reused idempotency key deliberately offers **no** retry. Re-file carries the original `occurredAt` and a new key.
 - [x] **9.5 Honest limits** — persistence requested and its *answer* surfaced; warnings on refused storage, a long offline window and a large queue; a test rejects the words safe, secure and guaranteed.
 
-**Four gaps are recorded in the phase doc rather than hidden:** offline shift close, price-change-on-reconnect, a measured 10k-product sync, and the oversell case proved through two offline browsers.
+**Four gaps are recorded in the phase doc rather than hidden:** offline shift close, price-change-on-reconnect, a measured 10k-product sync, and the oversell case proved through two offline browsers. **Phase 10 does not close any of them** — they stay open and are still the phase doc's own list.
+
+## Phase 10 — Restaurant mode
+
+`DECISIONS.md`'s V2. Detail: [phases/PHASE-10-restaurant.md](phases/PHASE-10-restaurant.md)
+
+**The shape, decided before any of it was built:** an order is mutable pre-checkout working state and a `Sale` stays the append-only financial record, so paying a bill is an ordinary commit through `ISaleWriter` — one pricing engine, one idempotency contract, one stock ledger, one Z-report. `OrderBill.SaleId` points from the restaurant model *to* `Sale`, never back, so `Sale` never learns what an order is. That is how "a genuinely different order model, **not** a bolt-on to `Sale`" and "no second money path" hold at the same time.
+
+- [x] **10.0 Service mode** — `Tenant.ServiceMode` (`Retail`|`Restaurant`), defaulted in the column so every pre-existing shop is a counter. Editable at `/admin/settings` and audited per changed key, unlike `TaxMode`, because a service mode decides which screens a shop sees rather than what a stored price means. Mirrored through `GET /catalog/sync` so an offline till knows which product it is. **Required on the request, not defaulted** — an omitted enum binds to `Retail`, so an older client would have posted a complete-looking body that turned a restaurant back into a counter; found by the existing tests passing when they should not have, and now its own test.
+- [x] **10.1 Order model** — `ServiceArea`, `DiningTable`, `Order`, `OrderLine`, `OrderSequence`; `OrderWriter` in `Pos.Data`, a public class rather than a Core port on `ShiftWriter`'s reasoning. One open order per table enforced by a **filtered unique index** and proved with two writers racing; line numbers allocated under a `FOR UPDATE` from `MAX`, so a void never hands its number on. Tables are `customer_order` and `dining_table` because `ORDER` and `TABLE` are reserved words and this codebase writes raw SQL in the money paths.
+- [x] **10.2 Orders API** — open, add, amend, void, transfer, merge, abandon, plus the floor itself. Fourteen isolation-manifest rows. Order routes on a retail tenant answer `409 restaurant-mode-required` — a state conflict, not an authorization failure, and the route stays mapped so the coverage tests still see it. **Found a real leak in shipped Phase 9 code**: `GET /catalog/sync` read its settings block with no `Where`, so every till mirrored an arbitrary shop's currency, tax mode and rounding — and offline, `taxMode` prices the cart. It passed its test because the isolation world seeds both tenants identically; the first field that differed was `serviceMode`.
+- [x] **10.3 Modifiers** — a modifier *is* a product (`Product.IsModifier`), so it carries a price, a tax class and stock behaviour and prices through the same engine; a child `OrderLine` with `ParentOrderLineId` nests it on the screen, the ticket and the receipt, and it travels with its parent when voided. `ModifierRules` is pure and enforced at the API, because the sheet's gating is a courtesy. Modifiers are excluded from the product list, the register grid and the offline mirror's search.
+- [ ] **10.4 Courses, seats, stations, kitchen display** — **not built.** `Course`, `SeatNumber`, `Fired`/`FiredAt` and the void rules exist and are respected; nothing fires. Self-contained: the columns it needs are already there.
+- [x] **10.5 Bills, splitting, payment** — **the keystone, and it holds.** Paying a bill writes an ordinary `Sale` through `ISaleWriter` — same number counter, lines, tender, stock movement, Z-report. `OrderBill.SaleId` is the only link and it points one way, so the retail path is unaware any of this exists. Allocation is refused rather than clamped; a shared line carries its discount proportionally; a bill prices from the order line's snapshots, proved by changing the menu underneath. **An even split is N tenders on one sale**, no new mechanism and no fractional-quantity rounding.
+- [x] **10.6 Tips** — `Sale.TipAmount`, and DATA-MODEL invariant 2 amended to `sum(Tender.Amount) >= Total + TipAmount`. The tip comes out of the **change**, not into the total, so `ShiftArithmetic` is untouched and the money lands in expected cash by itself; the Z-report gains a Tips line so a drawer over by exactly the evening's tips reads as that rather than as a surplus.
+- [ ] **10.7 Restaurant UI** — **not built.** `/register` still renders the retail screen for every tenant. Every endpoint below works and none has a caller, so **a shop cannot use any of this today**.
+- [ ] **10.8 Reporting** — not built, except the Z-report's tips line, which shipped with 10.6 because it decides whether a drawer reconciles.
+- [ ] **10.9 Tests** — 244 new .NET tests landed with the milestones above. Missing: the e2e spec and the `Pos.Seed --restaurant` fixture, both of which belong with 10.7 rather than after it.
+
+**Phase 10 is in progress and its gaps are listed in the phase doc rather than hidden.** The server side of an order's life is complete and tested against a real Postgres; the kitchen, every screen, and the e2e spec are not.
+
+**The cost, stated rather than discovered:** a restaurant tenant loses offline trading. An order lives on the server so a second tablet can see the table; Phase 9's outbox queues sales and knows nothing about orders. The app says so in `OfflineLimitsPanel`.
 
 ## Beyond MVP
 
@@ -160,7 +182,6 @@ Scoped, not yet planned in detail. Order is a guess; revisit after the first pay
 
 | Phase | Name | Notes |
 |---|---|---|
-| 10 | Restaurant mode | Tables/tabs, modifiers, split bills, kitchen routing. A genuinely different order model — **not** a bolt-on to `Sale`, per `DECISIONS.md`. |
 | ~~11~~ | ~~Card payments~~ | **Dropped 2026-07-31 — the product takes cash only.** Not deferred: no processor is planned. `Tender.Method` remains a discriminator so a standalone terminal would be additive, but nothing is built for it. See [`DECISIONS.md`](../DECISIONS.md#feature-roadmap-phased). |
 | 12 | Avalonia desktop | Same API, durable local DB, real offline. |
 | 13 | Business layer | Platform admin, loyalty, purchase orders, low-stock alerts, gift cards, analytics. |
