@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Current phase** | **Phase 10 complete.** A shop in restaurant mode is seated, ordered for, fired to a kitchen, bumped, split, settled with a tip and reconciled — through screens, by a person. Every exit criterion in the phase doc is ticked and the nine-step verification walk is a Playwright spec. 1779 .NET + 324 Vitest + 72 Playwright green. |
-| **Next up** | **A real shop.** `DECISIONS.md` has argued for this since Phase 8 and the argument has only got stronger: nobody who has worked a till or a pass has used any of it, and that is the only untested claim left that matters. The phase doc's *What is not done* lists five things worth knowing first — the tender pad's provisional change ignoring the tip is the one to fix before a real service. |
+| **Next up** | **Resolve the pricing model, then get one shop trading.** `DECISIONS.md` allowed that decision to stay open "until Phase 10" and Phase 10 has closed, so it is now overdue and it blocks quoting a price. After it: production readiness, then a real shop. See [`PRODUCT-PLAN.md`](PRODUCT-PLAN.md). Ten phases have been delivered against zero customer evidence, and the highest-value work available is the work that produces some. |
 | **MVP definition** | Phases 0–8 complete = shippable retail POS. **Phase 8 is the last one before the line.** |
 | **Last updated** | 2026-08-15 |
 
@@ -180,11 +180,17 @@ Deliberately post-MVP per `DECISIONS.md`. Rests on 3.5. Detail: [phases/PHASE-9-
 
 Scoped, not yet planned in detail. Order is a guess; revisit after the first paying client.
 
+**A product plan for 12 and 13 now exists: [`PRODUCT-PLAN.md`](PRODUCT-PLAN.md).** It recommends
+starting neither, unbundling 13 into six unrelated features with different buyers, and spending
+the next effort on the pricing decision and a first customer instead. Read it before planning
+either phase.
+
 | Phase | Name | Notes |
 |---|---|---|
 | ~~11~~ | ~~Card payments~~ | **Dropped 2026-07-31 — the product takes cash only.** Not deferred: no processor is planned. `Tender.Method` remains a discriminator so a standalone terminal would be additive, but nothing is built for it. See [`DECISIONS.md`](../DECISIONS.md#feature-roadmap-phased). |
-| 12 | Avalonia desktop | Same API, durable local DB, real offline. |
-| 13 | Business layer | Platform admin, loyalty, purchase orders, low-stock alerts, gift cards, analytics. |
+| 11 | *(number reused)* | **Proposed**: production readiness — a non-sleeping API, a database that does not delete itself, proven backups, and the tip/provisional-change fix. The only work required whatever else is chosen. See [`PRODUCT-PLAN.md`](PRODUCT-PLAN.md) §3. |
+| 12 | Avalonia desktop | Same API, durable local DB, real offline. **Recommendation: hold pending evidence** — the offline case is half-spent by Phase 9, and the real case is peripherals rather than offline. |
+| 13 | Business layer | Platform admin, loyalty, purchase orders, low-stock alerts, gift cards, analytics. **Recommendation: unbundle.** Six features, six buyers, six costs. Low-stock alerts are nearly free (`ReorderPoint` is already modelled and filterable); gift cards are a balance-sheet liability and are the most mispriced item on the list. |
 
 ## Definition of done, per phase
 

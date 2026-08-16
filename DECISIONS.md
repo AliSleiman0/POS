@@ -83,10 +83,11 @@ The mapping from this roadmap to executable phases is [`docs/ROADMAP.md`](docs/R
 
 - **Pricing model conflict**: "sell as a whole, not a license" (one-time) vs. "we host it" (implies ongoing infra cost). Needs a deliberate decision — e.g. one-time fee that includes lifetime hosting, or accept a recurring fee without calling it a "license."
   **Not blocking**: no billing or licensing code exists in the MVP, so this can stay open until Phase 10. It does need deciding before a price is quoted to a real customer, because "lifetime hosting for a one-time fee" is a liability that grows with every tenant.
+  **Now due (2026-08-16).** Phase 10 closed on 2026-08-15, so the deadline this question was given has passed. It is the top item in [`docs/PRODUCT-PLAN.md`](docs/PRODUCT-PLAN.md), which sets out the three viable shapes and what each one commits the business to. It is not a technical problem and cannot be resolved by building anything — and both Phase 12 and Phase 13 are investments whose payback depends on the answer.
 
 ### Deferred to the phase that decides them
 
-- ~~**Hosting provider**~~ → **closed 2026-08-10: Fly.io.** See below.
+- ~~**Hosting provider**~~ → **closed 2026-08-10: Render.** Fly.io was chosen first and reversed the same day — it requires a payment card before it will create anything. See below for the full reasoning and the two accepted limitations. *(This line said "Fly.io" until 2026-08-16; the detail below was always correct.)*
 - ~~**Payment processor**~~ → **closed 2026-07-31: there isn't one.** The product takes cash only; see [Payments](#feature-roadmap-phased) above. Not "Stripe, later" — no processor is planned at all.
 - ~~**Refresh token in an `httpOnly` cookie**~~ → **closed 2026-08-10: it stays in `sessionStorage`.** See below.
 
