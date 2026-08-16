@@ -11,7 +11,20 @@ import {
   type Tender,
 } from './tender'
 
-type SaleResponse = components['schemas']['SaleResponse']
+/**
+ * What this panel needs of the thing being paid for.
+ *
+ * **The structural subset, not `SaleResponse`.** A restaurant bill is a
+ * different type with the same two money fields, and the pad is identical
+ * whichever it is — so the prop names what it reads rather than naming a shape
+ * it happens to have been written against first. Widening it here was the
+ * alternative to a second cash pad on the bill screen, which would have been a
+ * second place the change arithmetic could be wrong.
+ */
+export interface Payable {
+  total: components['schemas']['SaleResponse']['total']
+  roundingAdjustment: components['schemas']['SaleResponse']['roundingAdjustment']
+}
 
 /**
  * Taking the money.
@@ -38,7 +51,7 @@ export function TenderPanel({
   onComplete,
   onCancel,
 }: {
-  quote: SaleResponse
+  quote: Payable
   currency: string
   tenders: readonly Tender[]
   /** The keypad buffer, as typed. */

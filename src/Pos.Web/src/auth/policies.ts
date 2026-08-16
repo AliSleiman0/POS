@@ -28,6 +28,13 @@ export const POLICIES = [
   'CanViewMargins',
   'CanManageEmployees',
   'CanCloseShift',
+
+  // Phase 10. Taking an order and working the pass are everyone's; changing the
+  // room or cancelling cooked food is a supervisor's. See PolicyCatalog.
+  'CanTakeOrders',
+  'CanWorkKitchen',
+  'CanVoidFiredLine',
+  'CanManageFloor',
 ] as const
 
 export type Policy = (typeof POLICIES)[number]

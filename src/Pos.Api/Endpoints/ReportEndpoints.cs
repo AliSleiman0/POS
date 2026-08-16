@@ -90,7 +90,10 @@ public static class ReportEndpoints
         var (startUtc, endUtc) = BusinessDay.Range(day, zone, shop.BusinessDayStartOffset);
         var scope = ReportScope.ForRange(startUtc, endUtc);
 
-        var data = await reports.ReadAsync(scope, cancellationToken);
+        var data = await reports.ReadAsync(
+            scope,
+            shop.ServiceMode == ServiceMode.Restaurant,
+            cancellationToken);
 
         return TypedResults.Ok(ReportResponse.From(
             new ReportScopeResponse("Day", null, day, startUtc, endUtc, shop.TimeZoneId),
@@ -208,7 +211,7 @@ public static class ReportEndpoints
             .AsNoTracking()
             .Where(t => t.Id == db.CurrentTenantId)
             .Select(t => new TenantReportSettings(
-                t.CurrencyCode, t.TimeZoneId, t.BusinessDayStartOffset))
+                t.CurrencyCode, t.TimeZoneId, t.BusinessDayStartOffset, t.ServiceMode))
             .FirstAsync(cancellationToken);
 
     /// <summary>
@@ -240,4 +243,7 @@ public static class ReportEndpoints
 internal sealed record TenantReportSettings(
     string CurrencyCode,
     string TimeZoneId,
-    TimeSpan BusinessDayStartOffset);
+    TimeSpan BusinessDayStartOffset,
+
+    /// <summary>Whether the report carries its restaurant sections. See <c>ReportResponse</c>.</summary>
+    ServiceMode ServiceMode);

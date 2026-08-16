@@ -446,7 +446,10 @@ public static class ShiftEndpoints
         var shop = await ReportEndpoints.ShopAsync(db, cancellationToken);
 
         var scope = ReportScope.ForShift(id);
-        var data = await reports.ReadAsync(scope, cancellationToken);
+        var data = await reports.ReadAsync(
+            scope,
+            shop.ServiceMode == ServiceMode.Restaurant,
+            cancellationToken);
 
         // The shift's own window, for the header — a Z-report is read next to the drawer it
         // reconciles, and "which shift is this?" is the first question.

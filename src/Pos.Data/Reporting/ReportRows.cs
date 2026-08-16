@@ -86,6 +86,30 @@ public sealed record MarginRow(
     decimal Revenue,
     decimal? Cost);
 
+/// <summary>What one table took, and how long it was sat at.</summary>
+/// <param name="TableName">The table's name <b>now</b>. See the remarks on the query.</param>
+/// <param name="Covers">How many people, summed over the orders — the denominator of spend per head.</param>
+/// <param name="Orders">How many sittings, which is what "turned twice" counts.</param>
+/// <param name="Total">Taken, tips excluded. Revenue is revenue.</param>
+/// <param name="Tips">Left on top, kept separate for the reason DATA-MODEL invariant 2 keeps it separate.</param>
+/// <param name="MinutesSeated">Sum of each closed sitting's length. Null sittings — still open — contribute nothing.</param>
+public sealed record TableTakingsRow(
+    string TableName,
+    int Covers,
+    int Orders,
+    decimal Total,
+    decimal Tips,
+    decimal? MinutesSeated);
+
+/// <summary>What one member of staff took, and what guests left them.</summary>
+/// <param name="ServerName">Whoever opened the order, which is who served the table.</param>
+public sealed record ServerTakingsRow(
+    string ServerName,
+    int Covers,
+    int Orders,
+    decimal Total,
+    decimal Tips);
+
 /// <summary>Everything one report needs, read in one pass.</summary>
 public sealed record ReportData(
     IReadOnlyList<SaleTotalsRow> Totals,
@@ -94,7 +118,18 @@ public sealed record ReportData(
     IReadOnlyList<CashMovementRow> CashMovements,
     IReadOnlyList<ShiftRow> Shifts,
     IReadOnlyList<ReversalRow> Voids,
-    IReadOnlyList<ReversalRow> Refunds)
+    IReadOnlyList<ReversalRow> Refunds,
+
+    /// <summary>
+    /// Empty for a retail shop, and empty is the correct answer rather than a missing one.
+    /// </summary>
+    /// <remarks>
+    /// The queries behind these run only in restaurant mode — a counter has no tables and no
+    /// orders, so they would return nothing anyway, and skipping them keeps a retail Z-report
+    /// exactly as many round trips as it was before this phase.
+    /// </remarks>
+    IReadOnlyList<TableTakingsRow> ByTable,
+    IReadOnlyList<ServerTakingsRow> ByServer)
 {
     /// <summary>The totals for ordinary sales, or zeroes if there were none.</summary>
     public SaleTotalsRow Sales => Totals.FirstOrDefault(t => t.Type == nameof(SaleType.Sale))

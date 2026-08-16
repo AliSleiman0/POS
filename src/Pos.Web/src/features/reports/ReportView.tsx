@@ -158,6 +158,68 @@ export function ReportView({ report }: { report: Report }) {
         ) : null}
       </Section>
 
+      {/*
+        Restaurant only, and driven by the data rather than by a mode flag: a
+        counter's report carries these empty, so there is nothing to branch on
+        beyond "is there anything here". One less thing that can disagree with
+        the server about what kind of shop this is.
+      */}
+      {report.byTable.length > 0 ? (
+        <Section title="By table" testId="report-by-table">
+          <Table
+            head={[
+              'Table',
+              right('Covers'),
+              right('Sittings'),
+              right('Takings'),
+              right('Tips'),
+              right('Per cover'),
+              right('Turn'),
+            ]}
+          >
+            {report.byTable.map((row) => (
+              <tr key={row.tableName} className="border-t border-border">
+                <Cell>{row.tableName}</Cell>
+                <Cell align="right">{String(row.covers)}</Cell>
+                <Cell align="right">{String(row.orders)}</Cell>
+                <Cell align="right">{formatMoney(row.total, currency)}</Cell>
+                <Cell align="right">{formatMoney(row.tips, currency)}</Cell>
+                <Cell align="right">
+                  {/* Null where nobody keyed a cover count. A dash, not a zero:
+                      zero spend per head is a claim, and this is an absence. */}
+                  {row.averageSpendPerCover === null
+                    ? '—'
+                    : formatMoney(row.averageSpendPerCover, currency)}
+                </Cell>
+                <Cell align="right">
+                  {row.averageMinutesPerSitting === null
+                    ? '—'
+                    : `${String(row.averageMinutesPerSitting)}m`}
+                </Cell>
+              </tr>
+            ))}
+          </Table>
+        </Section>
+      ) : null}
+
+      {report.byServer.length > 0 ? (
+        <Section title="By server" testId="report-by-server">
+          <Table
+            head={['Server', right('Covers'), right('Tables'), right('Takings'), right('Tips')]}
+          >
+            {report.byServer.map((row) => (
+              <tr key={row.serverName} className="border-t border-border">
+                <Cell>{row.serverName}</Cell>
+                <Cell align="right">{String(row.covers)}</Cell>
+                <Cell align="right">{String(row.orders)}</Cell>
+                <Cell align="right">{formatMoney(row.total, currency)}</Cell>
+                <Cell align="right">{formatMoney(row.tips, currency)}</Cell>
+              </tr>
+            ))}
+          </Table>
+        </Section>
+      ) : null}
+
       {report.shifts.length > 0 ? (
         <Section title="Shifts">
           <Table

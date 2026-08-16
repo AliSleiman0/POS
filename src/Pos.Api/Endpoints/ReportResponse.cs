@@ -110,6 +110,33 @@ public sealed record ReportReversalResponse(
     string? Reason,
     long? OriginalSaleNumber);
 
+/// <summary>What one table took over the window.</summary>
+/// <param name="AverageSpendPerCover">
+/// Takings divided by covers — the number a restaurant owner manages by. Null where nobody keyed
+/// a cover count, because a guessed denominator is worse than no average at all.
+/// </param>
+/// <param name="AverageMinutesPerSitting">
+/// How long a sitting lasts, over the sittings that have ended. Null while the table is still
+/// occupied, which is the honest answer rather than a turn time that grows as the evening does.
+/// </param>
+public sealed record ReportTableResponse(
+    string TableName,
+    int Covers,
+    int Orders,
+    decimal Total,
+    decimal Tips,
+    decimal? AverageSpendPerCover,
+    decimal? AverageMinutesPerSitting);
+
+/// <summary>What one member of staff took, and what guests left them.</summary>
+public sealed record ReportServerResponse(
+    string ServerName,
+    int Covers,
+    int Orders,
+    decimal Total,
+    decimal Tips,
+    decimal? AverageSpendPerCover);
+
 /// <summary>
 /// A Z-report or a daily report. <b>The same shape for both</b>, deliberately.
 /// </summary>
@@ -127,7 +154,23 @@ public sealed record ReportResponse(
     ReportCashResponse Cash,
     IReadOnlyList<ReportShiftResponse> Shifts,
     IReadOnlyList<ReportReversalResponse> Voids,
-    IReadOnlyList<ReportReversalResponse> Refunds)
+    IReadOnlyList<ReportReversalResponse> Refunds,
+
+    /// <summary>
+    /// Empty at a counter, and empty rather than absent.
+    /// </summary>
+    /// <remarks>
+    /// A retail shop has no tables, so these are always empty for one and the client renders
+    /// nothing. Absent would have meant a nullable section every reader had to branch on for a
+    /// distinction that is already visible in the data.
+    /// <para>
+    /// <b>Every figure comes off the <c>sale</c> row</b>, joined through <c>OrderBill.SaleId</c>
+    /// — never from the current catalog. Invariant 5: pricing an old table from today's menu
+    /// would retroactively rewrite what the shop took.
+    /// </para>
+    /// </remarks>
+    IReadOnlyList<ReportTableResponse> ByTable,
+    IReadOnlyList<ReportServerResponse> ByServer)
 {
     /// <summary>Assembles the report from what the queries returned.</summary>
     /// <param name="liveExpectedCash">
@@ -239,9 +282,49 @@ public sealed record ReportResponse(
                 s.CountedCash,
                 s.Variance))],
             [.. data.Voids.Select(Reversal)],
-            [.. data.Refunds.Select(Reversal)]);
+            [.. data.Refunds.Select(Reversal)],
+            [.. data.ByTable.Select(t => new ReportTableResponse(
+                t.TableName,
+                t.Covers,
+                t.Orders,
+                t.Total,
+                t.Tips,
+                PerCover(t.Total, t.Covers),
+                PerSitting(t.MinutesSeated, t.Orders)))],
+            [.. data.ByServer.Select(s => new ReportServerResponse(
+                s.ServerName,
+                s.Covers,
+                s.Orders,
+                s.Total,
+                s.Tips,
+                PerCover(s.Total, s.Covers)))]);
     }
 
     private static ReportReversalResponse Reversal(ReversalRow row) =>
         new(row.SaleId, row.SaleNumber, row.Total, row.At, row.Actor, row.Reason, row.OriginalSaleNumber);
+
+    /// <summary>
+    /// Spend per head, or null where nobody keyed a cover count.
+    /// </summary>
+    /// <remarks>
+    /// <b>Null rather than the takings themselves.</b> Dividing by a missing denominator and
+    /// calling the result an average would put a plausible, wrong number on a report an owner
+    /// makes decisions with — and a takeaway legitimately has no covers at all. Money rounding
+    /// through <see cref="Money"/>, like every other amount here.
+    /// </remarks>
+    private static decimal? PerCover(decimal total, int covers) =>
+        covers <= 0 ? null : ((Money)total / covers).ToDecimal();
+
+    /// <summary>
+    /// How long a sitting lasted, over the sittings that have ended.
+    /// </summary>
+    /// <remarks>
+    /// Not a <see cref="Money"/>: minutes are a duration, and rounding them to four decimal
+    /// places would be borrowing a rule that exists for cash. Rounded to a whole minute, which
+    /// is the precision anybody reads a turn time at.
+    /// </remarks>
+    private static decimal? PerSitting(decimal? minutes, int sittings) =>
+        minutes is not { } total || sittings <= 0
+            ? null
+            : Math.Round(total / sittings, 0, MidpointRounding.AwayFromZero);
 }

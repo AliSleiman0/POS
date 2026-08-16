@@ -52,6 +52,17 @@ export const OWNER_CONNECTION = connectionFor('pos', OWNER_PASSWORD)
 export const APP_CONNECTION = connectionFor('pos_app', APP_PASSWORD)
 
 export const TENANT_SLUG = 'e2e-shop'
+
+/**
+ * A second shop, in restaurant mode.
+ *
+ * **A second tenant rather than flipping the first.** `register.spec.ts`,
+ * `receipt.spec.ts` and every other retail spec assume `/register` is a till
+ * with a cart on it; switching the shared shop would break all of them to test
+ * one. Two tenants in one database is also what the isolation suite does, and
+ * for a related reason — it is the shape the product actually ships in.
+ */
+export const RESTAURANT_SLUG = 'e2e-restaurant'
 export const CASHIER_PIN = '4821'
 
 /**
@@ -101,6 +112,10 @@ export interface SeedResult {
   /** Shown once, at enrolment. `--rotate-device-token` is what makes it printable again. */
   deviceToken: string
   registerId: string
+
+  /** The restaurant shop's own enrolled till. */
+  restaurantDeviceToken: string
+  restaurantRegisterId: string
 }
 
 const SEED_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '../.seed.json')
@@ -142,6 +157,28 @@ export function seedDatabase(): SeedResult {
     '--rotate-device-token',
   ])
 
+  // The same tool again with --restaurant, which switches the mode and adds the
+  // room, the kitchen and a menu. A separate shop, so the retail specs above are
+  // untouched by anything the restaurant spec does.
+  const restaurantOutput = run('dotnet', [
+    'run',
+    '--project',
+    'tools/Pos.Seed',
+    '--',
+    '--connection',
+    APP_CONNECTION,
+    '--slug',
+    RESTAURANT_SLUG,
+    '--name',
+    'E2E Restaurant',
+    '--password',
+    PASSWORD,
+    '--cashier-pin',
+    CASHIER_PIN,
+    '--restaurant',
+    '--rotate-device-token',
+  ])
+
   const result: SeedResult = {
     deviceToken: capture(output, /X-Device-Token:\s*(\S+)/, 'the device token'),
     // The status column is "enrolled" or "not enrolled" — one token or two.
@@ -149,6 +186,16 @@ export function seedDatabase(): SeedResult {
       output,
       /Front Counter\s+(?:not\s+)?enrolled\s+id\s+([0-9a-f-]{36})/i,
       "the register's id",
+    ),
+    restaurantDeviceToken: capture(
+      restaurantOutput,
+      /X-Device-Token:\s*(\S+)/,
+      "the restaurant's device token",
+    ),
+    restaurantRegisterId: capture(
+      restaurantOutput,
+      /Front Counter\s+(?:not\s+)?enrolled\s+id\s+([0-9a-f-]{36})/i,
+      "the restaurant register's id",
     ),
   }
 

@@ -128,11 +128,12 @@ description, price and rate.
 **Exit criteria**
 - [x] `ModifierRules` is pure, in `Pos.Core`, and enforced at the API — the UI's gating is a courtesy
 - [x] A required group with nothing chosen refuses the line
-- [ ] Modifier products never appear in the retail register or in barcode search — **half done.** `GET /products` filters them (`ModifierTests.Modifiers_are_kept_out_of_the_product_list_unless_asked_for`) and `GET /catalog/sync` carries the flag so the offline mirror can, but **`GET /products/by-barcode/{code}` does not filter**. In practice nobody assigns a barcode to "extra cheese", so it is latent rather than live; the fix is one `where` clause on both arms of `ProductEndpoints.LookupQuery` plus a test, and it touches the hottest read in the application, so it is written down rather than slipped in
+- [x] Modifier products never appear in the retail register or in barcode search — the list, the offline mirror **and** `GET /products/by-barcode/{code}`, which was the gap. Closed in 10.7 with `ModifierTests.A_barcoded_modifier_does_not_resolve_at_the_scanner`
 
-**The boxes above were unticked long after the work landed.** The tests existed from the day 10.3
-shipped; nobody went back to the list. That is the third item having survived unnoticed — a
-checklist is only worth the pass somebody makes over it.
+**The boxes above were unticked long after the work landed**, and the third one turned out to be a
+real gap rather than an oversight in the list. The tests for the first two existed from the day
+10.3 shipped; nobody went back to the checklist, and the one item that was not done hid among the
+two that were.
 
 ## 10.4 Courses, seats, stations, kitchen display
 
@@ -171,7 +172,7 @@ one.
 - [x] Bump and recall
 - [x] Something with no station refuses the **whole fire**, naming the product — firing half a round would put the rest of the table in the kitchen with no record of what was dropped
 - [x] A ticket is append-only: a line voided afterwards is struck through on the screen, and a product renamed mid-service does not rewrite what the grill was told
-- [ ] The display is asserted in Playwright, not only in jsdom — **belongs to 10.7/10.9**, where the display exists
+- [x] The display is asserted in Playwright, not only in jsdom — `restaurant.spec.ts` fires a round, finds it on the grill's screen with its modifier text, bumps it, and finds a line voided afterwards struck through rather than gone
 
 ## 10.5 Bills, splitting, payment
 
@@ -189,7 +190,7 @@ prices the bill through `PricingEngine` and commits through `ISaleWriter` with t
 - [x] A bill prices from the order line's snapshots, not the catalog — proved by changing the menu underneath
 - [x] An even split is N tenders on one sale, and no new endpoint
 - [x] A paid bill cannot be torn up — that is a refund against the sale, which Phase 3.7 owns
-- [ ] Two devices billing the same line concurrently is deterministic, and tested concurrently
+- [x] Two devices billing the same line concurrently is deterministic, and tested concurrently — the allocation read-then-insert now runs under the same `FOR UPDATE` on the order row that line numbering and firing take, and `OrderBillTests.Two_waiters_splitting_one_table_at_once_cannot_over_allocate_a_line` races two real clients through it
 
 **One thing was corrected during the build.** The pay handler first took the register from the
 session's `register_id` claim, which would have meant only a PIN-logged-in till could settle a
@@ -213,8 +214,8 @@ Not gated on service mode: a tip jar at a counter is the same fact.
 - [x] A tender covering the bill but not the tip is refused, and says which it was short of
 - [x] A negative tip is a field error
 - [x] `ShiftArithmetic` is untouched, which is the point of taking the tip out of the change rather than adding it to the total
-- [ ] A tip on a refund is refused — the refund path does not accept one, so there is nothing to refuse yet; it needs a test that says so
-- [ ] The invariant holds as a property test, not only in the cases somebody tried
+- [x] A tip on a refund is refused — `RefundSaleRequest` has no field to bind one to, and `TipTests.A_tip_cannot_be_attached_to_a_refund` sends one anyway and asserts it reaches neither the response nor the row
+- [x] The invariant holds as a property test, not only in the cases somebody tried — `TipTenderRulesTests.Tendered_less_the_total_and_the_tip_is_always_the_change` walks a grid of totals, tips and over-tenders including a cent short at every boundary
 
 ## 10.7 Restaurant UI
 
@@ -227,10 +228,18 @@ Invariant 11 is not weakened: nothing new goes to storage, and the manager's gra
 in `OverrideProvider`.
 
 **Exit criteria**
-- [ ] `/register` picks the screen from `serviceMode`; a test asserts the retail register is unchanged
-- [ ] No blocking browser dialogs anywhere in it (invariant 10)
-- [ ] Every write idempotent, with the key minted once per operation (invariant 6)
-- [ ] `OfflineLimitsPanel` states that orders need the server
+- [x] `/register` picks the screen from `serviceMode`; a test asserts the retail register is unchanged — one route rather than two, because staff are trained on "the register". `RegisterPage` is wrapped and never edited
+- [x] No blocking browser dialogs anywhere in it (invariant 10) — `noBlockingDialogs.test.ts` scans `features/restaurant` too, added in the commit that created the folder rather than after it
+- [x] Every write idempotent, with the key minted once per operation (invariant 6) — `useOperationKey`, `useState` with a lazy initialiser rather than `useMemo`, which React may discard and recompute
+- [x] `OfflineLimitsPanel` states that orders need the server, and the floor says so too — on the screen somebody is actually standing at when it happens
+
+**Two things the build turned up.** `POST .../pay` returned no change due, so the bill screen would
+have needed a second call at the moment a waiter is counting notes into a hand; `ChangeGiven` now
+comes back on the pay response, out of the commit that computed it. And **the restaurant never
+offered to open a drawer** — a retail till shows `OpenShiftPanel` on the register and a floor is
+not a till, so a shop could seat, order and fire all evening and discover at the first bill that no
+drawer existed, with no control anywhere to open one. The bill screen now surfaces it. The e2e
+walk-through is what found that, which is the argument for writing it in the same phase.
 
 ## 10.8 Reporting
 
@@ -238,8 +247,19 @@ Takings by table, by server, tips by server, average cover, table turn time — 
 `OrderBill → Sale`, never to current catalog data.
 
 **Exit criteria**
-- [ ] Restaurant sections appear only in restaurant mode
-- [ ] A shift's report and the day's report that contains it still add up to the same money
+- [x] Restaurant sections appear only in restaurant mode — the queries run only for a restaurant, so a counter's report costs exactly what it did before, and the sections come back **empty rather than absent** so no reader branches on a nullable
+- [x] A shift's report and the day's report that contains it still add up to the same money — one `ReportScope` over one set of aggregations, only the window differs, asserted in `RestaurantReportTests`
+
+**Spend per cover is null where nobody keyed a cover count**, not the takings. A takeaway
+legitimately has none, and dividing by a missing denominator would put a plausible, wrong number on
+a report somebody makes decisions with. Turn time is null while a table is still occupied, for the
+same reason.
+
+**A table's name is read live**, so a table renamed from "4" to "Window" reports its history under
+the new name. Stated rather than hidden: unlike a price, a name is what a person uses to find the
+row, and a report naming a table nobody recognises is worse than one that follows the rename. A
+kitchen ticket, read at a pass mid-service, does snapshot it — different consumer, different
+answer.
 
 ## 10.9 Tests and the seed fixture
 
@@ -258,7 +278,17 @@ grill.
 
 **Exit criteria**
 - [x] A room, a kitchen and a menu from one command, re-runnable without damage
-- [ ] `restaurant.spec.ts` walking the *Verification* list below in a browser — needs 10.7
+- [x] `restaurant.spec.ts` walking the *Verification* list below in a browser
+
+**A second e2e tenant, `e2e-restaurant`, rather than flipping the existing one.** Every retail spec
+assumes `/register` is a till with a cart on it, so switching the shared shop would have broken all
+of them to test one — and the second tenant is also what lets the spec assert the *retail* shop is
+untouched while sharing a database with a restaurant that has just traded through a service.
+
+**One test, not one per screen.** A test per screen makes each depend on the last one's leftovers,
+and the database outlives the run: the second execution starts with table 4 already seated. The
+spec walks the service once and settles what it opened, which is also the state the next run needs
+to find.
 
 ---
 
@@ -297,39 +327,34 @@ Stated up front so they are not read as oversights:
 
 ## What is not done
 
-**Written down rather than quietly left off the list**, in the shape of Phase 9's section. The
-phase is **not finished**. What exists is the whole server side of a service — seat, order, amend,
-void, transfer, merge, abandon, **fire, bump, recall**, split, pay — tested end to end against a
-real Postgres, and a seeded room to exercise it in. What does not exist is anything a person can
-look at.
+**The phase is finished.** Every exit criterion above is ticked, the nine-step *Verification* walk
+is a Playwright spec, and a shop set to restaurant mode can be seated, ordered for, fired to a
+kitchen, split, settled with a tip and reconciled — through screens, by a person.
 
-1. **The entire restaurant UI (10.7).** `/register` still renders the retail screen for every
-   tenant; `serviceMode` is readable at `/admin/settings` and changes nothing else. There is no
-   floor view, no order screen, no modifier sheet, no bill screen, **no kitchen display**, and no
-   `/catalog/modifiers` admin page. **A shop cannot use any of this today** — every endpoint works
-   and none of them has a caller. This is now the whole of what is left before the phase is real.
+What is left is written down here rather than left to be discovered:
 
-2. **Restaurant reporting (10.8).** Takings by table, by server, tips by server, average cover,
-   table turn. The Z-report *does* carry the tips line from 10.6, which is the part that affects
-   whether a drawer reconciles; the rest is analysis nobody is blocked on.
+1. **Nobody who has worked a restaurant has used it.** That was the bar before Phase 9, it was the
+   bar in every handoff since, and shipping a green test suite does not clear it. The floor, the
+   modifier sheet and the pass are all guesses about how a room works until somebody who works one
+   disagrees with them.
 
-3. **The e2e spec (10.9).** No `restaurant.spec.ts`. `Pos.Seed --restaurant` now exists, so the
-   room can be clicked through by hand once there is a screen — but per `docs/ROADMAP.md` **UI
-   testing must never accumulate**, so the spec belongs to the same piece of work as 10.7 rather
-   than following it.
+2. **The tender pad's provisional change ignores the tip.** `TenderPanel` computes a running
+   balance from the total alone, so during a tipped bill it reads high by the tip until the server
+   answers. Every figure on it is labelled provisional and the settled panel shows the server's
+   number — but a cashier counting notes reads the pad, so this is worth fixing before a real shop
+   uses it. It was not folded into 10.7 because the panel is shared with the retail till and the
+   change is to a money path with paying users on it.
 
-4. **Two devices billing the same order line at once.** The allocation check reads the running
-   total and then inserts, which is check-then-act — two waiters splitting one table
-   simultaneously could over-allocate a line. The unique index on
-   `(tenant, bill, order_line)` stops the *same* line joining one bill twice, and nothing here
-   can produce a wrong charge on a bill that is actually paid, but the guard is weaker than the
-   filtered-index one used for seating and it is not yet proved concurrently. **Firing has the
-   equivalent guard and it *is* proved** — `KitchenTicketWriterTests.Two_handhelds_firing_at_once_send_the_round_once`
-   is the shape this needs.
+3. **No admin screen for stations, modifier groups or the floor.** All three are reachable through
+   the API and seeded by `Pos.Seed --restaurant`; a manager cannot add a table or re-route a
+   category without one. Not blocking a service, blocking a shop setting itself up.
 
-5. **Two small ones, both stated where they belong:** a barcoded modifier still resolves through
-   `GET /products/by-barcode/{code}` (10.3's third box), and the refund path accepts no tip so
-   there is nothing yet to refuse (10.6).
+4. **A table's name is read live in reports**, so a rename rewrites what its history is filed
+   under. Argued in 10.8 rather than deferred — the alternative names a table nobody recognises.
+
+5. **`Pos.Seed --restaurant` is still the only way into restaurant mode with data.** There is no
+   onboarding endpoint by decision, so a real restaurant is set up by an operator running the
+   seeder and then editing through the API.
 
 Also **deliberate, not a gap**: everything under *Non-goals* above, and the fact that nothing in
 the kitchen is audited — `AuditAction` is a short list of the actions that move money, and firing

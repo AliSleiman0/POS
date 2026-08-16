@@ -77,6 +77,71 @@ describe('ReportView', () => {
     expect(screen.getByText('23%')).toBeInTheDocument()
   })
 
+  it('shows no restaurant sections for a counter', () => {
+    // Empty rather than absent, so the view branches on "is there anything here"
+    // rather than on a mode flag that could disagree with the server.
+    render(<ReportView report={report()} />)
+
+    expect(screen.queryByTestId('report-by-table')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('report-by-server')).not.toBeInTheDocument()
+  })
+
+  it('shows takings by table with the tip kept apart from them', () => {
+    render(
+      <ReportView
+        report={report({
+          byTable: [
+            {
+              tableName: '4',
+              covers: 2,
+              orders: 1,
+              total: 48.5,
+              tips: 5,
+              averageSpendPerCover: 24.25,
+              averageMinutesPerSitting: 74,
+            },
+          ],
+        })}
+      />,
+    )
+
+    // Scoped to the section: €5.00 appears elsewhere on the report, and a
+    // whole-document query would pass on the wrong element.
+    const section = within(screen.getByTestId('report-by-table'))
+
+    // Takings and tips are separate columns. Folding the tip into the takings
+    // would inflate revenue and the tax owed on revenue nobody was charged for.
+    expect(section.getByText('€48.50')).toBeInTheDocument()
+    expect(section.getByText('€5.00')).toBeInTheDocument()
+    expect(section.getByText('74m')).toBeInTheDocument()
+  })
+
+  it('shows a dash rather than a zero where nobody keyed a cover count', () => {
+    render(
+      <ReportView
+        report={report({
+          byTable: [
+            {
+              tableName: 'Takeaway',
+              covers: 0,
+              orders: 1,
+              total: 12,
+              tips: 0,
+              // A takeaway has no covers, so there is no average to show. Zero
+              // spend per head is a claim; this is an absence.
+              averageSpendPerCover: null,
+              averageMinutesPerSitting: null,
+            },
+          ],
+        })}
+      />,
+    )
+
+    const section = within(screen.getByTestId('report-by-table'))
+
+    expect(section.getAllByText('—')).toHaveLength(2)
+  })
+
   it('handles counts the client types as strings', () => {
     // int32 comes through the generated client as `number | string`, the same
     // union as every amount. A `> 0` against the raw value would not compile and
@@ -177,6 +242,12 @@ function report(
         originalSaleNumber: 42,
       },
     ],
+
+    // A retail shop, which is what this fixture is: the restaurant sections come
+    // back empty rather than absent, and the view renders nothing for them. The
+    // restaurant cases override these.
+    byTable: [],
+    byServer: [],
     ...rest,
   }
 }

@@ -57,6 +57,28 @@ export const ErrorType = {
    * refusal rather than backing off against it for ever.
    */
   offlineSaleTimestampInvalid: 'offline-sale-timestamp-invalid',
+
+  // ── Phase 10, the restaurant ────────────────────────────────────────────
+  /** Every order, floor, menu and kitchen route answers this at a retail shop. */
+  restaurantModeRequired: 'restaurant-mode-required',
+
+  /** Two staff seated one table in the same second and this one lost the index. */
+  tableAlreadyOccupied: 'table-already-occupied',
+
+  /** It was settled or abandoned. The caller's move is to look at what it became. */
+  orderNotOpen: 'order-not-open',
+
+  /** A shop cannot go back to being a counter with tables still open. */
+  ordersStillOpen: 'orders-still-open',
+
+  /**
+   * Something on the round has no station to be cooked at.
+   *
+   * **The whole fire is refused, not the line**, so nothing is written and the
+   * retry after a manager fixes the menu is the same request. `detail` names the
+   * products, which is the entire value of the refusal.
+   */
+  productNotRouted: 'product-not-routed',
 } as const
 
 export type ErrorTypeSlug = (typeof ErrorType)[keyof typeof ErrorType]

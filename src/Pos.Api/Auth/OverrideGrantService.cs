@@ -51,8 +51,24 @@ public sealed class OverrideGrantService(AppDbContext db, TimeProvider timeProvi
     /// An allow-list, not a validation nicety. Without it this endpoint is a general elevation
     /// mechanism: a manager's PIN would mint <c>CanManageEmployees</c> and the holder could set
     /// their own PIN on the owner's account.
+    /// <para>
+    /// <b>Everything on this list is bounded, audited and about one transaction in front of the
+    /// person approving it.</b> That is the test a policy has to pass to be added, and it is why
+    /// the list is short — <c>CanRefund</c> is deliberately absent, because money leaving the
+    /// drawer for a customer who is not standing there is exactly what a supervisor's own session
+    /// is for.
+    /// </para>
+    /// <para>
+    /// <c>CanVoidFiredLine</c> joined in Phase 10.7. It meets the test: the loss is one plate, the
+    /// void writes an <c>OrderLineVoided</c> entry naming the approver, and the manager is at the
+    /// table. The alternative was worse for the audit log rather than better — a waiter on a
+    /// shared handheld cannot hand the device over for every cancelled steak, so what actually
+    /// happens is a supervisor session left open all evening, and then every void for the rest of
+    /// the night is attributed to somebody who was not there.
+    /// </para>
     /// </remarks>
-    public static readonly string[] Grantable = [Policies.CanApplyDiscount, Policies.CanOverridePrice];
+    public static readonly string[] Grantable =
+        [Policies.CanApplyDiscount, Policies.CanOverridePrice, Policies.CanVoidFiredLine];
 
     /// <summary>Whether every requested policy is one a grant is allowed to carry.</summary>
     public static bool AreGrantable(IEnumerable<string> policies)
@@ -167,5 +183,31 @@ public sealed class OverrideGrantService(AppDbContext db, TimeProvider timeProvi
 
         grant.ConsumedAt = timeProvider.GetUtcNow();
         grant.ConsumedBySaleId = saleId;
+    }
+
+    /// <summary>
+    /// Spends a grant on something that is not a sale.
+    /// </summary>
+    /// <remarks>
+    /// <b><see cref="OverrideGrant.ConsumedBySaleId"/> is left null, and that is honest rather
+    /// than lossy.</b> Voiding a fired order line writes no sale — the loss is a plate, not a
+    /// transaction — so putting an order-line id in a column named for a sale would make every
+    /// later reader of that column wrong. What records the act is the <c>OrderLineVoided</c>
+    /// audit entry, which names the approver in its <c>After</c> exactly as
+    /// <c>AuditEntry.ActorId</c>'s remarks prescribe: the actor is always the session's own user,
+    /// and whoever authorised it goes in the payload.
+    /// <para>
+    /// <see cref="OverrideGrant.IsUsable"/> reads <see cref="OverrideGrant.ConsumedAt"/> and not
+    /// the sale id, so single use is enforced by this method whatever the grant was spent on.
+    /// </para>
+    /// <para>
+    /// Same transaction rule as the overload above: call it inside the save that does the work.
+    /// </para>
+    /// </remarks>
+    public void Consume(OverrideGrant grant)
+    {
+        ArgumentNullException.ThrowIfNull(grant);
+
+        grant.ConsumedAt = timeProvider.GetUtcNow();
     }
 }
