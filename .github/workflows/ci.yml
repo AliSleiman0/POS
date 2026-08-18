@@ -1,8 +1,17 @@
 name: CI
 
+# ⚠️ `push` is scoped to main, and the scope is the point. It used to be `["**"]`, which
+# together with `pull_request` below billed EVERY commit on a PR branch TWICE — once as a
+# push, once as a pull_request — for four identical jobs. Measured over August 2026: 21 of
+# 83 CI runs were exact duplicates of another run on the same `head_sha`, at ~16 billable
+# minutes each (backend 5.5 + e2e 6.7 + contract 2.0 + frontend 1.8), so roughly 336 minutes
+# went on work that had already been done. This repo is private, so those minutes are metered.
+#
+# Nothing is lost by the scope: a branch is still covered by `pull_request`, and Deploy keys
+# off CI completing on main (`workflow_run` … `branches: [main]`), which this still produces.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 # A second push to the same branch cancels the first — no point paying for a
